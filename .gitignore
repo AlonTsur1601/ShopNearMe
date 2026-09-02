@@ -1,0 +1,14 @@
+node_modules/
+node_modules.partial-*/
+dist/
+coverage/
+playwright-report/
+test-results/
+.playwright-cli/
+output/
+.env
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo
+.devpost-hackathon-state.json

@@ -1,0 +1,13 @@
+Meet ShopNearMe: one product search for online delivery, nearby pickup, and second-hand offers.
+
+The home screen stays focused on the task. A person enters any product, and recent searches drive useful recommendations instead of random suggestions.
+
+Location matters for both delivery eligibility and nearby stores. The location picker uses OpenStreetMap and Leaflet. Searches run only after the user presses Search, keeping network requests under control. A user can select a result or click any point on the map. ShopNearMe reverse-geocodes that point, moves the pin, and remembers both the address and coordinates.
+
+Here is a broad search for clock. Live shopping results return different models, retailer logos, product images, availability, and verified total prices. Delivery totals include shipping; the item and shipping amounts remain visible underneath. Empty purchase categories are hidden automatically.
+
+Filters adapt to the product. For clocks, ShopNearMe exposes clock type, movement, retailer, material, color, and features. Selecting Wall clock immediately narrows the visible offers. The custom sort menu can switch between lowest and highest total price without relying on a browser-default dropdown.
+
+The most important part is WebMCP. ShopNearMe registers five structured tools for agents: search products, read visible results, set location, filter results, and sort results. In a supported browser, an agent can discover these schemas and use the same state as the human interface. Search responses are marked as untrusted retailer content, mutating tools are clearly annotated, and outbound retailer links are restricted to safe web URLs.
+
+ShopNearMe makes fragmented shopping research understandable for people, and reliably actionable for their agents.

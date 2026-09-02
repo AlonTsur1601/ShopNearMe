@@ -1,0 +1,188 @@
+const cache = new Map();
+const inFlight = new Map();
+const CACHE_MS = 15 * 60 * 1000;
+
+const colors = ["Black", "White", "Blue", "Red", "Green", "Silver", "Gold", "Gray", "Pink", "Brown", "Natural wood"];
+const materials = ["Wood", "Metal", "Plastic", "Leather", "Glass", "Cotton", "Steel", "Aluminum", "Ceramic"];
+const features = ["Wireless", "Bluetooth", "Waterproof", "Rechargeable", "Smart", "Portable", "Noise cancelling", "Organic", "Silent"];
+const productRules = [
+  { match: /clock/i, id: "clockType", label: "Clock type", values: ["Wall clock", "Alarm clock", "Desk clock", "Smart clock", "Mantel clock"] },
+  { match: /clock/i, id: "movement", label: "Movement", values: ["Quartz", "Digital", "Mechanical", "Atomic"] },
+  { match: /coffee|espresso/i, id: "type", label: "Coffee maker type", values: ["Drip", "Espresso", "Pod", "Single serve", "Cold brew", "French press"] },
+  { match: /shoes?|sneakers?|boots?/i, id: "activity", label: "Activity", values: ["Running", "Trail", "Walking", "Hiking", "Basketball", "Training"] },
+  { match: /laptop|notebook|chromebook/i, id: "platform", label: "Platform", values: ["Windows", "MacBook", "Chromebook", "Gaming"] },
+  { match: /phone|smartphone/i, id: "network", label: "Network", values: ["Unlocked", "5G", "Dual SIM", "Prepaid"] },
+  { match: /camera|lens/i, id: "cameraType", label: "Camera type", values: ["Mirrorless", "DSLR", "Instant", "Action", "Digital", "Film"] },
+  { match: /vacuum/i, id: "vacuumType", label: "Vacuum type", values: ["Robot", "Cordless", "Upright", "Canister", "Handheld"] },
+  { match: /chair|desk|table|sofa/i, id: "style", label: "Style", values: ["Modern", "Industrial", "Mid-century", "Rustic", "Minimalist"] },
+];
+
+function number(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const parsed = Number.parseFloat(String(value ?? "").replace(/[^0-9.]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function logoDataUri(name) {
+  const initial = String(name || "S").trim().charAt(0).toUpperCase();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#eef8f8"/><text x="32" y="41" text-anchor="middle" font-family="Arial" font-size="30" font-weight="700" fill="#007b83">${initial.replace(/[<>&]/g, "")}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+export function safeHttpUrl(value, fallback = "") {
+  try {
+    const parsed = new URL(String(value ?? ""));
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : fallback;
+  } catch { return fallback; }
+}
+
+function includesWord(text, value) { return new RegExp(`\\b${value.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\b`, "i").test(text); }
+function inferValue(text, values) { return values.find((value) => includesWord(text, value)) ?? "Other"; }
+function isUsed(item) { return /used|pre.?owned|refurb|renewed|open box|vintage|second.?hand|mercari|poshmark|offerup|back market/i.test(`${item.title ?? ""} ${item.condition ?? ""} ${item.badge ?? ""} ${item.source ?? ""}`); }
+function isLocal(item) { return /(?:store|curbside|local)\s+pickup|pick\s*up\s+(?:today|in store)|in-store pickup/i.test(`${item.delivery ?? ""} ${(item.extensions ?? []).join(" ")}`); }
+
+function validCoordinates(coordinates) {
+  const lat = Number(coordinates?.lat); const lon = Number(coordinates?.lon);
+  return Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 ? { lat, lon } : null;
+}
+
+function distanceMiles(origin, point) {
+  const destination = validCoordinates(point); if (!origin || !destination) return undefined;
+  const radians = (value) => value * Math.PI / 180;
+  const dLat = radians(destination.lat - origin.lat); const dLon = radians(destination.lon - origin.lon);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(radians(origin.lat)) * Math.cos(radians(destination.lat)) * Math.sin(dLon / 2) ** 2;
+  return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function parseShipping(item, itemPrice) {
+  const text = `${item.delivery ?? ""} ${(item.extensions ?? []).join(" ")}`;
+  if (/free (delivery|shipping)/i.test(text)) return { shippingPrice: 0, totalPrice: itemPrice, shippingEstimated: false };
+  const match = text.match(/(?:shipping|delivery)[^$]*\$([0-9]+(?:\.[0-9]{1,2})?)/i) ?? text.match(/\$([0-9]+(?:\.[0-9]{1,2})?)\s+(?:shipping|delivery)/i);
+  const shippingPrice = match ? number(match[1]) : null;
+  return { shippingPrice, totalPrice: itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice, shippingEstimated: shippingPrice !== null };
+}
+
+function toOffer(item, index, query) {
+  const itemPrice = number(item.extracted_price ?? item.price);
+  const shipping = parseShipping(item, itemPrice);
+  const used = isUsed(item);
+  const local = !used && isLocal(item);
+  const merchant = item.source || item.merchant || item.seller || "Retailer";
+  const text = `${item.title ?? ""} ${(item.extensions ?? []).join(" ")}`;
+  const condition = used ? (item.condition || (/refurb|renewed/i.test(text) ? "Refurbished" : "Used")) : "New";
+  const attributes = {
+    condition,
+    retailer: merchant,
+    color: inferValue(text, colors),
+    material: inferValue(text, materials),
+    features: inferValue(text, features),
+  };
+  for (const rule of productRules) if (rule.match.test(`${query} ${text}`)) attributes[rule.id] = inferValue(text, rule.values);
+  return {
+    id: `serp-${item.product_id ?? item.position ?? index}`,
+    category: used ? "secondHand" : local ? "local" : "order",
+    merchant,
+    merchantLogoUrl: safeHttpUrl(item.source_icon || item.favicon, logoDataUri(merchant)),
+    title: item.title || "Product offer",
+    subtitle: (item.extensions ?? []).slice(0, 3).join(" · ") || item.delivery || "See retailer for product details",
+    imageUrl: safeHttpUrl(item.thumbnail || item.image),
+    rating: number(item.rating) ?? 0,
+    reviewCount: number(item.reviews) ?? 0,
+    itemPrice,
+    shippingPrice: local ? null : shipping.shippingPrice,
+    totalPrice: local ? itemPrice : shipping.shippingPrice !== null ? shipping.totalPrice : null,
+    shippingEstimated: shipping.shippingEstimated,
+    priceVerified: itemPrice !== null && (local || shipping.shippingPrice !== null),
+    availability: local ? "Check local stock" : "Available online",
+    arrival: local ? undefined : item.delivery,
+    condition,
+    attributes,
+    destinationUrl: safeHttpUrl(item.product_link || item.link || item.serpapi_product_api, "https://www.google.com/shopping"),
+  };
+}
+
+function toLocalOffer(place, index, query, origin) {
+  const merchant = place.title || place.name || "Local store";
+  const itemPrice = number(place.extracted_price ?? place.product_price);
+  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${merchant} ${place.address ?? ""}`)}`;
+  const destinationUrl = safeHttpUrl(place.website || place.links?.website || place.link || place.directions, mapsUrl);
+  const imageUrl = safeHttpUrl(place.thumbnail || place.image, logoDataUri(merchant));
+  const point = place.gps_coordinates ? { lat: place.gps_coordinates.latitude, lon: place.gps_coordinates.longitude } : null;
+  return {
+    id: `local-${place.place_id ?? place.data_id ?? place.position ?? index}`,
+    category: "local",
+    merchant,
+    merchantLogoUrl: safeHttpUrl(place.favicon || place.source_icon, logoDataUri(merchant)),
+    title: `${query} at ${merchant}`,
+    subtitle: [place.type, place.address].filter(Boolean).join(" · ") || "Nearby store",
+    imageUrl,
+    rating: number(place.rating) ?? 0,
+    reviewCount: number(place.reviews) ?? 0,
+    itemPrice,
+    shippingPrice: null,
+    totalPrice: itemPrice,
+    priceVerified: itemPrice !== null,
+    availability: place.open_state || "Check product availability",
+    distanceMiles: distanceMiles(origin, point),
+    condition: "New",
+    attributes: { condition: "New", retailer: merchant, storeType: place.type || "Store" },
+    destinationUrl,
+  };
+}
+
+function buildFacets(offers, query) {
+  const specific = productRules.filter((rule) => rule.match.test(query)).map((rule) => [rule.id, rule.label]);
+  const definitions = [["condition", "Condition"], ...specific, ["retailer", "Retailer"], ["color", "Color"], ["material", "Material"], ["features", "Features"]];
+  return definitions.map(([id, label]) => {
+    const counts = new Map();
+    for (const offer of offers) { const value = offer.attributes[id]; if (value && value !== "Other") counts.set(value, (counts.get(value) ?? 0) + 1); }
+    return { id, label, options: [...counts].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([value, count]) => ({ value, count })) };
+  }).filter((facet) => facet.options.length > 0);
+}
+
+async function runShoppingSearch(query, location, apiKey) {
+  const params = new URLSearchParams({ engine: "google_shopping", q: query, api_key: apiKey, hl: "en", num: "40" });
+  if (location && location !== "Current location") params.set("location", location);
+  const response = await fetch(`https://serpapi.com/search.json?${params}`);
+  if (!response.ok) throw new Error(`SerpAPI returned ${response.status}`);
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+  const raw = [...(data.shopping_results ?? []), ...(data.inline_shopping_results ?? [])];
+  return raw.map((item, index) => toOffer(item, index, query));
+}
+
+async function runLocalSearch(query, location, apiKey, coordinates) {
+  const origin = validCoordinates(coordinates);
+  if (!origin && (!location || location === "Current location")) return [];
+  const localQuery = origin ? `${query} store` : `${query} near ${location}`;
+  const params = new URLSearchParams({ engine: "google_maps", type: "search", q: localQuery, api_key: apiKey, hl: "en" });
+  if (origin) params.set("ll", `@${origin.lat},${origin.lon},14z`);
+  const response = await fetch(`https://serpapi.com/search.json?${params}`);
+  if (!response.ok) throw new Error(`SerpAPI local search returned ${response.status}`);
+  const data = await response.json(); if (data.error) throw new Error(data.error);
+  return (data.local_results ?? []).slice(0, 10).map((place, index) => toLocalOffer(place, index, query, origin));
+}
+
+async function runSearch(query, location, apiKey, coordinates) {
+  const [shopping, local] = await Promise.allSettled([
+    runShoppingSearch(query, location, apiKey),
+    runLocalSearch(query, location, apiKey, coordinates),
+  ]);
+  if (shopping.status === "rejected" && local.status === "rejected") throw shopping.reason;
+  const combined = [...(shopping.status === "fulfilled" ? shopping.value.slice(0, 30) : []), ...(local.status === "fulfilled" ? local.value.slice(0, 10) : [])];
+  const seen = new Set();
+  const offers = combined.filter((offer) => offer.title && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)).slice(0, 40);
+  return { query, resultCount: offers.length, offers, facets: buildFacets(offers, query), source: "live" };
+}
+
+export async function searchCatalog(query, location, apiKey, coordinates) {
+  if (!apiKey) throw new Error("SERPAPI_API_KEY is not configured");
+  const point = validCoordinates(coordinates);
+  const key = `${query.trim().toLowerCase()}|${String(location || "").trim().toLowerCase()}|${point ? `${point.lat.toFixed(4)},${point.lon.toFixed(4)}` : ""}`;
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
+  if (inFlight.has(key)) return inFlight.get(key);
+  const request = runSearch(query.trim(), location, apiKey, point).then((value) => { cache.set(key, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(key));
+  inFlight.set(key, request);
+  return request;
+}

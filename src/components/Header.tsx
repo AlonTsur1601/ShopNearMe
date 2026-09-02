@@ -1,0 +1,2 @@
+import { ChevronDown, Crosshair } from "lucide-react";
+export function Header({ location, onHome, onLocation }: { location: string; onHome: () => void; onLocation: () => void; }) { return <header className="site-header"><button className="brand" type="button" onClick={onHome} aria-label="ShopNearMe home">ShopNearMe</button><button className="location-control" type="button" onClick={onLocation}><Crosshair size={18} /><span>{location}</span><ChevronDown size={16} /></button></header>; }
