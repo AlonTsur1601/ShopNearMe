@@ -2,6 +2,8 @@
 
 ![ShopNearMe thumbnail](docs/assets/thumbnail.png)
 
+**Live site:** [https://shopnearme-webmcp.vercel.app](https://shopnearme-webmcp.vercel.app)
+
 ShopNearMe turns one product query into a structured comparison of offers that can be ordered, bought in a nearby store, or purchased second hand. It shows the total checkout price whenever shipping is known, exposes product-specific filters, and gives both people and browser agents the same useful workflow through WebMCP.
 
 ## Why it exists
