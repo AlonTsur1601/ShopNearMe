@@ -11,7 +11,7 @@ import { searchProducts } from "./services/productSearch";
 import type { OfferCategory, ShowcaseSearch, SortDirection } from "./types";
 import { registerShopNearMeTools } from "./webmcp";
 
-const categories: OfferCategory[] = ["order", "local", "secondHand"];
+const categories: OfferCategory[] = ["local", "order", "secondHand"];
 const recommendationMap: Record<string, string[]> = {
   clock: ["silent wall clock", "smart alarm clock", "vintage mantel clock"],
   headphone: ["wireless earbuds", "noise cancelling headphones", "headphone stand"],

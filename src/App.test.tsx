@@ -23,7 +23,9 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() => expect(screen.getByText("Clock type")).toBeVisible());
     expect(screen.getByText("Movement")).toBeVisible();
-    expect(screen.getByRole("heading", { name: /Order online/ })).toBeVisible();
+    const localHeading = screen.getByRole("heading", { name: /Buy in store/ });
+    const onlineHeading = screen.getByRole("heading", { name: /Order online/ });
+    expect(localHeading.compareDocumentPosition(onlineHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("registers the agent-facing WebMCP surface when supported", () => {

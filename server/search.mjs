@@ -17,6 +17,24 @@ const productRules = [
   { match: /chair|desk|table|sofa/i, id: "style", label: "Style", values: ["Modern", "Industrial", "Mid-century", "Rustic", "Minimalist"] },
 ];
 
+const localStoreRules = [
+  { match: /clock|watch/i, types: ["clock", "watch", "home goods", "furniture", "antique", "gift", "novelty", "department", "electronics"] },
+  { match: /headphones?|earbuds?|speaker|audio/i, types: ["audio", "electronics", "computer", "department", "appliance", "music"] },
+  { match: /shoes?|sneakers?|boots?|sandals?/i, types: ["shoe", "sporting goods", "department", "clothing", "outdoor"] },
+  { match: /coffee|espresso|kettle|toaster|blender/i, types: ["appliance", "kitchen", "home goods", "department", "coffee"] },
+  { match: /laptop|computer|keyboard|mouse|monitor|printer/i, types: ["computer", "electronics", "office supply", "department"] },
+  { match: /phone|smartphone|tablet|charger/i, types: ["cell phone", "mobile phone", "electronics", "computer", "department"] },
+  { match: /camera|lens|tripod/i, types: ["camera", "photography", "electronics", "department"] },
+  { match: /vacuum|washer|dryer|refrigerator|microwave/i, types: ["appliance", "home goods", "department", "electronics"] },
+  { match: /chair|desk|table|sofa|couch|bed|mattress/i, types: ["furniture", "office furniture", "home goods", "department"] },
+  { match: /book|novel|textbook/i, types: ["book", "stationery", "department"] },
+  { match: /toy|lego|doll|game/i, types: ["toy", "game", "hobby", "department"] },
+  { match: /shirt|jacket|dress|jeans|clothing|pants/i, types: ["clothing", "fashion", "department"] },
+];
+
+const nonRetailTypes = /repair service|museum|tourist attraction|consultant|contractor|school|university|doctor|clinic|hospital|hotel|lawyer|accountant|real estate|software company|manufacturer/i;
+const generalRetailTypes = /store|shop|retailer|market|mall|department|supermarket|pharmacy|hardware|supply/i;
+
 function number(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const parsed = Number.parseFloat(String(value ?? "").replace(/[^0-9.]/g, ""));
@@ -52,6 +70,30 @@ function distanceMiles(origin, point) {
   const dLat = radians(destination.lat - origin.lat); const dLon = radians(destination.lon - origin.lon);
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(radians(origin.lat)) * Math.cos(radians(destination.lat)) * Math.sin(dLon / 2) ** 2;
   return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function localRelevance(place, query, origin) {
+  const type = String(place.type ?? "").toLowerCase();
+  const title = String(place.title ?? place.name ?? "").toLowerCase();
+  const text = `${title} ${type}`;
+  const distance = distanceMiles(origin, place.gps_coordinates ? { lat: place.gps_coordinates.latitude, lon: place.gps_coordinates.longitude } : null);
+  if (distance !== undefined && distance > 50) return -Infinity;
+  if (nonRetailTypes.test(type) && !generalRetailTypes.test(type)) return -Infinity;
+
+  let score = generalRetailTypes.test(type) ? 2 : 0;
+  const rule = localStoreRules.find((candidate) => candidate.match.test(query));
+  if (rule) {
+    const typeMatches = rule.types.filter((value) => text.includes(value)).length;
+    score += typeMatches * 4;
+    if (typeMatches === 0) return -Infinity;
+  }
+  const queryWords = query.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
+  score += queryWords.filter((word) => text.includes(word)).length * 2;
+  if (place.website || place.links?.website) score += 1;
+  if ((number(place.rating) ?? 0) >= 4) score += 1;
+  if ((number(place.reviews) ?? 0) >= 10) score += 1;
+  if (distance !== undefined) score += Math.max(0, 2 - distance / 10);
+  return score;
 }
 
 function parseShipping(item, itemPrice) {
@@ -154,13 +196,18 @@ async function runShoppingSearch(query, location, apiKey) {
 async function runLocalSearch(query, location, apiKey, coordinates) {
   const origin = validCoordinates(coordinates);
   if (!origin && (!location || location === "Current location")) return [];
-  const localQuery = origin ? `${query} store` : `${query} near ${location}`;
+  const localQuery = origin ? `where to buy ${query}` : `where to buy ${query} near ${location}`;
   const params = new URLSearchParams({ engine: "google_maps", type: "search", q: localQuery, api_key: apiKey, hl: "en" });
   if (origin) params.set("ll", `@${origin.lat},${origin.lon},14z`);
   const response = await fetch(`https://serpapi.com/search.json?${params}`);
   if (!response.ok) throw new Error(`SerpAPI local search returned ${response.status}`);
   const data = await response.json(); if (data.error) throw new Error(data.error);
-  return (data.local_results ?? []).slice(0, 10).map((place, index) => toLocalOffer(place, index, query, origin));
+  return (data.local_results ?? [])
+    .map((place, index) => ({ place, index, relevance: localRelevance(place, query, origin) }))
+    .filter(({ relevance }) => Number.isFinite(relevance) && relevance >= 2)
+    .sort((a, b) => b.relevance - a.relevance)
+    .slice(0, 10)
+    .map(({ place, index }) => toLocalOffer(place, index, query, origin));
 }
 
 async function runSearch(query, location, apiKey, coordinates) {
@@ -169,7 +216,7 @@ async function runSearch(query, location, apiKey, coordinates) {
     runLocalSearch(query, location, apiKey, coordinates),
   ]);
   if (shopping.status === "rejected" && local.status === "rejected") throw shopping.reason;
-  const combined = [...(shopping.status === "fulfilled" ? shopping.value.slice(0, 30) : []), ...(local.status === "fulfilled" ? local.value.slice(0, 10) : [])];
+  const combined = [...(local.status === "fulfilled" ? local.value.slice(0, 10) : []), ...(shopping.status === "fulfilled" ? shopping.value.slice(0, 30) : [])];
   const seen = new Set();
   const offers = combined.filter((offer) => offer.title && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)).slice(0, 40);
   return { query, resultCount: offers.length, offers, facets: buildFacets(offers, query), source: "live" };
