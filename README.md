@@ -32,7 +32,8 @@ Read-only tools use `readOnlyHint: true`, and tools that return retailer content
 
 ## Data and request efficiency
 
-- Live order and second-hand results come from SerpAPI's Google Shopping engine, while nearby businesses come from its Google Maps local results using the selected coordinates. Both searches run behind one server-side endpoint, and the API key never reaches the browser.
+- Live order results come from SerpAPI's Google Shopping engine, nearby businesses come from its Google Maps local results using the selected coordinates, and used listings come directly from eBay's Browse API. All searches run behind one server-side endpoint, and API credentials never reach the browser.
+- eBay uses a cached application OAuth token, requests used items deliverable to the detected destination country, and includes item price plus shipping in the displayed total.
 - Identical searches are cached in memory for 15 minutes.
 - Simultaneous identical searches share one in-flight promise.
 - The deployed endpoint sends CDN cache headers (`s-maxage=900`, `stale-while-revalidate=3600`).

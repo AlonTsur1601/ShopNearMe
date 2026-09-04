@@ -1,6 +1,7 @@
 const cache = new Map();
 const inFlight = new Map();
 const CACHE_MS = 15 * 60 * 1000;
+let ebayToken = null;
 
 const colors = ["Black", "White", "Blue", "Red", "Green", "Silver", "Gold", "Gray", "Pink", "Brown", "Natural wood"];
 const materials = ["Wood", "Metal", "Plastic", "Leather", "Glass", "Cotton", "Steel", "Aluminum", "Ceramic"];
@@ -34,6 +35,11 @@ const localStoreRules = [
 
 const nonRetailTypes = /repair service|museum|tourist attraction|consultant|contractor|school|university|doctor|clinic|hospital|hotel|lawyer|accountant|real estate|software company|manufacturer/i;
 const generalRetailTypes = /store|shop|retailer|market|mall|department|supermarket|pharmacy|hardware|supply/i;
+const countryCodes = new Map([
+  ["israel", "IL"], ["united states", "US"], ["usa", "US"], ["canada", "CA"], ["united kingdom", "GB"], ["uk", "GB"],
+  ["germany", "DE"], ["france", "FR"], ["italy", "IT"], ["spain", "ES"], ["australia", "AU"], ["austria", "AT"],
+  ["belgium", "BE"], ["netherlands", "NL"], ["ireland", "IE"], ["poland", "PL"], ["switzerland", "CH"],
+]);
 
 function number(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -102,6 +108,74 @@ function parseShipping(item, itemPrice) {
   const match = text.match(/(?:shipping|delivery)[^$]*\$([0-9]+(?:\.[0-9]{1,2})?)/i) ?? text.match(/\$([0-9]+(?:\.[0-9]{1,2})?)\s+(?:shipping|delivery)/i);
   const shippingPrice = match ? number(match[1]) : null;
   return { shippingPrice, totalPrice: itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice, shippingEstimated: shippingPrice !== null };
+}
+
+function countryCodeFor(location) {
+  const normalized = String(location ?? "").toLowerCase();
+  for (const [name, code] of countryCodes) if (new RegExp(`(?:^|[,\\s])${name.replace(" ", "\\s+")}(?:$|[,\\s])`, "i").test(normalized)) return code;
+  return null;
+}
+
+async function getEbayToken(credentials) {
+  if (!credentials?.clientId || !credentials?.clientSecret) return null;
+  if (ebayToken && ebayToken.expiresAt > Date.now() + 60_000) return ebayToken.value;
+  const basic = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64");
+  const response = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
+    method: "POST",
+    headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "client_credentials", scope: "https://api.ebay.com/oauth/api_scope" }),
+  });
+  if (!response.ok) throw new Error(`eBay OAuth returned ${response.status}`);
+  const data = await response.json();
+  if (!data.access_token) throw new Error("eBay OAuth did not return an access token");
+  ebayToken = { value: data.access_token, expiresAt: Date.now() + Math.max(60, number(data.expires_in) ?? 7200) * 1000 };
+  return ebayToken.value;
+}
+
+function toEbayOffer(item, index) {
+  const merchant = item.seller?.username ? `eBay · ${item.seller.username}` : "eBay";
+  const price = item.price;
+  const shipping = item.shippingOptions?.[0]?.shippingCost;
+  const itemPrice = number(price?.convertedFromCurrency === "USD" ? price.convertedFromValue : price?.value);
+  const shippingPrice = number(shipping?.convertedFromCurrency === "USD" ? shipping.convertedFromValue : shipping?.value);
+  const totalPrice = itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : null;
+  const condition = item.condition || "Used";
+  const imageUrl = safeHttpUrl(item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl);
+  return {
+    id: `ebay-${item.itemId ?? index}`,
+    category: "secondHand",
+    merchant,
+    merchantLogoUrl: "/ebay.svg",
+    title: item.title || "Pre-owned eBay listing",
+    subtitle: [condition, item.itemLocation?.country, item.buyingOptions?.join(" / ")].filter(Boolean).join(" · ") || "Pre-owned eBay listing",
+    imageUrl,
+    rating: number(item.seller?.feedbackPercentage) ? Math.min(5, number(item.seller.feedbackPercentage) / 20) : 0,
+    reviewCount: number(item.seller?.feedbackScore) ?? 0,
+    itemPrice,
+    shippingPrice,
+    totalPrice,
+    shippingEstimated: false,
+    priceVerified: totalPrice !== null,
+    availability: "Available on eBay",
+    condition,
+    attributes: { condition, retailer: "eBay", seller: item.seller?.username || "eBay seller" },
+    destinationUrl: safeHttpUrl(item.itemWebUrl || item.itemAffiliateWebUrl, "https://www.ebay.com/"),
+  };
+}
+
+async function runEbaySearch(query, location, credentials) {
+  const token = await getEbayToken(credentials);
+  if (!token) return [];
+  const filters = ["conditions:{USED}"];
+  const country = countryCodeFor(location);
+  if (country) filters.push(`deliveryCountry:${country}`);
+  const params = new URLSearchParams({ q: query, limit: "15", filter: filters.join(",") });
+  const headers = { Authorization: `Bearer ${token}`, "X-EBAY-C-MARKETPLACE-ID": "EBAY_US" };
+  if (country) headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=country=${country}`;
+  const response = await fetch(`https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`, { headers });
+  if (!response.ok) throw new Error(`eBay Browse API returned ${response.status}`);
+  const data = await response.json();
+  return (data.itemSummaries ?? []).map(toEbayOffer);
 }
 
 function toOffer(item, index, query) {
@@ -210,26 +284,31 @@ async function runLocalSearch(query, location, apiKey, coordinates) {
     .map(({ place, index }) => toLocalOffer(place, index, query, origin));
 }
 
-async function runSearch(query, location, apiKey, coordinates) {
-  const [shopping, local] = await Promise.allSettled([
+async function runSearch(query, location, apiKey, coordinates, ebayCredentials) {
+  const [shopping, local, ebay] = await Promise.allSettled([
     runShoppingSearch(query, location, apiKey),
     runLocalSearch(query, location, apiKey, coordinates),
+    runEbaySearch(query, location, ebayCredentials),
   ]);
-  if (shopping.status === "rejected" && local.status === "rejected") throw shopping.reason;
-  const combined = [...(local.status === "fulfilled" ? local.value.slice(0, 10) : []), ...(shopping.status === "fulfilled" ? shopping.value.slice(0, 30) : [])];
+  if (shopping.status === "rejected" && local.status === "rejected" && ebay.status === "rejected") throw shopping.reason;
+  const shoppingOffers = shopping.status === "fulfilled" ? shopping.value : [];
+  const localOffers = [...(local.status === "fulfilled" ? local.value : []), ...shoppingOffers.filter((offer) => offer.category === "local")].slice(0, 10);
+  const orderOffers = shoppingOffers.filter((offer) => offer.category === "order").slice(0, 20);
+  const secondHandOffers = [...(ebay.status === "fulfilled" ? ebay.value : []), ...shoppingOffers.filter((offer) => offer.category === "secondHand")].slice(0, 10);
+  const combined = [...localOffers, ...orderOffers, ...secondHandOffers];
   const seen = new Set();
   const offers = combined.filter((offer) => offer.title && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)).slice(0, 40);
   return { query, resultCount: offers.length, offers, facets: buildFacets(offers, query), source: "live" };
 }
 
-export async function searchCatalog(query, location, apiKey, coordinates) {
+export async function searchCatalog(query, location, apiKey, coordinates, ebayCredentials) {
   if (!apiKey) throw new Error("SERPAPI_API_KEY is not configured");
   const point = validCoordinates(coordinates);
   const key = `${query.trim().toLowerCase()}|${String(location || "").trim().toLowerCase()}|${point ? `${point.lat.toFixed(4)},${point.lon.toFixed(4)}` : ""}`;
   const cached = cache.get(key);
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
   if (inFlight.has(key)) return inFlight.get(key);
-  const request = runSearch(query.trim(), location, apiKey, point).then((value) => { cache.set(key, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(key));
+  const request = runSearch(query.trim(), location, apiKey, point, ebayCredentials).then((value) => { cache.set(key, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(key));
   inFlight.set(key, request);
   return request;
 }

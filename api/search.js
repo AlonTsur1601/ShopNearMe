@@ -8,7 +8,10 @@ export default async function handler(request, response) {
   const coordinates = Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : undefined;
   if (!query || query.length > 180) return response.status(400).json({ error: "A valid product query is required" });
   try {
-    const result = await searchCatalog(query, location, process.env.SERPAPI_API_KEY, coordinates);
+    const result = await searchCatalog(query, location, process.env.SERPAPI_API_KEY, coordinates, {
+      clientId: process.env.EBAY_CLIENT_ID,
+      clientSecret: process.env.EBAY_CLIENT_SECRET,
+    });
     response.setHeader("Cache-Control", "s-maxage=900, stale-while-revalidate=3600");
     return response.status(200).json(result);
   } catch (error) { return response.status(502).json({ error: error instanceof Error ? error.message : "Search failed" }); }
