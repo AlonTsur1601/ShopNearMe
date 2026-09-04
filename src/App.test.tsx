@@ -27,8 +27,8 @@ describe("App", () => {
     render(<App />);
     fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() => expect(screen.getByText("Clock type")).toBeVisible());
-    expect(screen.getByText("Movement")).toBeVisible();
+    await waitFor(() => expect(screen.getAllByText("Clock type")[0]).toBeVisible());
+    expect(screen.getAllByText("Movement")[0]).toBeVisible();
     const localHeading = screen.getByRole("heading", { name: /Buy in store/ });
     const onlineHeading = screen.getByRole("heading", { name: /Order online/ });
     expect(localHeading.compareDocumentPosition(onlineHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -41,6 +41,17 @@ describe("App", () => {
     expect(registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(expect.arrayContaining(["search_products", "get_visible_results", "set_search_location", "filter_results", "sort_results"]));
     view.unmount();
     Reflect.deleteProperty(document, "modelContext");
+  });
+
+  it("opens and closes the scrollable mobile filter drawer", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    expect(screen.getAllByLabelText("Product filters")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Close filters" }));
+    expect(screen.getAllByLabelText("Product filters")).toHaveLength(1);
   });
 
   it("does not render an empty shopping category", () => {

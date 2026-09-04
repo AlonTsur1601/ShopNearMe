@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildFacets, safeHttpUrl, searchCatalog, shortRetailerName } from "./search.mjs";
+import { extractProductData } from "./product-page.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -10,6 +11,13 @@ describe("safeHttpUrl", () => {
     expect(safeHttpUrl("javascript:alert(1)", "https://www.google.com/shopping")).toBe("https://www.google.com/shopping");
     expect(safeHttpUrl("data:text/html,unsafe", "")).toBe("");
     expect(safeHttpUrl("not a url", "https://fallback.example/")).toBe("https://fallback.example/");
+  });
+});
+
+describe("product page enrichment", () => {
+  it("extracts the actual product image, price, currency, and brand from JSON-LD", () => {
+    const data = extractProductData(`<script type="application/ld+json">{"@type":"Product","name":"Oak dining table","brand":{"name":"Furni"},"image":"https://shop.example/table.jpg","offers":{"@type":"Offer","price":"1299","priceCurrency":"ILS"}}</script>`);
+    expect(data).toMatchObject({ title: "Oak dining table", brand: "Furni", imageUrl: "https://shop.example/table.jpg", price: 1299, currency: "ILS" });
   });
 });
 
@@ -90,7 +98,7 @@ describe("searchCatalog", () => {
     }));
     const result = await searchCatalog("ebay integration clock", "Tel Aviv, Israel", "test-key", { lat: 32.08, lon: 34.78 }, { clientId: "client", clientSecret: "secret" });
     const offer = result.offers.find((item) => item.id === "ebay-v1|123|0");
-    expect(offer).toMatchObject({ category: "secondHand", merchant: "eBay · time-seller", itemPrice: 24, shippingPrice: 6.5, totalPrice: 30.5, priceVerified: true });
+    expect(offer).toMatchObject({ category: "secondHand", merchant: "eBay", itemPrice: 24, shippingPrice: 6.5, totalPrice: 30.5, priceVerified: true });
     const ebayCall = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("item_summary/search"));
     expect(String(ebayCall?.[0])).toContain("conditions%3A%7BUSED%7D%2CdeliveryCountry%3AIL");
   });

@@ -7,23 +7,14 @@ import { OfferSection } from "./components/OfferSection";
 import { SearchBar } from "./components/SearchBar";
 import { SortMenu } from "./components/SortMenu";
 import { getShowcase } from "./data/showcase";
-import { genericFallback, isShowcaseQuery, mergeSearchResults, searchProductScope, searchProducts } from "./services/productSearch";
+import { searchProducts } from "./services/productSearch";
+import { recommendationsFor } from "./services/recommendations";
 import type { OfferCategory, ShowcaseSearch, SortDirection } from "./types";
 import { registerShopNearMeTools } from "./webmcp";
 
 const categories: OfferCategory[] = ["local", "order", "secondHand"];
-const recommendationMap: Record<string, string[]> = {
-  clock: ["silent wall clock", "smart alarm clock", "vintage mantel clock"],
-  headphone: ["wireless earbuds", "noise cancelling headphones", "headphone stand"],
-  shoes: ["running socks", "trail running shoes", "walking shoes"],
-  laptop: ["laptop sleeve", "wireless mouse", "USB-C dock"],
-  camera: ["camera lens", "camera bag", "tripod"],
-  coffee: ["coffee grinder", "espresso machine", "reusable coffee filter"],
-};
-
 function readRecent(): string[] { try { return JSON.parse(localStorage.getItem("shopnearme:recent") ?? "[]") as string[]; } catch { return []; } }
-function recommendationsFor(recent: string[]): string[] { const joined = recent.join(" ").toLowerCase(); const matched = Object.entries(recommendationMap).find(([term]) => joined.includes(term)); return matched?.[1] ?? recent.slice(0, 2).map((value) => `${value} deals`); }
-function getBrowserLocation(): Promise<LocationPlace> { return new Promise((resolve, reject) => { if (!navigator.geolocation) { reject(new Error("Geolocation unavailable")); return; } navigator.geolocation.getCurrentPosition(({ coords }) => { void reversePlace(coords.latitude, coords.longitude).catch(() => ({ label: "Current location", lat: coords.latitude, lon: coords.longitude })).then(resolve); }, reject, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }); }); }
+function getBrowserLocation(): Promise<LocationPlace> { return new Promise((resolve, reject) => { if (!navigator.geolocation) { reject(new Error("Geolocation unavailable")); return; } navigator.geolocation.getCurrentPosition(({ coords }) => { void reversePlace(coords.latitude, coords.longitude).catch(() => ({ label: "Current location", lat: coords.latitude, lon: coords.longitude })).then(resolve); }, reject, { enableHighAccuracy: false, timeout: 3000, maximumAge: 300000 }); }); }
 
 export function App() {
   const [query, setQuery] = useState("");
@@ -40,7 +31,6 @@ export function App() {
   const [priceMax, setPriceMax] = useState("");
   const [searchResult, setSearchResult] = useState<ShowcaseSearch | null>(null);
   const [loading, setLoading] = useState(false);
-  const [searchingMore, setSearchingMore] = useState(false);
   const searchController = useRef<AbortController | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(readRecent);
   const showcase = searchResult ?? getShowcase(activeQuery ?? "Sony WH-1000XM6");
@@ -54,6 +44,10 @@ export function App() {
       return Object.entries(selected).every(([facet, values]) => !values.length || values.includes(offer.attributes[facet]));
     });
     return [...offers].sort((a, b) => {
+      if (sort.startsWith("distance")) {
+        const left = a.distanceMiles ?? Number.POSITIVE_INFINITY, right = b.distanceMiles ?? Number.POSITIVE_INFINITY;
+        return sort === "distance-asc" ? left - right : (a.distanceMiles === undefined ? 1 : b.distanceMiles === undefined ? -1 : right - left);
+      }
       if (a.totalPrice === null && b.totalPrice === null) return 0;
       if (a.totalPrice === null) return 1;
       if (b.totalPrice === null) return -1;
@@ -65,32 +59,22 @@ export function App() {
   const performSearch = useCallback(async (nextQuery: string, nextLocation = location) => {
     const normalized = nextQuery.trim(); if (!normalized) return getShowcase("Sony WH-1000XM6");
     searchController.current?.abort(); const controller = new AbortController(); searchController.current = controller;
-    setQuery(normalized); setActiveQuery(normalized); setSelected({}); setShowUnverified(false); setLoading(true); setSearchingMore(true); setSearchResult(null);
+    setQuery(normalized); setActiveQuery(normalized); setSelected({}); setShowUnverified(false); setLoading(true); setSearchResult(null);
     setRecentSearches((current) => { const next = [normalized, ...current.filter((value) => value.toLowerCase() !== normalized.toLowerCase())].slice(0, 5); localStorage.setItem("shopnearme:recent", JSON.stringify(next)); return next; });
     try {
-      if (isShowcaseQuery(normalized)) { const result = await searchProducts(normalized, nextLocation, controller.signal, locationPlace); setSearchResult(result); setLoading(false); return result; }
-      const collected: ShowcaseSearch[] = [];
-      const publish = (result: ShowcaseSearch) => { if (controller.signal.aborted) return; collected.push(result); setSearchResult(mergeSearchResults(normalized, collected)); setLoading(false); };
-      const locationPromise = (async () => { let place = nextLocation === location ? locationPlace : undefined; if (nextLocation === "Current location" && !place) { try { place = await getBrowserLocation(); if (!controller.signal.aborted) setLocationPlace(place); } catch { place = undefined; } } return place; })();
-      const online = searchProductScope(normalized, nextLocation, "online", controller.signal).then(publish).catch(() => undefined);
-      const place = await locationPromise;
-      const localLocation = place?.label ?? nextLocation;
-      const local = Promise.allSettled([
-        searchProductScope(normalized, localLocation, "local-products", controller.signal, place),
-        searchProductScope(normalized, localLocation, "local", controller.signal, place),
-      ]).then((settled) => settled.forEach((item) => { if (item.status === "fulfilled") publish(item.value); }));
-      await Promise.allSettled([online, local]);
-      if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-      const final = collected.length ? mergeSearchResults(normalized, collected) : genericFallback(normalized); setSearchResult(final); return final;
-    }
-    finally { if (!controller.signal.aborted) { setLoading(false); setSearchingMore(false); } }
+      let place = nextLocation === location ? locationPlace : undefined;
+      if (nextLocation === "Current location" && !place) { try { place = await getBrowserLocation(); if (!controller.signal.aborted) setLocationPlace(place); } catch { place = undefined; } }
+      const result = await searchProducts(normalized, place?.label ?? nextLocation, controller.signal, place);
+      if (!controller.signal.aborted) setSearchResult(result);
+      return result;
+    } finally { if (!controller.signal.aborted) setLoading(false); }
   }, [location, locationPlace]);
   const search = () => { void performSearch(query); };
   const goHome = () => { setActiveQuery(null); setQuery(""); setSelected({}); setSearchResult(null); };
   const toggleFilter = (facet: string, value: string) => setSelected((current) => { const values = current[facet] ?? []; return { ...current, [facet]: values.includes(value) ? values.filter((item) => item !== value) : [...values, value] }; });
   const clearFilters = () => { setSelected({}); setShowUnverified(false); setDistance(50); setPriceMin(""); setPriceMax(""); };
   const runExample = (value: string) => { void performSearch(value); };
-  const filterProps = { facets: showcase.facets, selected, showUnverified, distance, priceMin, priceMax, onToggle: toggleFilter, onUnverified: setShowUnverified, onDistance: setDistance, onPriceMin: setPriceMin, onPriceMax: setPriceMax, onClear: clearFilters };
+  const filterProps = { facets: showcase.facets, selected, showUnverified, distance, priceMin, priceMax, currency: showcase.offers.find((offer) => offer.currency)?.currency ?? "USD", onToggle: toggleFilter, onUnverified: setShowUnverified, onDistance: setDistance, onPriceMin: setPriceMin, onPriceMax: setPriceMax, onClear: clearFilters };
 
   useEffect(() => registerShopNearMeTools({
     search: async (value, nextLocation) => { if (nextLocation) { setLocation(nextLocation); setLocationPlace(undefined); } return performSearch(value, nextLocation ?? location); },
@@ -101,7 +85,7 @@ export function App() {
   }), [location, performSearch, searchResult]);
 
   return <div className="app">
-    <Header location={location} onHome={goHome} onLocation={() => setLocationOpen(true)} />
+    <Header onHome={goHome} />
     {activeQuery === null ? <main className="home">
       <div className="home__content">
         <h1>Find the right product, at the right price.</h1>
@@ -120,22 +104,22 @@ export function App() {
         <FilterPanel {...filterProps} />
         <div className="results-main">
           <div className="mobile-toolbar">
-            <button type="button" className="mobile-filter-button" onClick={() => setFiltersOpen(true)}><SlidersHorizontal size={20} />Filters<ChevronRight size={20} /></button>
+            <button type="button" className="mobile-filter-button" onClick={(event) => { event.stopPropagation(); setFiltersOpen(true); }}><SlidersHorizontal size={20} />Filters<ChevronRight size={20} /></button>
             <SortMenu mobile value={sort} onChange={setSort} />
           </div>
           <div className={chips.length ? "result-controls" : "result-controls result-controls--empty"}>
             {chips.length > 0 && <div className="filter-chips">{chips.map(({ facet, value }) => <button key={`${facet}-${value}`} onClick={() => toggleFilter(facet, value)}>{value}<X size={14} /></button>)}<button className="clear-chip" onClick={clearFilters}>Clear all</button></div>}
-            <div className="results-meta"><span>{loading ? "Searching…" : `${visibleOffers.length} results`}{searchingMore && !loading && <small className="search-progress">Updating nearby stores and prices…</small>}</span><div className="sort-control"><span>Sort by</span><SortMenu value={sort} onChange={setSort} /></div></div>
+            <div className="results-meta"><span>{loading ? "Searching…" : `${visibleOffers.length} results`}</span><div className="sort-control"><span>Sort by</span><SortMenu value={sort} onChange={setSort} /></div></div>
           </div>
           <div className="offers-scroll">
             {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} />)}
             {loading && <div className="search-loading" aria-live="polite"><span /><strong>Searching stores and delivery sites…</strong></div>}
-            {!loading && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" ? "Verified prices are unavailable" : "No matching offers"}</h2><p>{showcase.source === "fallback" ? "You can still open retailer searches by including unverified offers." : "Clear a filter or try a broader search."}</p><button className="secondary-button" onClick={() => showcase.source === "fallback" ? setShowUnverified(true) : clearFilters()}>{showcase.source === "fallback" ? "Show unverified offers" : "Clear filters"}</button></div>}
+            {!loading && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" ? "Search temporarily unavailable" : "No matching offers"}</h2><p>{showcase.source === "fallback" ? "Please try again in a moment. No guessed retailer links are shown." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}
           </div>
         </div>
       </div>
     </main>}
-    {filtersOpen && <div className="drawer-backdrop" onMouseDown={() => setFiltersOpen(false)}><div onMouseDown={(event) => event.stopPropagation()}><FilterPanel {...filterProps} mobile onClose={() => setFiltersOpen(false)} /></div></div>}
+    {filtersOpen && <div className="drawer-backdrop" onClick={() => setFiltersOpen(false)}><div onClick={(event) => event.stopPropagation()}><FilterPanel {...filterProps} mobile onClose={() => setFiltersOpen(false)} /></div></div>}
     {locationOpen && <LocationModal current={location} initial={locationPlace} onClose={() => setLocationOpen(false)} onSelect={(value) => { setLocation(value.label); setLocationPlace(value); setLocationOpen(false); }} />}
   </div>;
 }

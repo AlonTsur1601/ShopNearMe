@@ -6,16 +6,8 @@ const demoQueries = /(sony|headphones?|wh-1000xm6)/i;
 export function isShowcaseQuery(query: string) { return demoQueries.test(query.trim()); }
 export type SearchScope = "online" | "local" | "local-products" | "all";
 
-function placeholder(query: string) {
-  const label = query.trim().slice(0, 2).toUpperCase().replace(/[<>&]/g, "") || "SN";
-  return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120"><rect width="160" height="120" rx="12" fill="#f3f7f8"/><circle cx="80" cy="54" r="26" fill="#d7eeee"/><text x="80" y="63" text-anchor="middle" font-family="Arial" font-size="24" font-weight="700" fill="#007b83">${label}</text><text x="80" y="99" text-anchor="middle" font-family="Arial" font-size="10" fill="#5d6675">Product search</text></svg>`)}`;
-}
-
 function genericFallback(query: string): ShowcaseSearch {
-  const encoded = encodeURIComponent(query), imageUrl = placeholder(query);
-  const merchants = [["Google Shopping", `https://www.google.com/search?tbm=shop&q=${encoded}`], ["eBay", `https://www.ebay.com/sch/i.html?_nkw=${encoded}`], ["Walmart", `https://www.walmart.com/search?q=${encoded}`]] as const;
-  const offers: Offer[] = merchants.map(([merchant, destinationUrl], index) => ({ id: `fallback-${index}`, category: index === 1 ? "secondHand" : "order", merchant, title: `${query} offers`, subtitle: index === 1 ? "New and pre-owned listings" : "Browse matching products", imageUrl, rating: 0, reviewCount: 0, itemPrice: null, shippingPrice: null, totalPrice: null, priceVerified: false, availability: "Open retailer", attributes: { retailer: merchant, condition: index === 1 ? "Used" : "New" }, destinationUrl, linkLabel: "Search retailer" }));
-  return { query, resultCount: offers.length, offers, facets: [{ id: "retailer", label: "Retailer", options: merchants.map(([value]) => ({ value, count: 1 })) }, { id: "condition", label: "Condition", options: [{ value: "New", count: 2 }, { value: "Used", count: 1 }] }], source: "fallback" };
+  return { query, resultCount: 0, offers: [], facets: [], source: "fallback" };
 }
 
 function facetsFor(offers: Offer[], results: ShowcaseSearch[]): Facet[] {

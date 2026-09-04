@@ -2,7 +2,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { SortDirection } from "../types";
 
-const options: Array<{ value: SortDirection; label: string }> = [{ value: "price-asc", label: "Price: Low to High" }, { value: "price-desc", label: "Price: High to Low" }];
+const options: Array<{ value: SortDirection; label: string }> = [{ value: "price-asc", label: "Price: Low to High" }, { value: "price-desc", label: "Price: High to Low" }, { value: "distance-asc", label: "Distance: Near to Far" }, { value: "distance-desc", label: "Distance: Far to Near" }];
 
 export function SortMenu({ value, onChange, mobile = false }: { value: SortDirection; onChange: (value: SortDirection) => void; mobile?: boolean }) {
   const [open, setOpen] = useState(false); const root = useRef<HTMLDivElement>(null); const selected = options.find((option) => option.value === value)!;
