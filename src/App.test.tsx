@@ -4,7 +4,13 @@ import { App } from "./App";
 import { clockShowcase } from "./data/showcase";
 import { OfferSection } from "./components/OfferSection";
 
-vi.mock("./services/productSearch", () => ({ searchProducts: vi.fn(async () => ({ ...clockShowcase, source: "showcase" })) }));
+vi.mock("./services/productSearch", () => ({
+  searchProducts: vi.fn(async () => ({ ...clockShowcase, source: "showcase" })),
+  isShowcaseQuery: vi.fn(() => true),
+  searchProductScope: vi.fn(),
+  mergeSearchResults: vi.fn(),
+  genericFallback: vi.fn(),
+}));
 
 describe("App", () => {
   beforeEach(() => { localStorage.clear(); });

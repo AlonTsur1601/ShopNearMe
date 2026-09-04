@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { safeHttpUrl, searchCatalog } from "./search.mjs";
+import { buildFacets, safeHttpUrl, searchCatalog, shortRetailerName } from "./search.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -14,6 +14,11 @@ describe("safeHttpUrl", () => {
 });
 
 describe("searchCatalog", () => {
+  it("hides sparse guessed facets that cannot provide a real choice", () => {
+    const offers = Array.from({ length: 8 }, (_, index) => ({ attributes: index === 0 ? { material: "Wood" } : {} }));
+    expect(buildFacets(offers, "generic product").some((facet) => facet.id === "material")).toBe(false);
+  });
+
   it("merges nearby Google Maps stores with shopping offers using the selected coordinates", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       const request = new URL(String(url));
@@ -32,9 +37,39 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("local");
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=where+to+buy+clock+test+local+merge");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
+  });
+
+  it("builds useful dining-table facets and concise retailer names", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const request = new URL(String(url));
+      if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
+        { position: 1, title: "72 inch solid wood extendable dining table for 8 people", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 800, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-8" },
+        { position: 2, title: "Round glass dining table with 4 chairs", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 650, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-4" },
+        { position: 3, title: "60 inch rectangular wood dining table", source: "Home Store - Official Site", extracted_price: 500, delivery: "Free shipping", product_link: "https://home.example/products/table" },
+      ] }) };
+      return { ok: true, json: async () => ({}) };
+    }));
+    const result = await searchCatalog("dining table facet coverage", "Tel Aviv, Israel", "facet-key", undefined, undefined, "online");
+    const facetIds = result.facets.map((facet) => facet.id);
+    expect(facetIds).toEqual(expect.arrayContaining(["tableSize", "material", "chairsIncluded", "extendable", "retailer"]));
+    expect(facetIds).not.toContain("style");
+    expect(result.facets.find((facet) => facet.id === "retailer")?.options.map(({ value }) => value)).toContain("SIHOO");
+    expect(shortRetailerName("SIHOO ישראל אתר היבואן הרשמי")).toBe("SIHOO");
+  });
+
+  it("coalesces identical in-flight scoped searches", async () => {
+    let release;
+    const fetchMock = vi.fn(() => new Promise((resolve) => { release = () => resolve({ ok: true, json: async () => ({ shopping_results: [] }) }); }));
+    vi.stubGlobal("fetch", fetchMock);
+    const first = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
+    const second = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toBe(b);
   });
 
   it("adds used eBay listings with item, shipping, and total prices", async () => {

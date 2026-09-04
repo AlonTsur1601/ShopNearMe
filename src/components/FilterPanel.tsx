@@ -9,6 +9,6 @@ export function FilterPanel({ facets, selected, showUnverified, distance, priceM
       <fieldset className="facet facet--distance"><legend>Distance<ChevronDown size={15} /></legend><input aria-label="Maximum distance" type="range" min="1" max="50" value={distance} onChange={(event) => onDistance(Number(event.target.value))} /><div className="range-labels"><span>1 mile</span><span>{distance} miles</span></div></fieldset>
       <fieldset className="facet"><legend>Total price<ChevronDown size={15} /></legend><div className="price-inputs"><label>$<input aria-label="Minimum price" placeholder="Min" inputMode="decimal" value={priceMin} onChange={(event) => onPriceMin(event.target.value)} /></label><label>$<input aria-label="Maximum price" placeholder="Max" inputMode="decimal" value={priceMax} onChange={(event) => onPriceMax(event.target.value)} /></label></div></fieldset>
       <label className="checkbox-row checkbox-row--unverified"><input type="checkbox" checked={showUnverified} onChange={(event) => onUnverified(event.target.checked)} /><span>Show offers with unverified prices</span></label>
-    </div><button type="button" className="secondary-button filter-apply" onClick={onClose}>Apply filters</button>
+    </div>
   </aside>;
 }

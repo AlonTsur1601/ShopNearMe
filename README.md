@@ -70,7 +70,7 @@ The repository includes a Vercel serverless endpoint at `api/search.js`, a `verc
 
 ## Gallery
 
-The curated gallery is in [`docs/gallery`](docs/gallery) and intentionally stays below the 25-image submission limit. It includes desktop, mobile, live arbitrary-product search, dynamic clock facets, and the OpenStreetMap location picker.
+The curated gallery is in [`docs/gallery`](docs/gallery) and intentionally stays below the 25-image submission limit. It includes desktop, mobile, live arbitrary-product search, dynamic product facets, priced nearby results, and the OpenStreetMap location picker.
 
 - [Home — desktop](docs/gallery/01-home-desktop.png)
 - [Home — mobile](docs/gallery/02-home-mobile.png)
@@ -81,6 +81,8 @@ The curated gallery is in [`docs/gallery`](docs/gallery) and intentionally stays
 - [Unverified-price opt-in](docs/gallery/07-unverified-price-opt-in.png)
 - [Custom sort menu — mobile](docs/gallery/08-custom-sort-mobile.png)
 - [Filter drawer — mobile](docs/gallery/09-filter-drawer-mobile.png)
+- [Dining table search with local prices and dynamic filters — desktop](docs/gallery/10-dining-table-desktop.png)
+- [Dining table search — mobile](docs/gallery/11-dining-table-mobile.png)
 
 ## Demo video
 

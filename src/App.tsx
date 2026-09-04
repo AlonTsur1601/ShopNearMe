@@ -1,5 +1,5 @@
 import { ChevronRight, SlidersHorizontal, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FilterPanel } from "./components/FilterPanel";
 import { Header } from "./components/Header";
 import { LocationModal, reversePlace, type LocationPlace } from "./components/LocationModal";
@@ -7,7 +7,7 @@ import { OfferSection } from "./components/OfferSection";
 import { SearchBar } from "./components/SearchBar";
 import { SortMenu } from "./components/SortMenu";
 import { getShowcase } from "./data/showcase";
-import { searchProducts } from "./services/productSearch";
+import { genericFallback, isShowcaseQuery, mergeSearchResults, searchProductScope, searchProducts } from "./services/productSearch";
 import type { OfferCategory, ShowcaseSearch, SortDirection } from "./types";
 import { registerShopNearMeTools } from "./webmcp";
 
@@ -40,6 +40,8 @@ export function App() {
   const [priceMax, setPriceMax] = useState("");
   const [searchResult, setSearchResult] = useState<ShowcaseSearch | null>(null);
   const [loading, setLoading] = useState(false);
+  const [searchingMore, setSearchingMore] = useState(false);
+  const searchController = useRef<AbortController | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(readRecent);
   const showcase = searchResult ?? getShowcase(activeQuery ?? "Sony WH-1000XM6");
 
@@ -62,15 +64,26 @@ export function App() {
   const chips = Object.entries(selected).flatMap(([facet, values]) => values.map((value) => ({ facet, value })));
   const performSearch = useCallback(async (nextQuery: string, nextLocation = location) => {
     const normalized = nextQuery.trim(); if (!normalized) return getShowcase("Sony WH-1000XM6");
-    setQuery(normalized); setActiveQuery(normalized); setSelected({}); setShowUnverified(false); setLoading(true);
+    searchController.current?.abort(); const controller = new AbortController(); searchController.current = controller;
+    setQuery(normalized); setActiveQuery(normalized); setSelected({}); setShowUnverified(false); setLoading(true); setSearchingMore(true); setSearchResult(null);
     setRecentSearches((current) => { const next = [normalized, ...current.filter((value) => value.toLowerCase() !== normalized.toLowerCase())].slice(0, 5); localStorage.setItem("shopnearme:recent", JSON.stringify(next)); return next; });
-    window.scrollTo({ top: 0, behavior: "smooth" });
     try {
-      let resolvedPlace = nextLocation === location ? locationPlace : undefined;
-      if (nextLocation === "Current location" && !resolvedPlace) { try { resolvedPlace = await getBrowserLocation(); setLocationPlace(resolvedPlace); } catch { resolvedPlace = undefined; } }
-      const result = await searchProducts(normalized, nextLocation, undefined, resolvedPlace); setSearchResult(result); return result;
+      if (isShowcaseQuery(normalized)) { const result = await searchProducts(normalized, nextLocation, controller.signal, locationPlace); setSearchResult(result); setLoading(false); return result; }
+      const collected: ShowcaseSearch[] = [];
+      const publish = (result: ShowcaseSearch) => { if (controller.signal.aborted) return; collected.push(result); setSearchResult(mergeSearchResults(normalized, collected)); setLoading(false); };
+      const locationPromise = (async () => { let place = nextLocation === location ? locationPlace : undefined; if (nextLocation === "Current location" && !place) { try { place = await getBrowserLocation(); if (!controller.signal.aborted) setLocationPlace(place); } catch { place = undefined; } } return place; })();
+      const online = searchProductScope(normalized, nextLocation, "online", controller.signal).then(publish).catch(() => undefined);
+      const place = await locationPromise;
+      const localLocation = place?.label ?? nextLocation;
+      const local = Promise.allSettled([
+        searchProductScope(normalized, localLocation, "local-products", controller.signal, place),
+        searchProductScope(normalized, localLocation, "local", controller.signal, place),
+      ]).then((settled) => settled.forEach((item) => { if (item.status === "fulfilled") publish(item.value); }));
+      await Promise.allSettled([online, local]);
+      if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      const final = collected.length ? mergeSearchResults(normalized, collected) : genericFallback(normalized); setSearchResult(final); return final;
     }
-    finally { setLoading(false); }
+    finally { if (!controller.signal.aborted) { setLoading(false); setSearchingMore(false); } }
   }, [location, locationPlace]);
   const search = () => { void performSearch(query); };
   const goHome = () => { setActiveQuery(null); setQuery(""); setSelected({}); setSearchResult(null); };
@@ -112,11 +125,13 @@ export function App() {
           </div>
           <div className={chips.length ? "result-controls" : "result-controls result-controls--empty"}>
             {chips.length > 0 && <div className="filter-chips">{chips.map(({ facet, value }) => <button key={`${facet}-${value}`} onClick={() => toggleFilter(facet, value)}>{value}<X size={14} /></button>)}<button className="clear-chip" onClick={clearFilters}>Clear all</button></div>}
-            <div className="results-meta"><span>{loading ? "Searching…" : `${visibleOffers.length} results`}</span><div className="sort-control"><span>Sort by</span><SortMenu value={sort} onChange={setSort} /></div></div>
+            <div className="results-meta"><span>{loading ? "Searching…" : `${visibleOffers.length} results`}{searchingMore && !loading && <small className="search-progress">Updating nearby stores and prices…</small>}</span><div className="sort-control"><span>Sort by</span><SortMenu value={sort} onChange={setSort} /></div></div>
           </div>
-          {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} />)}
-          {loading && <div className="search-loading" aria-live="polite"><span /><strong>Searching stores and delivery sites…</strong></div>}
-          {!loading && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" ? "Verified prices are unavailable" : "No matching offers"}</h2><p>{showcase.source === "fallback" ? "You can still open retailer searches by including unverified offers." : "Clear a filter or try a broader search."}</p><button className="secondary-button" onClick={() => showcase.source === "fallback" ? setShowUnverified(true) : clearFilters()}>{showcase.source === "fallback" ? "Show unverified offers" : "Clear filters"}</button></div>}
+          <div className="offers-scroll">
+            {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} />)}
+            {loading && <div className="search-loading" aria-live="polite"><span /><strong>Searching stores and delivery sites…</strong></div>}
+            {!loading && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" ? "Verified prices are unavailable" : "No matching offers"}</h2><p>{showcase.source === "fallback" ? "You can still open retailer searches by including unverified offers." : "Clear a filter or try a broader search."}</p><button className="secondary-button" onClick={() => showcase.source === "fallback" ? setShowUnverified(true) : clearFilters()}>{showcase.source === "fallback" ? "Show unverified offers" : "Clear filters"}</button></div>}
+          </div>
         </div>
       </div>
     </main>}
