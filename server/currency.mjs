@@ -27,7 +27,7 @@ export async function localizeOffers(offers, location) {
   return offers.map((offer) => {
     const source = offer.currency || "USD", conversion = rates.get(source);
     if (source === target || !conversion) return offer;
-    const convert = (value) => value === null ? null : Math.round(value * conversion.rate * 100) / 100;
-    return { ...offer, itemPrice: convert(offer.itemPrice), shippingPrice: convert(offer.shippingPrice), totalPrice: convert(offer.totalPrice), originalCurrency: source, currency: target, exchangeRateDate: conversion.date };
+    const convert = (value) => value == null ? value : Math.round(value * conversion.rate * 100) / 100;
+    return { ...offer, itemPrice: convert(offer.itemPrice), shippingPrice: convert(offer.shippingPrice), importTaxPrice: convert(offer.importTaxPrice), taxPrice: convert(offer.taxPrice), otherFeesPrice: convert(offer.otherFeesPrice), totalPrice: convert(offer.totalPrice), originalCurrency: source, currency: target, exchangeRateDate: conversion.date };
   });
 }

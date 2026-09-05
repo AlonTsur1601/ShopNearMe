@@ -1,4 +1,4 @@
-import { getShowcase } from "../data/showcase";
+import { facetValues } from "./facetValues";
 import type { LocationPlace } from "../components/LocationModal";
 import type { Facet, Offer, ShowcaseSearch } from "../types";
 
@@ -14,9 +14,9 @@ function facetsFor(offers: Offer[], results: ShowcaseSearch[]): Facet[] {
   const labels = new Map(results.flatMap((result) => result.facets.map((facet) => [facet.id, facet.label] as const)));
   return [...labels].map(([id, label]) => {
     const counts = new Map<string, number>();
-    for (const offer of offers) { const value = offer.attributes[id]; if (value) counts.set(value, (counts.get(value) ?? 0) + 1); }
+    for (const offer of offers) for (const value of new Set(facetValues(offer.attributes[id]))) counts.set(value, (counts.get(value) ?? 0) + 1);
     return { id, label, options: [...counts].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, count })) };
-  }).filter((facet) => facet.options.length >= 2);
+  }).filter((facet) => facet.options.length > 0);
 }
 
 export function mergeSearchResults(query: string, results: ShowcaseSearch[]): ShowcaseSearch {
@@ -38,7 +38,6 @@ export async function searchProductScope(query: string, location: string, scope:
 
 export async function searchProducts(query: string, location: string, signal?: AbortSignal, place?: LocationPlace): Promise<ShowcaseSearch> {
   const normalized = query.trim();
-  if (demoQueries.test(normalized)) return { ...getShowcase(normalized), source: "showcase" };
   try { return await searchProductScope(normalized, location, "all", signal, place); }
   catch (error) { if (error instanceof DOMException && error.name === "AbortError") throw error; return genericFallback(normalized); }
 }

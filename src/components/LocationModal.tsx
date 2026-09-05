@@ -2,15 +2,15 @@ import { Crosshair, MapPin, Search, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
+import { getCurrentLocation, reversePlace, type LocationPlace } from "../services/currentLocation";
+export { reversePlace, type LocationPlace } from "../services/currentLocation";
 
-export type LocationPlace = { label: string; lat: number; lon: number };
 type Place = LocationPlace;
 const pin = L.divIcon({ className: "shop-map-pin", html: '<span aria-hidden="true"></span>', iconSize: [42, 42], iconAnchor: [21, 40] });
 function Recenter({ place }: { place: Place }) { const map = useMap(); useEffect(() => { map.setView([place.lat, place.lon], map.getZoom() || 13); }, [map, place]); return null; }
 function ContainMapScroll() { const map = useMap(); useEffect(() => { L.DomEvent.disableScrollPropagation(map.getContainer()); }, [map]); return null; }
 function MapClick({ onPick }: { onPick: (lat: number, lon: number) => void }) { useMapEvents({ click: ({ latlng }) => onPick(latlng.lat, latlng.lng) }); return null; }
 function cachedPlace(key: string): Place[] | null { try { const value = sessionStorage.getItem(`place:${key.toLowerCase()}`); return value ? JSON.parse(value) as Place[] : null; } catch { return null; } }
-export async function reversePlace(lat: number, lon: number): Promise<Place> { const key = `reverse:${lat.toFixed(4)},${lon.toFixed(4)}`; const cached = cachedPlace(key); if (cached?.[0]) return cached[0]; const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`, { headers: { "Accept-Language": "en" } }); if (!response.ok) throw new Error("Unable to identify this location"); const value = await response.json() as { display_name?: string }; const place = { label: value.display_name ?? `${lat.toFixed(5)}, ${lon.toFixed(5)}`, lat, lon }; sessionStorage.setItem(`place:${key.toLowerCase()}`, JSON.stringify([place])); return place; }
 async function geocodePlace(query: string): Promise<Place[]> { const cached = cachedPlace(query); if (cached) return cached; const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=${encodeURIComponent(query)}`, { headers: { "Accept-Language": "en" } }); if (!response.ok) throw new Error("Unable to find that location"); const values = await response.json() as Array<{ display_name: string; lat: string; lon: string }>; const places = values.map((value) => ({ label: value.display_name, lat: Number(value.lat), lon: Number(value.lon) })); sessionStorage.setItem(`place:${query.toLowerCase()}`, JSON.stringify(places)); return places; }
 
 export function LocationModal({ current, initial, onClose, onSelect }: { current: string; initial?: LocationPlace; onClose: () => void; onSelect: (location: LocationPlace) => void; }) {
@@ -38,15 +38,13 @@ export function LocationModal({ current, initial, onClose, onSelect }: { current
   };
   const useCurrent = () => {
     setMapLoading(true); setLocationError("");
-    if (!navigator.geolocation) { setMapLoading(false); setLocationError("Location services are not available in this browser."); return; }
-    navigator.geolocation.getCurrentPosition(({ coords }) => { void pickMapPoint(coords.latitude, coords.longitude); }, () => { setMapLoading(false); setLocationError("Allow location access to center the map on your current position."); }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
+    void getCurrentLocation().then(place => { setDraft(place); setSearch(place.label); setMatches([]); }).catch(error => setLocationError(error.message)).finally(() => setMapLoading(false));
   };
   useEffect(() => {
     if (initial) { setDraft(initial); setMapLoading(false); return; }
     let active = true;
     if (current === "Current location") {
-      if (!navigator.geolocation) { setMapLoading(false); setLocationError("Location services are not available in this browser."); return; }
-      navigator.geolocation.getCurrentPosition(({ coords }) => { void reversePlace(coords.latitude, coords.longitude).catch(() => ({ label: "Current location", lat: coords.latitude, lon: coords.longitude })).then((place) => { if (active) { setDraft(place); setMapLoading(false); } }); }, () => { if (active) { setMapLoading(false); setLocationError("Allow location access to center the map on your current position."); } }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
+      void getCurrentLocation().then(place => { if (active) setDraft(place); }).catch(error => { if (active) setLocationError(error.message); }).finally(() => { if (active) setMapLoading(false); });
     } else {
       void geocodePlace(current).then((places) => { if (active && places[0]) setDraft(places[0]); }).catch(() => { if (active) setLocationError("We couldn't locate the selected place on the map."); }).finally(() => { if (active) setMapLoading(false); });
     }

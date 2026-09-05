@@ -1,4 +1,6 @@
+import { extractNamedSpecifications } from "./specifications.mjs";
 const pageCache = new Map();
+const pageRequests = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 
 function numeric(value) {
@@ -76,6 +78,7 @@ export function extractProductData(html, baseUrl = "") {
     isCatalog: found.length > 1 || /["']@type["']\s*:\s*["']ItemList["']/i.test(html),
     title: product.name || meta(html, "og:title"),
     brand: typeof product.brand === "string" ? product.brand : product.brand?.name,
+    specifications: extractNamedSpecifications(html, product),
     specificationText: [product.description, ...[product.additionalProperty ?? []].flat().map((property) => `${property.name ?? ""} ${property.value ?? ""} ${property.unitText ?? ""}`)].filter(Boolean).join(" ").replace(/<[^>]*>/g, " ").slice(0, 12000),
     imageUrl: webUrl(rawImage, baseUrl),
     price,
@@ -87,6 +90,7 @@ export async function enrichProductPage(value) {
   if (!url) return {};
   const cached = pageCache.get(url);
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
+  if (pageRequests.has(url)) return pageRequests.get(url);
   const controller = new AbortController();
   let timer;
   const request = (async () => {
@@ -99,5 +103,7 @@ export async function enrichProductPage(value) {
     } catch { return {}; }
   })();
   const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({}); }, 5500); });
-  try { return await Promise.race([request, timeout]); } finally { clearTimeout(timer); }
+  const pending = Promise.race([request, timeout]).finally(() => { clearTimeout(timer); pageRequests.delete(url); });
+  pageRequests.set(url, pending);
+  return pending;
 }

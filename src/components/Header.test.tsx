@@ -1,0 +1,23 @@
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { Header } from "./Header";
+afterEach(() => { localStorage.clear(); vi.unstubAllGlobals(); delete document.documentElement.dataset.theme; });
+it("defaults to system, responds to system changes and preserves an explicit override", () => {
+  let matches = true;
+  const callbacks = new Set<() => void>();
+  vi.stubGlobal("matchMedia", () => ({ get matches() { return matches; }, addEventListener: (_: string, fn: () => void) => callbacks.add(fn), removeEventListener: (_: string, fn: () => void) => callbacks.delete(fn) }));
+  const view = render(<Header onHome={() => {}} />);
+  expect(screen.getByRole("button", { name: "System theme" })).toHaveAttribute("aria-pressed", "true");
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  act(() => { matches = false; callbacks.forEach(fn => fn()); });
+  expect(document.documentElement.dataset.theme).toBe("light");
+  fireEvent.click(screen.getByRole("button", { name: "Dark theme" }));
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  act(() => { matches = false; callbacks.forEach(fn => fn()); });
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  view.unmount();
+  render(<Header onHome={() => {}} />);
+  expect(screen.getByRole("button", { name: "Dark theme" })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(screen.getByRole("button", { name: "System theme" }));
+  expect(document.documentElement.dataset.theme).toBe("light");
+});

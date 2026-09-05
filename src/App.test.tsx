@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { searchProducts } from "./services/productSearch";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { clockShowcase } from "./data/showcase";
 import { OfferSection } from "./components/OfferSection";
@@ -14,7 +14,35 @@ vi.mock("./services/productSearch", () => ({
 }));
 
 describe("App", () => {
-  beforeEach(() => { localStorage.clear(); });
+  beforeEach(() => { localStorage.clear(); vi.mocked(searchProducts).mockClear(); });
+  afterEach(() => { vi.unstubAllGlobals(); sessionStorage.clear(); });
+
+  it("automatically uses default current-location coordinates without manually choosing a place", async () => {
+    const get = vi.fn(success => success({ coords: { latitude: 32.084, longitude: 34.887 } }));
+    vi.stubGlobal("navigator", Object.create(navigator, { geolocation: { value: { getCurrentPosition: get } } }));
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ address: { city: "Petah Tikva", country: "Israel" } }) })));
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
+    await waitFor(() => expect(searchProducts).toHaveBeenCalledWith("clock", "Petah Tikva, Israel", expect.any(AbortSignal), { label: "Petah Tikva, Israel", lat: 32.084, lon: 34.887 }));
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Choose a location to include nearby stores.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Search$/ }));
+    await waitFor(() => expect(searchProducts).toHaveBeenCalledTimes(2));
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("displays the shipment total and item, shipping and import breakdown without changing local prices", () => {
+    const offer = { ...clockShowcase.offers[0], id: "fees", category: "order" as const, itemPrice: 100, shippingPrice: 20, importTaxPrice: 12, totalPrice: 132, currency: "USD" };
+    const view = render(<OfferSection category="order" offers={[offer]} distanceUnit="km" />);
+    expect(screen.getByText("$132.00")).toBeVisible();
+    expect(screen.getByText("Item: $100.00")).toBeVisible();
+    expect(screen.getByText("Shipping: $20.00")).toBeVisible();
+    expect(screen.getByText("Import taxes: $12.00")).toBeVisible();
+    view.rerender(<OfferSection category="local" offers={[{ ...offer, totalPrice: 100 }]} distanceUnit="km" />);
+    expect(screen.getByText("$100.00")).toBeVisible();
+    expect(screen.queryByText(/Item:/)).not.toBeInTheDocument();
+  });
 
   it("renders the approved home search surface without random suggestions", () => {
     render(<App />);

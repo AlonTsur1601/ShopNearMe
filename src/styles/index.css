@@ -50,6 +50,10 @@ a {
 .app { width: 100%; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: var(--surface-subtle); }
 .results-page { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--surface-subtle); }
 .site-header { height: 58px; flex: 0 0 58px; padding: 0 24px; display: flex; align-items: center; justify-content: flex-start; border-bottom: 1px solid var(--border); background: #fff; box-shadow: 0 1px 5px rgb(15 23 42 / .04); z-index: 10; }
+.theme-switch { margin-left: auto; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); }
+.theme-switch button { min-height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.theme-switch button[aria-pressed="true"] { background: var(--surface); color: var(--teal-dark); box-shadow: 0 1px 4px rgb(0 0 0 / .12); }
+.theme-switch button:focus-visible { outline: 2px solid var(--teal-dark); outline-offset: 2px; }
 .brand { border: 0; background: none; padding: 0; color: var(--navy); font-size: 29px; font-weight: 750; letter-spacing: -0.045em; cursor: pointer; }
 .location-control { min-height: 38px; max-width: min(310px, 46vw); display: flex; align-items: center; gap: 9px; padding: 0 13px; border: 1px solid #c9d1dc; border-radius: var(--radius-sm); background: #fff; color: var(--ink); cursor: pointer; }
 .location-control span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -228,6 +232,8 @@ a {
 }
 
 @media (max-width: 620px) {
+  .theme-switch button { width: 32px; padding: 0; justify-content: center; }
+  .theme-switch button span { display: none; }
   .results-page > .search-bar { min-height: 60px; grid-template-columns: minmax(0, 1fr) 88px 72px; grid-template-rows: 42px; gap: 0; padding: 9px 10px; }
   .results-page > .search-bar .search-field { grid-column: 1; grid-row: 1; border-radius: 8px 0 0 8px; }
   .results-page > .search-bar .search-location { grid-column: 2; grid-row: 1; min-width: 0; padding: 0 7px; border-left: 0; font-size: 11px; }
@@ -275,3 +281,28 @@ a {
   .offer-row { grid-template-columns: 104px minmax(0, 1fr); grid-template-areas: "image merchant" "image specs" "image availability" "price price" "link link"; }
   .offer-row > .product-image { width: 86px; }
 }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  color: #e5edf6; background: #0d1520;
+  --ink: #e5edf6; --navy: #f1f6fc; --muted: #a7b5c7;
+  --surface: #151f2d; --surface-subtle: #0d1520;
+  --border: #39485b; --border-soft: #2b3849;
+  --teal: #007d83; --teal-dark: #77d9dc; --teal-soft: #18363d;
+  --blue: #80b7ff; --green: #73dda1; --green-soft: #173b2d;
+  --red: #ffa5ad; --red-soft: #3d232c;
+}
+:root[data-theme="light"] { color-scheme: light; }
+[data-theme="dark"] :is(.site-header,.home,.search-bar,.search-field,.search-location,.filters,.offer-section,.sort-menu__trigger,.sort-menu__options,.location-modal,.modal-search button,.current-location-button,.location-suggestions button,.mobile-filter-button,.example-searches button,.location-control) { background: var(--surface); border-color: var(--border); }
+[data-theme="dark"] :is(.checkbox-row,.offer-section h2,.sort-menu__options button,.location-suggestions button) { color: var(--ink); }
+[data-theme="dark"] :is(.price-inputs input,.modal-search input) { background: transparent; color: var(--ink); }
+[data-theme="dark"] .offer-table-heading { background: var(--surface-subtle); color: var(--muted); }
+[data-theme="dark"] :is(.offer-row:hover,.sort-menu__options button:hover,.sort-menu__options button:focus-visible) { background: #1a2c3a; }
+[data-theme="dark"] .filter-chips button { background: var(--teal-soft); color: var(--teal-dark); border-color: #38616a; }
+[data-theme="dark"] .secondary-button:not(.offer-link) { background: var(--surface); color: var(--teal-dark); }
+[data-theme="dark"] :is(.offer-link:hover,.primary-button:hover) { background: #006e75; }
+[data-theme="dark"] .pickup-label { background: #153b4b; color: #91d8ef; }
+[data-theme="dark"] .product-image--empty { background: var(--surface-subtle) !important; }
+[data-theme="dark"] .search-warning { background: #352d20; color: #f3d397; border-color: #675534; }
+[data-theme="dark"] .map-loading { background: rgb(13 21 32 / .8); }
+.offer-price small { display: block; line-height: 1.4; overflow-wrap: anywhere; }

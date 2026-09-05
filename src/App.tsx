@@ -2,7 +2,8 @@ import { ChevronRight, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FilterPanel } from "./components/FilterPanel";
 import { Header } from "./components/Header";
-import { LocationModal, reversePlace, type LocationPlace } from "./components/LocationModal";
+import { LocationModal, type LocationPlace } from "./components/LocationModal";
+import { getCurrentLocation } from "./services/currentLocation";
 import { OfferSection } from "./components/OfferSection";
 import { SearchBar } from "./components/SearchBar";
 import { SortMenu } from "./components/SortMenu";
@@ -10,12 +11,12 @@ import { getShowcase } from "./data/showcase";
 import { searchProducts } from "./services/productSearch";
 import { recommendationsFor } from "./services/recommendations";
 import { distanceUnitFor } from "./services/distance";
+import { matchesFacets } from "./services/facetValues";
 import type { OfferCategory, ShowcaseSearch, SortDirection } from "./types";
 import { registerShopNearMeTools } from "./webmcp";
 
 const categories: OfferCategory[] = ["local", "order", "secondHand"];
 function readRecent(): string[] { try { return JSON.parse(localStorage.getItem("shopnearme:recent") ?? "[]") as string[]; } catch { return []; } }
-function getBrowserLocation(): Promise<LocationPlace> { return new Promise((resolve, reject) => { if (!navigator.geolocation) { reject(new Error("Geolocation unavailable")); return; } navigator.geolocation.getCurrentPosition(({ coords }) => { void reversePlace(coords.latitude, coords.longitude).catch(() => ({ label: "Current location", lat: coords.latitude, lon: coords.longitude })).then(resolve); }, reject, { enableHighAccuracy: false, timeout: 3000, maximumAge: 300000 }); }); }
 
 export function App() {
   const [query, setQuery] = useState("");
@@ -31,6 +32,7 @@ export function App() {
   const [priceMax, setPriceMax] = useState("");
   const [searchResult, setSearchResult] = useState<ShowcaseSearch | null>(null);
   const [loading, setLoading] = useState(false);
+  const [locating, setLocating] = useState(false);
   const searchController = useRef<AbortController | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(readRecent);
   const showcase: ShowcaseSearch = searchResult ?? { query: activeQuery ?? "", offers: [], facets: [], resultCount: 0 };
@@ -40,7 +42,7 @@ export function App() {
       if (offer.distanceMiles !== undefined && offer.distanceMiles > distance) return false;
       if (priceMin && (offer.totalPrice === null || offer.totalPrice < Number(priceMin))) return false;
       if (priceMax && (offer.totalPrice === null || offer.totalPrice > Number(priceMax))) return false;
-      return Object.entries(selected).every(([facet, values]) => !values.length || values.includes(offer.attributes[facet]));
+      return matchesFacets(offer.attributes, selected);
     });
     return [...offers].sort((a, b) => {
       if (sort.startsWith("distance")) {
@@ -62,11 +64,19 @@ export function App() {
     setRecentSearches((current) => { const next = [normalized, ...current.filter((value) => value.toLowerCase() !== normalized.toLowerCase())].slice(0, 5); localStorage.setItem("shopnearme:recent", JSON.stringify(next)); return next; });
     try {
       let place = nextLocation === location ? locationPlace : undefined;
-      if (nextLocation === "Current location" && !place) { try { place = await getBrowserLocation(); if (!controller.signal.aborted) setLocationPlace(place); } catch { place = undefined; } }
-      const result = await searchProducts(normalized, place?.label ?? nextLocation, controller.signal, place);
+      let locationWarning: string | undefined;
+      if (nextLocation === "Current location" && !place) {
+        setLocating(true);
+        try { place = await getCurrentLocation(); if (!controller.signal.aborted) setLocationPlace(place); }
+        catch (error) { locationWarning = error instanceof Error ? error.message : "Your location could not be determined."; }
+        finally { if (!controller.signal.aborted) setLocating(false); }
+      }
+      if (controller.signal.aborted) return { query: normalized, resultCount: 0, offers: [], facets: [] };
+      const response = await searchProducts(normalized, place?.label ?? nextLocation, controller.signal, place);
+      const result = locationWarning ? { ...response, warnings: [...new Set([...(response.warnings ?? []).filter(warning => warning !== "Choose a location to include nearby stores."), locationWarning])] } : response;
       if (!controller.signal.aborted) setSearchResult(result);
       return result;
-    } finally { if (!controller.signal.aborted) setLoading(false); }
+    } finally { if (!controller.signal.aborted) { setLoading(false); setLocating(false); } }
   }, [location, locationPlace]);
   const search = () => { void performSearch(query); };
   const goHome = () => { setActiveQuery(null); setQuery(""); setSelected({}); setSearchResult(null); };
@@ -114,7 +124,7 @@ export function App() {
           <div className="offers-scroll">
             {!loading && showcase.warnings?.map((warning) => <p className="search-warning" role="status" key={warning}>{warning}</p>)}
             {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} distanceUnit={distanceUnit} />)}
-            {loading && <div className="search-loading" aria-live="polite"><span /><strong>Searching stores and delivery sites…</strong></div>}
+            {loading && <div className="search-loading" aria-live="polite"><span /><strong>{locating ? "Finding your current location…" : "Searching stores and delivery sites…"}</strong></div>}
             {!loading && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" ? "Search temporarily unavailable" : "No matching offers"}</h2><p>{showcase.source === "fallback" ? "Please try again in a moment. No guessed retailer links are shown." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}
           </div>
         </div>
