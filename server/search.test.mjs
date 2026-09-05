@@ -11,6 +11,7 @@ describe("safeHttpUrl", () => {
     expect(safeHttpUrl("javascript:alert(1)", "https://www.google.com/shopping")).toBe("https://www.google.com/shopping");
     expect(safeHttpUrl("data:text/html,unsafe", "")).toBe("");
     expect(safeHttpUrl("not a url", "https://fallback.example/")).toBe("https://fallback.example/");
+    expect(safeHttpUrl("https://shop.example/item?id\\u003d1\\u0026color\\u003dblack")).toBe("https://shop.example/item?id=1&color=black");
   });
 });
 
@@ -18,6 +19,11 @@ describe("product page enrichment", () => {
   it("extracts the actual product image, price, currency, and brand from JSON-LD", () => {
     const data = extractProductData(`<script type="application/ld+json">{"@type":"Product","name":"Oak dining table","brand":{"name":"Furni"},"image":"https://shop.example/table.jpg","offers":{"@type":"Offer","price":"1299","priceCurrency":"ILS"}}</script>`);
     expect(data).toMatchObject({ title: "Oak dining table", brand: "Furni", imageUrl: "https://shop.example/table.jpg", price: 1299, currency: "ILS" });
+  });
+
+  it("extracts localized visible prices and relative product images without JSON-LD", () => {
+    const data = extractProductData(`<meta property="og:title" content="MSI MAG A750GL PSU"><meta property="og:image" content="/media/psu.jpg"><meta itemprop="priceCurrency" content="ILS"><span class="price">1.299,00 ₪</span>`, "https://shop.example/products/psu");
+    expect(data).toMatchObject({ title: "MSI MAG A750GL PSU", imageUrl: "https://shop.example/media/psu.jpg", price: 1299, currency: "ILS" });
   });
 });
 
@@ -66,6 +72,34 @@ describe("searchCatalog", () => {
     expect(facetIds).not.toContain("style");
     expect(result.facets.find((facet) => facet.id === "retailer")?.options.map(({ value }) => value)).toContain("SIHOO");
     expect(shortRetailerName("SIHOO ישראל אתר היבואן הרשמי")).toBe("SIHOO");
+  });
+
+  it("builds useful PSU facets from real offer specifications", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const request = new URL(String(url));
+      if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
+        { position: 1, title: "MSI MAG A750GL PSU 750W 80 Plus Gold Fully Modular ATX PCIe 5.0", source: "PC One", extracted_price: 499, delivery: "Free shipping", product_link: "https://pc-one.example/psu750", thumbnail: "https://img.example/750.jpg" },
+        { position: 2, title: "Corsair PSU 1000W 80 Plus Platinum Semi Modular ATX PCIe 4.0", source: "PC Two", extracted_price: 799, delivery: "Free shipping", product_link: "https://pc-two.example/psu1000", thumbnail: "https://img.example/1000.jpg" },
+      ] }) };
+      return { ok: true, json: async () => ({}) };
+    }));
+    const result = await searchCatalog("PSU", "Tel Aviv, Israel", "facet-key", undefined, undefined, "online");
+    expect(result.facets.map(({ id }) => id)).toEqual(expect.arrayContaining(["wattage", "efficiency", "modularity", "pcie", "retailer"]));
+  });
+
+  it("merges a nearby store with its actual local product page price, image, distance, and facets", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const request = new URL(String(url));
+      if (request.hostname === "local-pc.co.il") return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">{"@type":"Product","name":"MSI MAG A750GL PSU 750W 80 Plus Gold Fully Modular","image":"/psu.jpg","offers":{"price":"529"}}</script>` };
+      if (request.searchParams.get("engine") === "google_maps") return { ok: true, json: async () => ({ local_results: [{ title: "Local PC", type: "Computer store", website: "https://local-pc.co.il", gps_coordinates: { latitude: 32.081, longitude: 34.781 } }] }) };
+      if (request.searchParams.get("engine") === "google") return { ok: true, json: async () => ({ organic_results: [{ title: "MSI MAG A750GL PSU 750W 80 Plus Gold Fully Modular", link: "https://local-pc.co.il/products/a750gl", source: "Local PC", snippet: "750W 80 Plus Gold fully modular power supply — 529 ₪" }] }) };
+      return { ok: true, json: async () => ({ shopping_results: [] }) };
+    }));
+    const result = await searchCatalog("MSI MAG PSU", "Tel Aviv, Israel", "local-product-key", { lat: 32.08, lon: 34.78 });
+    const offer = result.offers.find(({ merchant }) => merchant === "Local PC");
+    expect(offer).toMatchObject({ category: "local", itemPrice: 529, currency: "ILS", imageUrl: "https://local-pc.co.il/psu.jpg", linkLabel: "View product" });
+    expect(offer.distanceMiles).toBeGreaterThan(0);
+    expect(offer.attributes).toMatchObject({ wattage: "700–899 W", efficiency: "80 Plus Gold", modularity: "Fully modular" });
   });
 
   it("coalesces identical in-flight scoped searches", async () => {

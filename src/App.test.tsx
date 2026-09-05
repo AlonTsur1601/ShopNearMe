@@ -52,10 +52,11 @@ describe("App", () => {
     expect(screen.getAllByLabelText("Product filters")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Close filters" }));
     expect(screen.getAllByLabelText("Product filters")).toHaveLength(1);
+    expect(screen.queryByText(/unverified prices/i)).not.toBeInTheDocument();
   });
 
   it("does not render an empty shopping category", () => {
-    render(<OfferSection category="local" offers={[]} />);
+    render(<OfferSection category="local" offers={[]} distanceUnit="km" />);
     expect(screen.queryByRole("heading", { name: /Buy in store/ })).not.toBeInTheDocument();
   });
 });

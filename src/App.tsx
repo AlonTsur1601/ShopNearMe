@@ -9,6 +9,7 @@ import { SortMenu } from "./components/SortMenu";
 import { getShowcase } from "./data/showcase";
 import { searchProducts } from "./services/productSearch";
 import { recommendationsFor } from "./services/recommendations";
+import { distanceUnitFor } from "./services/distance";
 import type { OfferCategory, ShowcaseSearch, SortDirection } from "./types";
 import { registerShopNearMeTools } from "./webmcp";
 
@@ -25,7 +26,6 @@ export function App() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sort, setSort] = useState<SortDirection>("price-asc");
   const [selected, setSelected] = useState<Record<string, string[]>>({});
-  const [showUnverified, setShowUnverified] = useState(false);
   const [distance, setDistance] = useState(50);
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
@@ -37,7 +37,6 @@ export function App() {
 
   const visibleOffers = useMemo(() => {
     const offers = showcase.offers.filter((offer) => {
-      if (!offer.priceVerified && !showUnverified && offer.category !== "local") return false;
       if (offer.distanceMiles !== undefined && offer.distanceMiles > distance) return false;
       if (priceMin && (offer.totalPrice === null || offer.totalPrice < Number(priceMin))) return false;
       if (priceMax && (offer.totalPrice === null || offer.totalPrice > Number(priceMax))) return false;
@@ -53,13 +52,13 @@ export function App() {
       if (b.totalPrice === null) return -1;
       return sort === "price-asc" ? a.totalPrice - b.totalPrice : b.totalPrice - a.totalPrice;
     });
-  }, [distance, priceMax, priceMin, selected, showcase.offers, showUnverified, sort]);
+  }, [distance, priceMax, priceMin, selected, showcase.offers, sort]);
 
   const chips = Object.entries(selected).flatMap(([facet, values]) => values.map((value) => ({ facet, value })));
   const performSearch = useCallback(async (nextQuery: string, nextLocation = location) => {
     const normalized = nextQuery.trim(); if (!normalized) return getShowcase("Sony WH-1000XM6");
     searchController.current?.abort(); const controller = new AbortController(); searchController.current = controller;
-    setQuery(normalized); setActiveQuery(normalized); setSelected({}); setShowUnverified(false); setLoading(true); setSearchResult(null);
+    setQuery(normalized); setActiveQuery(normalized); setSelected({}); setLoading(true); setSearchResult(null);
     setRecentSearches((current) => { const next = [normalized, ...current.filter((value) => value.toLowerCase() !== normalized.toLowerCase())].slice(0, 5); localStorage.setItem("shopnearme:recent", JSON.stringify(next)); return next; });
     try {
       let place = nextLocation === location ? locationPlace : undefined;
@@ -72,15 +71,16 @@ export function App() {
   const search = () => { void performSearch(query); };
   const goHome = () => { setActiveQuery(null); setQuery(""); setSelected({}); setSearchResult(null); };
   const toggleFilter = (facet: string, value: string) => setSelected((current) => { const values = current[facet] ?? []; return { ...current, [facet]: values.includes(value) ? values.filter((item) => item !== value) : [...values, value] }; });
-  const clearFilters = () => { setSelected({}); setShowUnverified(false); setDistance(50); setPriceMin(""); setPriceMax(""); };
+  const clearFilters = () => { setSelected({}); setDistance(50); setPriceMin(""); setPriceMax(""); };
   const runExample = (value: string) => { void performSearch(value); };
-  const filterProps = { facets: showcase.facets, selected, showUnverified, distance, priceMin, priceMax, currency: showcase.offers.find((offer) => offer.currency)?.currency ?? "USD", onToggle: toggleFilter, onUnverified: setShowUnverified, onDistance: setDistance, onPriceMin: setPriceMin, onPriceMax: setPriceMax, onClear: clearFilters };
+  const distanceUnit = distanceUnitFor(locationPlace?.label ?? location);
+  const filterProps = { facets: showcase.facets, selected, distance, distanceUnit, priceMin, priceMax, currency: showcase.offers.find((offer) => offer.currency)?.currency ?? "USD", onToggle: toggleFilter, onDistance: setDistance, onPriceMin: setPriceMin, onPriceMax: setPriceMax, onClear: clearFilters };
 
   useEffect(() => registerShopNearMeTools({
     search: async (value, nextLocation) => { if (nextLocation) { setLocation(nextLocation); setLocationPlace(undefined); } return performSearch(value, nextLocation ?? location); },
     setLocation: (value) => { setLocation(value); setLocationPlace(undefined); },
     getResults: () => searchResult,
-    setFilters: (filters, includeUnverified) => { setSelected(filters); setShowUnverified(Boolean(includeUnverified)); },
+    setFilters: (filters) => { setSelected(filters); },
     setSort,
   }), [location, performSearch, searchResult]);
 
@@ -112,7 +112,7 @@ export function App() {
             <div className="results-meta"><span>{loading ? "Searching…" : `${visibleOffers.length} results`}</span><div className="sort-control"><span>Sort by</span><SortMenu value={sort} onChange={setSort} /></div></div>
           </div>
           <div className="offers-scroll">
-            {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} />)}
+            {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} distanceUnit={distanceUnit} />)}
             {loading && <div className="search-loading" aria-live="polite"><span /><strong>Searching stores and delivery sites…</strong></div>}
             {!loading && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" ? "Search temporarily unavailable" : "No matching offers"}</h2><p>{showcase.source === "fallback" ? "Please try again in a moment. No guessed retailer links are shown." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}
           </div>
