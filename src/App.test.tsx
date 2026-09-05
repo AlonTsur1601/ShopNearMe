@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { searchProducts } from "./services/productSearch";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { clockShowcase } from "./data/showcase";
@@ -34,6 +35,23 @@ describe("App", () => {
     expect(localHeading.compareDocumentPosition(onlineHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("hides all filters until the pending search has returned real results", async () => {
+    let release!: (value: typeof clockShowcase) => void;
+    vi.mocked(searchProducts).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(release).toBeDefined());
+    expect(screen.queryByLabelText("Product filters")).not.toBeInTheDocument();
+    expect(screen.queryByText("Clock type")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Filters" })).toBeDisabled();
+    await act(async () => release(clockShowcase));
+    expect(screen.getByLabelText("Product filters")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Filters" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Wall clock/ }));
+    expect(screen.queryByRole("heading", { name: /Second hand/ })).not.toBeInTheDocument();
+  });
+
   it("registers the agent-facing WebMCP surface when supported", () => {
     const registerTool = vi.fn();
     Object.defineProperty(document, "modelContext", { configurable: true, value: { registerTool } });
@@ -47,7 +65,7 @@ describe("App", () => {
     render(<App />);
     fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Filters" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Filters" }));
     expect(screen.getAllByLabelText("Product filters")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Close filters" }));

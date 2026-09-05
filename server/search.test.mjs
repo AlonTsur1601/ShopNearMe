@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildFacets, safeHttpUrl, searchCatalog, shortRetailerName } from "./search.mjs";
+import { buildFacets, isRelevantProduct, providerLocation, safeHttpUrl, searchCatalog, shortRetailerName } from "./search.mjs";
 import { extractProductData } from "./product-page.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -28,6 +28,55 @@ describe("product page enrichment", () => {
 });
 
 describe("searchCatalog", () => {
+  it("normalizes reverse-geocoded addresses and retries rejected provider locations", async () => {
+    const address = "HaSadna Street, Petah Tikva, Petah Tikva Subdistrict, Center District, Israel";
+    expect(providerLocation(address)).toBe("Petah Tikva, Israel");
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const request = new URL(String(url));
+      if (request.searchParams.has("location")) return { ok: false, status: 400, json: async () => ({ error: "Unsupported location - location parameter" }) };
+      return { ok: true, json: async () => ({ shopping_results: [{ title: "מסך OLED QHD 240Hz", source: "Monitor Store", extracted_price: 1500, price: "1500 ₪", link: "https://screen.example/oled", thumbnail: "https://screen.example/oled.jpg" }] }) };
+    }));
+    const result = await searchCatalog("OLED 1440p monitor retry", address, "test", undefined, undefined, "online");
+    expect(result.offers).toHaveLength(1);
+    expect(result.offers[0].category).toBe("order");
+    expect(result.warnings).toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(new URL(vi.mocked(fetch).mock.calls[1][0]).searchParams.get("gl")).toBe("il");
+  });
+
+  it("resolves retailer links, shipping and monitor facets from product groups", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const request = new URL(String(url));
+      if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [{ title: "OLED monitor", product_id: "screen", product_link: "https://google.com/search?q=screen", immersive_product_page_token: "fixture", thumbnail: "https://img.example/screen.jpg" }] }) };
+      return { ok: true, json: async () => ({ product_results: { stores: [
+        { name: "Screen One", title: '27 inch QD-OLED QHD monitor 240Hz 0.03ms', link: "https://screen.example/product/a", price: "1500 ₪", extracted_price: 1500, shipping_extracted: 40 },
+        { name: "Screen Two", title: '32 inch WOLED 1440p monitor 360Hz 0.02ms', link: "https://screen.example/product/b", price: "2000 ₪", extracted_price: 2000, shipping: "Free" },
+      ] } }) };
+    }));
+    const result = await searchCatalog("OLED monitor grouped", "Israel", "test", undefined, undefined, "online");
+    expect(result.offers.map(o => o.totalPrice)).toEqual([1540, 2000]);
+    expect(result.offers.every(o => new URL(o.destinationUrl).hostname === "screen.example")).toBe(true);
+    expect(result.facets.map(f => f.id)).toEqual(expect.arrayContaining(["screenSize", "displayType", "refreshRate", "responseTime"]));
+    expect(isRelevantProduct("מסך IPS 1080p", "OLED 1440p monitor")).toBe(false);
+    expect(isRelevantProduct("מסך QD-OLED QHD", "OLED 1440p monitor")).toBe(true);
+  });
+
+  it("does not cache incomplete provider results as a successful full search", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ error: "Temporarily unavailable" }) })));
+    const first = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
+    const second = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
+    expect(first.warnings).toEqual(["Online stores could not be searched. Please try again."]);
+    expect(second.warnings).toEqual(first.warnings);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads structured specifications but identifies category pages", () => {
+    const data = extractProductData('<script type="application/ld+json">{"@type":"Product","name":"Monitor","description":"OLED QHD","additionalProperty":[{"name":"Refresh rate","value":240,"unitText":"Hz"}]}</script>');
+    expect(data.specificationText).toContain("240 Hz");
+    expect(data.isCatalog).toBe(false);
+    expect(extractProductData('<script type="application/ld+json">{"@type":"ItemList","itemListElement":[{"@type":"Product","name":"A"},{"@type":"Product","name":"B"}]}</script>').isCatalog).toBe(true);
+  });
+
   it("hides sparse guessed facets that cannot provide a real choice", () => {
     const offers = Array.from({ length: 8 }, (_, index) => ({ attributes: index === 0 ? { material: "Wood" } : {} }));
     expect(buildFacets(offers, "generic product").some((facet) => facet.id === "material")).toBe(false);
@@ -52,7 +101,7 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("local");
     expect(fetch).toHaveBeenCalledTimes(3);
-    expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=where+to+buy+clock+test+local+merge");
+    expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
   });
 

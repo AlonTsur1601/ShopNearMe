@@ -3,5 +3,5 @@ export type Offer = { id: string; category: OfferCategory; merchant: string; mer
 export type FacetOption = { value: string; count: number; };
 export type Facet = { id: string; label: string; options: FacetOption[]; };
 export type SearchSource = "showcase" | "live" | "fallback";
-export type ShowcaseSearch = { query: string; resultCount: number; offers: Offer[]; facets: Facet[]; source?: SearchSource; };
+export type ShowcaseSearch = { query: string; resultCount: number; offers: Offer[]; facets: Facet[]; source?: SearchSource; warnings?: string[]; };
 export type SortDirection = "price-asc" | "price-desc" | "distance-asc" | "distance-desc";

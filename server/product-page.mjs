@@ -73,8 +73,10 @@ export function extractProductData(html, baseUrl = "") {
   const currency = currencyText.match(/\b(ILS|USD|EUR|GBP|CAD|AUD|JPY|CHF|SEK|NOK|DKK|PLN|CZK|NZD)\b/i)?.[1]
     || (/₪|NIS|ILS/i.test(visiblePrice?.[0] ?? "") ? "ILS" : /€|EUR/i.test(visiblePrice?.[0] ?? "") ? "EUR" : /£|GBP/i.test(visiblePrice?.[0] ?? "") ? "GBP" : /\$|USD/i.test(visiblePrice?.[0] ?? "") ? "USD" : "USD");
   return {
+    isCatalog: found.length > 1 || /["']@type["']\s*:\s*["']ItemList["']/i.test(html),
     title: product.name || meta(html, "og:title"),
     brand: typeof product.brand === "string" ? product.brand : product.brand?.name,
+    specificationText: [product.description, ...[product.additionalProperty ?? []].flat().map((property) => `${property.name ?? ""} ${property.value ?? ""} ${property.unitText ?? ""}`)].filter(Boolean).join(" ").replace(/<[^>]*>/g, " ").slice(0, 12000),
     imageUrl: webUrl(rawImage, baseUrl),
     price,
     currency: String(currency).toUpperCase(),

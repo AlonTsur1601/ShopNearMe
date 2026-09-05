@@ -13,7 +13,7 @@ export default async function handler(request, response) {
       clientId: process.env.EBAY_CLIENT_ID,
       clientSecret: process.env.EBAY_CLIENT_SECRET,
     }, scope);
-    response.setHeader("Cache-Control", "s-maxage=900, stale-while-revalidate=3600");
+    response.setHeader("Cache-Control", result.warnings?.length ? "no-store" : "s-maxage=900, stale-while-revalidate=3600");
     return response.status(200).json(result);
   } catch (error) { return response.status(502).json({ error: error instanceof Error ? error.message : "Search failed" }); }
 }

@@ -33,7 +33,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const searchController = useRef<AbortController | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(readRecent);
-  const showcase = searchResult ?? getShowcase(activeQuery ?? "Sony WH-1000XM6");
+  const showcase: ShowcaseSearch = searchResult ?? { query: activeQuery ?? "", offers: [], facets: [], resultCount: 0 };
 
   const visibleOffers = useMemo(() => {
     const offers = showcase.offers.filter((offer) => {
@@ -101,10 +101,10 @@ export function App() {
     </main> : <main className="results-page">
       <SearchBar compact query={query} location={location} onQueryChange={setQuery} onSubmit={search} onLocation={() => setLocationOpen(true)} />
       <div className="results-layout">
-        <FilterPanel {...filterProps} />
+        {!loading && searchResult ? <FilterPanel {...filterProps} /> : <aside className="filters" aria-label="Filters awaiting results" />}
         <div className="results-main">
           <div className="mobile-toolbar">
-            <button type="button" className="mobile-filter-button" onClick={(event) => { event.stopPropagation(); setFiltersOpen(true); }}><SlidersHorizontal size={20} />Filters<ChevronRight size={20} /></button>
+            <button type="button" className="mobile-filter-button" disabled={loading || !searchResult} onClick={(event) => { event.stopPropagation(); setFiltersOpen(true); }}><SlidersHorizontal size={20} />Filters<ChevronRight size={20} /></button>
             <SortMenu mobile value={sort} onChange={setSort} />
           </div>
           <div className={chips.length ? "result-controls" : "result-controls result-controls--empty"}>
@@ -112,6 +112,7 @@ export function App() {
             <div className="results-meta"><span>{loading ? "Searching…" : `${visibleOffers.length} results`}</span><div className="sort-control"><span>Sort by</span><SortMenu value={sort} onChange={setSort} /></div></div>
           </div>
           <div className="offers-scroll">
+            {!loading && showcase.warnings?.map((warning) => <p className="search-warning" role="status" key={warning}>{warning}</p>)}
             {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} distanceUnit={distanceUnit} />)}
             {loading && <div className="search-loading" aria-live="polite"><span /><strong>Searching stores and delivery sites…</strong></div>}
             {!loading && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" ? "Search temporarily unavailable" : "No matching offers"}</h2><p>{showcase.source === "fallback" ? "Please try again in a moment. No guessed retailer links are shown." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}
@@ -119,7 +120,7 @@ export function App() {
         </div>
       </div>
     </main>}
-    {filtersOpen && <div className="drawer-backdrop" onClick={() => setFiltersOpen(false)}><div onClick={(event) => event.stopPropagation()}><FilterPanel {...filterProps} mobile onClose={() => setFiltersOpen(false)} /></div></div>}
+    {filtersOpen && !loading && searchResult && <div className="drawer-backdrop" onClick={() => setFiltersOpen(false)}><div onClick={(event) => event.stopPropagation()}><FilterPanel {...filterProps} mobile onClose={() => setFiltersOpen(false)} /></div></div>}
     {locationOpen && <LocationModal current={location} initial={locationPlace} onClose={() => setLocationOpen(false)} onSelect={(value) => { setLocation(value.label); setLocationPlace(value); setLocationOpen(false); }} />}
   </div>;
 }
