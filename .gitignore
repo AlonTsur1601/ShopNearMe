@@ -14,3 +14,4 @@ output/
 .devpost-hackathon-state.json
 
 .vercel
+.env*
