@@ -1,4 +1,5 @@
 import { extractNamedSpecifications } from "./specifications.mjs";
+import { merchantDom } from "./merchant-dom.mjs";
 const pageCache = new Map();
 const pageRequests = new Map();
 const CACHE_MS = 15 * 60 * 1000;
@@ -23,6 +24,10 @@ function webUrl(value, baseUrl = "") {
     if (!["http:", "https:"].includes(parsed.protocol) || /^(?:localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|\[?::1\]?)/i.test(parsed.hostname)) return "";
     return parsed.href;
   } catch { return ""; }
+}
+export function productImageUrl(value, baseUrl = "") {
+  if (typeof value === "string" && value.length < 500000 && /^data:image\/(?:jpeg|png|webp|gif);base64,[a-z\d+/=\s]+$/i.test(value)) return value;
+  return webUrl(value, baseUrl);
 }
 function meta(html, key) {
   const name = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -86,7 +91,7 @@ function productImages(html, product, title, baseUrl) {
   const candidates = [...[product.image ?? []].flat(), product.primaryImageOfPage, meta(html, "og:image"), meta(html, "twitter:image"), attributeValue(html, "itemprop", "image")].map(imageValue);
   for (const match of htmlScope(html).matchAll(/<img\b[^>]*>/gi)) {
     const tag = match[0], alt = tag.match(/\balt=["']([^"']*)/i)?.[1] ?? "";
-    if (/logo|favicon|banner|avatar|payment|placeholder|loading|sprite/i.test(tag)) continue;
+    if (/logo|favicon|banner|avatar|payment|sprite/i.test(tag)) continue;
     const words = String(title ?? "").toLowerCase().split(/\s+/).filter(w => w.length > 3);
     if (!/product|gallery|itemprop=["']image/i.test(tag) && !words.some(w => alt.toLowerCase().includes(w))) continue;
     candidates.push(tag.match(/\bdata-src=["']([^"']+)/i)?.[1], tag.match(/\bsrc=["']([^"']+)/i)?.[1]);
@@ -94,6 +99,7 @@ function productImages(html, product, title, baseUrl) {
   return [...new Set(candidates.map(value => webUrl(value, baseUrl)).filter(url => url && !sameProductUrl(url, baseUrl) && !/logo|favicon|placeholder|\.svg(?:\?|$)/i.test(url)))];
 }
 export function extractProductData(html, baseUrl = "") {
+  const dom = merchantDom(html, baseUrl);
   const found = [], primary = [];
   for (const match of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try { const root = JSON.parse(match[1]); found.push(...products(root)); primary.push(...mainProducts(root)); } catch { /* invalid retailer markup */ }
@@ -102,28 +108,28 @@ export function extractProductData(html, baseUrl = "") {
     try { primary.push(...embeddedProducts(JSON.parse(match[1]))); } catch { /* invalid embedded data */ }
   }
   const product = found.find(item => item.url && sameProductUrl(item.url, baseUrl)) ?? primary.find(item => item.offers || item.image) ?? primary[0] ?? (found.length === 1 ? found[0] : {});
-  const title = product.name || meta(html, "og:title") || html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]*>/g, " ").trim();
+  const title = product.name || dom.title || meta(html, "og:title") || html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]*>/g, " ").trim();
   const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers ?? {};
   const specification = Array.isArray(offer.priceSpecification) ? offer.priceSpecification[0] : offer.priceSpecification ?? {};
-  const imageUrls = productImages(html, product, title, baseUrl);
+  const imageUrls = [...new Set([...dom.images.map(value => productImageUrl(value, baseUrl)), ...productImages(html, product, title, baseUrl)].filter(value => value && !/logo|placeholder|favicon/i.test(value)))];
   const scope = htmlScope(html);
   const metaPrice = meta(html, "product:price:amount") || meta(html, "og:price:amount") || attributeValue(html, "itemprop", "price");
   const dataPrice = scope.match(/\bdata-(?:product-)?price=["']([^"']+)/i)?.[1];
   const priceMarkup = scope.match(/<([a-z][\w-]*)\b[^>]*(?:class|id)=["'][^"']*(?:product-price|current-price|sale-price|price)[^"']*["'][^>]*>([\s\S]*?)<\/\1>/i)?.[2];
   const priceText = decode((priceMarkup ?? "").replace(/<[^>]*>/g, " ")).replace(/&nbsp;|&#160;/gi, " ");
   const visiblePrice = priceText.match(/(?:₪|NIS|ILS|ש["״]ח)\s*([0-9][0-9.,]*)|([0-9][0-9.,]*)\s*(?:₪|NIS|ILS|ש["״]ח)|(?:\$|USD)\s*([0-9][0-9.,]*)|(?:€|EUR)\s*([0-9][0-9.,]*)|(?:£|GBP)\s*([0-9][0-9.,]*)/i);
-  const price = firstPrice(offer.price, offer.lowPrice, specification.price, specification.minPrice, metaPrice, dataPrice, visiblePrice?.slice(1).find(Boolean), /^\s*[\d.,]+\s*$/.test(priceText) ? priceText : null);
+  const price = firstPrice(dom.currentPrice, offer.price, offer.lowPrice, specification.price, specification.minPrice, metaPrice, dataPrice, visiblePrice?.slice(1).find(Boolean), /^\s*[\d.,]+\s*$/.test(priceText) ? priceText : null);
   const currencyText = String(offer.priceCurrency ?? specification.priceCurrency ?? meta(html, "product:price:currency") ?? meta(html, "og:price:currency") ?? attributeValue(html, "itemprop", "priceCurrency") ?? "");
   const currency = currencyText.match(/\b(ILS|USD|EUR|GBP|CAD|AUD|JPY|CHF|SEK|NOK|DKK|PLN|CZK|NZD)\b/i)?.[1]
     || (/₪|NIS|ILS|ש["״]ח/i.test(visiblePrice?.[0] ?? "") ? "ILS" : /€|EUR/i.test(visiblePrice?.[0] ?? "") ? "EUR" : /£|GBP/i.test(visiblePrice?.[0] ?? "") ? "GBP" : /\$|USD/i.test(visiblePrice?.[0] ?? "") ? "USD" : /\.il$/i.test(new URL(baseUrl || "https://unknown.example").hostname) ? "ILS" : "USD");
   return {
-    isCatalog: !product.name && (found.length > 1 || /["']@type["']\s*:\s*["']ItemList["']/i.test(html)),
-    isProduct: !!product.name || !!metaPrice || /(?:add.to.cart|הוסף.{0,12}לסל|הוספה.{0,12}לסל)/i.test(scope),
+    isCatalog: !product.name && (dom.isCatalog || found.length > 1 || /["']@type["']\s*:\s*["']ItemList["']/i.test(html)),
+    isProduct: !!product.name || dom.isProduct || !!metaPrice || /(?:add.to.cart|הוסף.{0,12}לסל|הוספה.{0,12}לסל)/i.test(scope),
     title,
     gtin: String(product.gtin ?? product.gtin13 ?? product.gtin14 ?? product.gtin12 ?? product.gtin8 ?? "").trim(),
     brand: typeof product.brand === "string" ? product.brand : product.brand?.name,
-    specifications: extractNamedSpecifications(scope, product),
-    specificationText: [product.description, ...[product.additionalProperty ?? []].flat().map((property) => `${property.name ?? ""} ${property.value ?? ""} ${property.unitText ?? ""}`)].filter(Boolean).join(" ").replace(/<[^>]*>/g, " ").slice(0, 12000),
+    specifications: extractNamedSpecifications(scope + dom.specificationsHtml, product),
+    specificationText: [product.model, product.mpn, product.description, dom.description, ...[product.additionalProperty ?? []].flat().map((property) => `${property.name ?? ""} ${property.value ?? ""} ${property.unitText ?? ""}`)].filter(Boolean).join(" ").replace(/<[^>]*>/g, " ").slice(0, 18000),
     imageUrl: imageUrls[0] ?? "",
     imageUrls,
     price,
@@ -147,11 +153,21 @@ export async function enrichProductPage(value) {
   let timer;
   const request = (async () => {
     try {
-      const response = await fetch(url, { signal: controller.signal, redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
-      if (!response.ok || !String(response.headers?.get?.("content-type") || "").includes("html")) return {};
-      const result = extractProductData((await readProductHtml(response)).slice(0, 2000000), response.url || url);
-      pageCache.set(url, { at: Date.now(), value: result });
-      return result;
+      const parsed = new URL(url), itemId = /(^|\.)ksp\.co\.il$/i.test(parsed.hostname) ? parsed.pathname.match(/\/web\/item\/(\d+)/)?.[1] : undefined;
+      const candidates = itemId ? [url, parsed.origin + "/?print=" + itemId] : [url];
+      let best = {};
+      for (const candidate of candidates) {
+        const response = await fetch(candidate, { signal: controller.signal, redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
+        if (!response.ok || !String(response.headers?.get?.("content-type") || "").includes("html")) continue;
+        const html = (await readProductHtml(response)).slice(0, 2000000);
+        if (/הגישה נחסמה|בקשה.{0,20}נחסמה|access denied|verify you are human|checking your browser/i.test(html.slice(0, 15000))) continue;
+        const result = extractProductData(html, response.url || candidate);
+        if (result.isCatalog) return { isCatalog: true };
+        if (result.isProduct) best = result;
+        if (result.isProduct && result.price !== null && result.imageUrl) break;
+      }
+      if (best.isProduct) { if (pageCache.size >= 300) pageCache.delete(pageCache.keys().next().value); pageCache.set(url, { at: Date.now(), value: best }); }
+      return best;
     } catch { return {}; }
   })();
   const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({}); }, 5500); });

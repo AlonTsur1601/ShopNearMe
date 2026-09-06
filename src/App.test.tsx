@@ -17,6 +17,15 @@ describe("App", () => {
   beforeEach(() => { localStorage.clear(); vi.mocked(searchProducts).mockClear(); });
   afterEach(() => { vi.unstubAllGlobals(); sessionStorage.clear(); });
 
+  it("shows a working clear X on the homepage before a search is submitted", () => {
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "dining table" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByRole("textbox", { name: "Search for a product" })).toHaveValue("");
+    expect(screen.getByRole("heading", { name: /Find the right product/ })).toBeVisible();
+    expect(searchProducts).not.toHaveBeenCalled();
+  });
+
   it("clears just the input without leaving results, resetting filters or submitting", async () => {
     render(<App />);
     fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });

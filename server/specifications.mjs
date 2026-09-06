@@ -171,3 +171,23 @@ export function monitorAttributes(query, text) {
   add("Adaptive sync", [...new Set(text.match(/G[- ]?Sync(?: Compatible)?|FreeSync(?: Premium(?: Pro)?)?/gi) ?? [])]);
   return structuredAttributes(pairs);
 }
+
+export function proseAttributes(text) {
+  const pairs = [], add = (name, value) => { if (value) pairs.push({ name, value }); };
+  for (const [name, regex] of [
+    ["Capacity", /\b(\d+(?:[-–]\d+)?)\s*(?:people|persons?|person|man)\b/i],
+    ["Power", /\b(\d{2,5})\s*(?:W|watts?)\b/i],
+    ["Weight", /\b(\d+(?:\.\d+)?)\s*(?:kg|kilograms?)\b/i],
+    ["Battery life", /\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\s*(?:battery|runtime|of use)/i],
+  ]) { const match = text.match(regex); if (match) add(name, match[1] + ({ Capacity: " people", Power: " W", Weight: " kg", "Battery life": " hours" }[name])); }
+  for (const name of ["Width", "Height", "Depth", "Length"]) {
+    const match = text.match(new RegExp("\\b" + name + "\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?\\s*(?:cm|mm|in|m))\\b", "i"));
+    add(name, match?.[1]);
+  }
+  add("Dimensions", text.match(/\b\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?(?:\s*[x×]\s*\d+(?:\.\d+)?)?\s*(?:cm|mm|in)\b/i)?.[0]);
+  for (const [name, yes, no] of [
+    ["Chairs included", /(?:includes?|with)\s+(?:\d+\s+)?chairs|כולל.{0,8}כיסאות/i, /(?:without|no)\s+chairs|ללא כיסאות|לא כולל כיסאות/i],
+    ["Extendable", /\bextendable|\bextending\b|נפתח(?:ת)?/i, /\bnon[- ]extendable|does not extend|לא נפתח/i],
+  ]) add(name, no.test(text) ? "No" : yes.test(text) ? "Yes" : "");
+  return structuredAttributes(pairs);
+}

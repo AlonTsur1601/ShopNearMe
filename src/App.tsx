@@ -38,11 +38,12 @@ export function App() {
   const showcase: ShowcaseSearch = searchResult ?? { query: activeQuery ?? "", offers: [], facets: [], resultCount: 0 };
 
   const visibleOffers = useMemo(() => {
+    const available = Object.fromEntries(showcase.facets.map(facet => [facet.id, facet.options.map(option => option.value)]));
     const offers = showcase.offers.filter((offer) => {
       if (offer.distanceMiles !== undefined && offer.distanceMiles > distance) return false;
       if (priceMin && (offer.totalPrice === null || offer.totalPrice < Number(priceMin))) return false;
       if (priceMax && (offer.totalPrice === null || offer.totalPrice > Number(priceMax))) return false;
-      return matchesFacets(offer.attributes, selected);
+      return matchesFacets(offer.attributes, selected, available);
     });
     return [...offers].sort((a, b) => {
       if (sort.startsWith("distance")) {
@@ -54,7 +55,7 @@ export function App() {
       if (b.totalPrice === null) return -1;
       return sort === "price-asc" ? a.totalPrice - b.totalPrice : b.totalPrice - a.totalPrice;
     });
-  }, [distance, priceMax, priceMin, selected, showcase.offers, sort]);
+  }, [distance, priceMax, priceMin, selected, showcase.offers, showcase.facets, sort]);
 
   const chips = Object.entries(selected).flatMap(([facet, values]) => values.map((value) => ({ facet, value })));
   const performSearch = useCallback(async (nextQuery: string, nextLocation = location) => {
@@ -101,7 +102,6 @@ export function App() {
         <h1>Find the right product, at the right price.</h1>
         <p>Compare offers you can order, pick up nearby, or buy second hand.</p>
         <SearchBar query={query} location={location} onQueryChange={setQuery} onSubmit={search} onLocation={() => setLocationOpen(true)} />
-        <button className="home-location" type="button" onClick={() => setLocationOpen(true)}>Searching near <strong>{location}</strong><ChevronRight size={17} /></button>
         {recentSearches.length > 0 && <div className="search-discovery">
           <div className="example-searches"><span>Recent:</span>{recentSearches.slice(0, 3).map((value) => <button key={value} onClick={() => runExample(value)}>{value}</button>)}</div>
           {recommendationsFor(recentSearches).length > 0 && <div className="example-searches example-searches--recommended"><span>Recommended:</span>{recommendationsFor(recentSearches).slice(0, 3).map((value) => <button key={value} onClick={() => runExample(value)}>{value}</button>)}</div>}

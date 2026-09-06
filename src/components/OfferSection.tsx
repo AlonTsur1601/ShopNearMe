@@ -22,7 +22,7 @@ function Price({ offer, category }: { offer: Offer; category: OfferCategory }) {
 function ProductImage({ offer }: { offer: Offer }) {
   const [index, setIndex] = useState(0);
   const candidates = [...new Set([offer.imageUrl, ...(offer.imageUrls ?? [])].filter(Boolean))];
-  return candidates[index] ? <img className="product-image" src={candidates[index]} alt="" loading="lazy" onError={() => setIndex(value => value + 1)} />
+  return candidates[index] ? <img className="product-image" src={candidates[index]} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setIndex(value => value + 1)} />
     : <div className="product-image product-image--empty" aria-label="No product image available"><ImageOff size={22} /></div>;
 }
 export function OfferSection({ category, offers, distanceUnit }: { category: OfferCategory; offers: Offer[]; distanceUnit: DistanceUnit }) {
