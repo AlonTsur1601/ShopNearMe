@@ -2,7 +2,11 @@
 
 ![ShopNearMe thumbnail](docs/assets/thumbnail.png)
 
-**Live site:** [https://shopnearme-webmcp.vercel.app](https://shopnearme-webmcp.vercel.app)
+**Submission (frozen):** [https://shopnearme-webmcp.vercel.app](https://shopnearme-webmcp.vercel.app) — commit `4a3010e0879c3d03c5082d61c7413615531fcc58`.
+
+**Current development:** [https://shopnearme-webmcp-testing.vercel.app](https://shopnearme-webmcp-testing.vercel.app).
+
+Until the official WebMCP Challenge winners are announced, keep the submission alias pinned to its frozen deployment. Deploy development with `vercel deploy --prod --skip-domain`, then assign **only** `shopnearme-webmcp-testing.vercel.app` to the new deployment. Do not promote or reassign the submission alias during judging. The `main` branch continues to contain current development; the submission commit remains unchanged in Git history.
 
 ShopNearMe turns one product query into a structured comparison of offers that can be ordered, bought in a nearby store, or purchased second hand. It shows the total checkout price whenever shipping is known, exposes product-specific filters, and gives both people and browser agents the same useful workflow through WebMCP.
 

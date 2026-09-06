@@ -323,6 +323,17 @@ a {
 .webmcp-note { position: static; flex-shrink: 0; max-width: 100%; }
 .example-searches { flex-wrap: wrap; }
 .example-searches button { max-width: 100%; overflow-wrap: anywhere; }
+[data-theme="dark"] .example-searches--recommended button { background: var(--teal-soft); border-color: #38616a; }
+button:not(:disabled), .offer-link { transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease; }
+button:focus-visible, .offer-link:focus-visible { outline: 2px solid var(--teal-dark); outline-offset: 2px; }
+@media (hover: hover) {
+  button:not(:disabled):hover { box-shadow: inset 0 0 0 999px rgb(0 118 123 / .10); }
+  [data-theme="dark"] button:not(:disabled):hover { box-shadow: inset 0 0 0 999px rgb(255 255 255 / .07); }
+  [data-theme="dark"] button.primary-button:not(:disabled):hover { box-shadow: inset 0 0 0 999px rgb(0 0 0 / .12); }
+}
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled), .offer-link { transition: none; }
+}
 @media (max-width: 900px) {
   .search-bar, .results-page > .search-bar {
     grid-template-columns: minmax(0, 1fr) 92px;
