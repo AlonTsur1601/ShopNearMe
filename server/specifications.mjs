@@ -1,3 +1,4 @@
+import { englishLabel, englishText } from "./facet-language.mjs";
 // Facets are discovered from named product properties, not a finite category list.
 // Aliases only consolidate equivalent labels; unrecognized properties remain usable.
 const aliases = [
@@ -114,19 +115,22 @@ export function structuredAttributes(pairs) {
   for (const pair of pairs ?? []) {
     const rawName = cleanText(pair.name).replace(/\b(?:exited tooltip|opens in a new window)\b/gi, "").replace(/[:：]$/, "").replace(/[-_]/g, " ").trim();
     const unit = rawName.match(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i)?.[1];
-    const name = rawName.replace(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i, "").replace(/^monitor\s+/i, "").trim();
+    const sourceName = rawName.replace(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i, "").replace(/^monitor\s+/i, "").trim();
+    const name = englishLabel(sourceName) || sourceName;
     if (!name || name.length > 64 || /\uFFFD/.test(name) || nonSpecification.test(name) || /^(?:parameter|specification|פרמטר|דגם|מספר ספק|קישור ליצרן|זמן אספקה|תנאי תשלום|יתרון|תועלת)$/i.test(name)) continue;
-    const alias = aliases.find(([, , match]) => match.test(name));
+    const alias = aliases.find(([, , match]) => match.test(name) || match.test(sourceName));
+    const label = alias?.[1] ?? englishLabel(name);
+    if (!label) continue;
     const id = alias?.[0] ?? `spec:${name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_")}`;
     const values = [pair.value].flat().flatMap(raw => {
       const text = valueText(raw);
-      const parts = ["ports", "connectivity", "adaptiveSync", "standAdjustments", "features"].includes(id) ? text.split(/[,;|]|\s+(?:and|&|\/)\s+/i) : [raw];
+      const parts = ["ports", "connectivity", "adaptiveSync", "standAdjustments", "features", "material", "color", "capacity"].includes(id) ? text.split(/,\s+|[;|]|\s+(?:and|&|\/)\s+/i) : [raw];
       return parts.map(part => normalizedValue(id, part, pair.unit || (/^\d+(?:\.\d+)?$/.test(valueText(part)) ? unit : "")));
-    }).filter(value => value && value.length <= 100 && !/https?:|www\.|\uFFFD|במלאי|out of stock|in stock/i.test(value));
+    }).map(value => englishText(value, id === "brand")).filter(value => value && value.length <= 100 && !/https?:|www\.|out of stock|in stock/i.test(value));
     if (!values.length) continue;
     const basePorts = id === "ports" ? values.flatMap(value => value.match(/HDMI|DisplayPort|USB-C|Thunderbolt|DVI|VGA/gi) ?? []) : [];
     attributes[id] = [...new Set([...[attributes[id] ?? []].flat(), ...values, ...basePorts])];
-    labels[id] = alias?.[1] ?? name.charAt(0).toUpperCase() + name.slice(1);
+    labels[id] = label.charAt(0).toUpperCase() + label.slice(1);
   }
   return { attributes, labels };
 }
@@ -145,6 +149,10 @@ export function extractNamedSpecifications(html, product = {}) {
     for (const cells of rows) if (cells.length === 2) pairs.push({ name: cells[0], value: cells[1] });
   }
   for (const row of stripped.matchAll(/<dt\b[^>]*>([\s\S]*?)<\/dt>\s*<dd\b[^>]*>([\s\S]*?)<\/dd>/gi)) pairs.push({ name: cleanText(row[1]), value: cleanText(row[2]) });
+  for (const row of (stripped + " " + (product.description ?? "")).matchAll(/<(?:li|p)\b[^>]*>([\s\S]*?)<\/(?:li|p)>/gi)) {
+    const match = cleanText(row[1]).match(/^([^:]{2,48}):\s*(.{1,100})$/);
+    if (match) pairs.push({ name: match[1], value: match[2] });
+  }
   return pairs;
 }
 

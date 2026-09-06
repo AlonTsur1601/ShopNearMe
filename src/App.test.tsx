@@ -17,6 +17,31 @@ describe("App", () => {
   beforeEach(() => { localStorage.clear(); vi.mocked(searchProducts).mockClear(); });
   afterEach(() => { vi.unstubAllGlobals(); sessionStorage.clear(); });
 
+  it("clears just the input without leaving results, resetting filters or submitting", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(screen.getByLabelText("Product filters")).toBeVisible());
+    fireEvent.click(screen.getByRole("checkbox", { name: /Wall clock/ }));
+    const calls = vi.mocked(searchProducts).mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByPlaceholderText("Search any product")).toHaveValue("");
+    expect(screen.getByPlaceholderText("Search any product")).toHaveFocus();
+    expect(screen.getByRole("checkbox", { name: /Wall clock/ })).toBeChecked();
+    expect(screen.getByLabelText("Product filters")).toBeVisible();
+    expect(searchProducts).toHaveBeenCalledTimes(calls);
+  });
+
+  it("tries the next real product image when the first image fails", () => {
+    const offer = { ...clockShowcase.offers[0], imageUrl: "https://shop.example/broken.jpg", imageUrls: ["https://shop.example/actual.jpg"] };
+    const view = render(<OfferSection category="order" offers={[offer]} distanceUnit="km" />);
+    const image = view.container.querySelector<HTMLImageElement>(".product-image")!;
+    fireEvent.error(image);
+    expect(view.container.querySelector(".product-image")).toHaveAttribute("src", "https://shop.example/actual.jpg");
+    fireEvent.error(view.container.querySelector(".product-image")!);
+    expect(screen.getByLabelText("No product image available")).toBeVisible();
+  });
+
   it("automatically uses default current-location coordinates without manually choosing a place", async () => {
     const get = vi.fn(success => success({ coords: { latitude: 32.084, longitude: 34.887 } }));
     vi.stubGlobal("navigator", Object.create(navigator, { geolocation: { value: { getCurrentPosition: get } } }));

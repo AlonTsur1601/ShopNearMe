@@ -73,6 +73,8 @@ a {
 .search-bar--hero { min-height: 60px; grid-template-columns: minmax(0, 1fr) 150px; padding: 0; border: 1px solid #bfc9d6; border-radius: var(--radius-md); box-shadow: 0 8px 30px rgb(15 23 42 / .08); overflow: hidden; }
 .search-field, .search-location { min-width: 0; display: flex; align-items: center; gap: 14px; padding: 0 18px; border: 1px solid #c8d0db; background: #fff; }
 .search-field input { min-width: 0; width: 100%; height: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 18px; }
+.search-clear { flex: 0 0 28px; height: 32px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.search-clear:hover, .search-clear:focus-visible { background: var(--teal-soft); color: var(--teal-dark); }
 .search-bar:not(.search-bar--hero) .search-field { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
 .search-bar--hero .search-field { border: 0; }
 .search-location { justify-content: flex-start; border-left: 0; color: var(--ink); cursor: pointer; font-size: 16px; }
@@ -140,6 +142,7 @@ a {
 .offer-row:first-child { border-top: 0; }
 .offer-row > .product-image { width: 78px; height: 62px; justify-self: center; object-fit: contain; border: 1px solid var(--border-soft); border-radius: 8px; background: #fff; }
 .product-image--empty { display: grid; place-items: center; color: #94a3b8; background: #f7fafb !important; }
+.potential-store-label { color: var(--muted); line-height: 1.4; }
 .offer-merchant, .offer-specs, .offer-availability, .offer-price { min-width: 0; display: grid; gap: 3px; align-content: center; }
 .offer-merchant > a { color: var(--blue); font-weight: 700; text-decoration: none; }
 .merchant-identity { min-width: 0; display: flex; align-items: center; gap: 7px; }

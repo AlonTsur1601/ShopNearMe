@@ -32,7 +32,8 @@ Read-only tools use `readOnlyHint: true`, and tools that return retailer content
 
 ## Data and request efficiency
 
-- Live order results come from SerpAPI's Google Shopping engine, nearby businesses come from its Google Maps local results using the selected coordinates, and used listings come directly from eBay's Browse API. All searches run behind one server-side endpoint, and API credentials never reach the browser.
+- Live web, Shopping and Maps discovery uses Bright Data SERP API. Merchant product pages supply prices, specifications and product images; a Google product-group link is never used as a purchase destination. Used listings also come directly from eBay's Browse API. Credentials stay behind the server-side endpoint.
+- Maps-only businesses are labelled potential retailers, not confirmed product listings. Stock, inaccessible product-page prices and unreported delivery/import charges cannot be guaranteed. Filters include only attributes supported by the retrieved product data; untranslated values are omitted.
 - eBay uses a cached application OAuth token, requests used items deliverable to the detected destination country, and includes item price plus shipping in the displayed total.
 - Identical searches are cached in memory for 15 minutes.
 - Simultaneous identical searches share one in-flight promise.
@@ -48,7 +49,7 @@ Requirements: Node.js 20+ and npm.
 ```bash
 npm install
 copy .env.example .env.local
-# Add SERPAPI_API_KEY to .env.local
+# Add BRIGHTDATA_API_KEY and BRIGHTDATA_SERP_ZONE to .env.local
 npm run dev
 ```
 
@@ -66,7 +67,7 @@ The app is responsive at desktop and phone breakpoints, keyboard-operable, and u
 
 ## Deploy
 
-The repository includes a Vercel serverless endpoint at `api/search.js`, a `vercel.json` deployment config, and a GitHub Actions workflow that runs type checking, tests, and the production build. Add `SERPAPI_API_KEY` as a server-side environment variable in the deployment dashboard, then deploy normally. Never prefix it with `VITE_`.
+The repository includes a Vercel serverless endpoint at `api/search.js`, a `vercel.json` deployment config, and a GitHub Actions workflow that runs type checking, tests, and the production build. Add `BRIGHTDATA_API_KEY` and `BRIGHTDATA_SERP_ZONE` as server-side environment variables in the deployment dashboard, then deploy normally. Never prefix secrets with `VITE_`. The production address remains https://shopnearme-webmcp.vercel.app/. Bright Data requests use a 15-minute bounded cache, in-flight deduplication and at most one retry; they consume the configured account's quota. No automatic plan upgrade is performed.
 
 ## Gallery
 

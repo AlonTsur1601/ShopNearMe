@@ -40,8 +40,9 @@ describe("searchCatalog", () => {
     expect(result.offers).toHaveLength(1);
     expect(result.offers[0].category).toBe("order");
     expect(result.warnings).toEqual([]);
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(2);
-    expect(new URL(vi.mocked(fetch).mock.calls[1][0]).searchParams.get("gl")).toBe("il");
+    const shoppingCalls = vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_shopping");
+    expect(shoppingCalls).toHaveLength(2);
+    expect(new URL(shoppingCalls[1][0]).searchParams.get("gl")).toBe("il");
   });
 
   it("resolves retailer links, shipping and monitor facets from product groups", async () => {
@@ -65,9 +66,9 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ error: "Temporarily unavailable" }) })));
     const first = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
     const second = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
-    expect(first.warnings).toEqual(["Online stores could not be searched. Please try again."]);
+    expect(first.warnings).toEqual(["Online stores could not be searched. Please try again.", "Retailer product pages could not be searched. Please try again."]);
     expect(second.warnings).toEqual(first.warnings);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(12);
   });
 
   it("reads structured specifications but identifies category pages", () => {
@@ -100,7 +101,7 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("local");
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(3);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(4);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
   });
@@ -150,17 +151,17 @@ describe("searchCatalog", () => {
     expect(offer.distanceMiles).toBeGreaterThan(0);
     expect(offer.attributes).toMatchObject({ wattage: "700–899 W", efficiency: "80 Plus Gold", modularity: "Fully modular" });
     expect(offer.attributes["spec:protection_circuits"]).toEqual(["Overvoltage", "Overcurrent"]);
-    expect(result.facets.find(facet => facet.id === "spec:protection_circuits")?.options).toEqual([{ value: "Overvoltage", count: 1 }, { value: "Overcurrent", count: 1 }]);
+    expect(result.facets.find(facet => facet.id === "spec:protection_circuits")?.options).toEqual([{ value: "Overvoltage", count: 2 }, { value: "Overcurrent", count: 2 }]);
   });
 
   it("coalesces identical in-flight scoped searches", async () => {
-    let release;
-    const fetchMock = vi.fn(() => new Promise((resolve) => { release = () => resolve({ ok: true, json: async () => ({ shopping_results: [] }) }); }));
+    const releases = [];
+    const fetchMock = vi.fn(() => new Promise((resolve) => { releases.push(() => resolve({ ok: true, json: async () => ({ shopping_results: [] }) })); }));
     vi.stubGlobal("fetch", fetchMock);
     const first = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
     const second = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    release();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    releases.forEach(release => release());
     const [a, b] = await Promise.all([first, second]);
     expect(a).toBe(b);
   });

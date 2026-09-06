@@ -22,9 +22,10 @@ async function rate(from, to) {
   } catch { return null; } finally { clearTimeout(timer); }
 }
 export async function localizeOffers(offers, location) {
-  const target = targetCurrency(location), currencies = [...new Set(offers.map((offer) => offer.currency || "USD").filter((currency) => currency !== target))];
+  const target = targetCurrency(location), currencies = [...new Set(offers.filter(offer => offer.itemPrice != null).map((offer) => offer.currency || "USD").filter((currency) => currency !== target))];
   const rates = new Map(await Promise.all(currencies.map(async (currency) => [currency, await rate(currency, target)])));
   return offers.map((offer) => {
+    if (offer.itemPrice == null) return { ...offer, currency: target };
     const source = offer.currency || "USD", conversion = rates.get(source);
     if (source === target || !conversion) return offer;
     const convert = (value) => value == null ? value : Math.round(value * conversion.rate * 100) / 100;

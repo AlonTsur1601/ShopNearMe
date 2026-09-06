@@ -2,6 +2,8 @@ import { enrichProductPage } from "./product-page.mjs";
 import { localizeOffers } from "./currency.mjs";
 import { monitorAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
 import { amountInCurrency, costBreakdown } from "./costs.mjs";
+import { englishLabel, normalizeOfferFacets, translateTerms } from "./facet-language.mjs";
+import { fetchJson, mapConcurrent, searchProvider } from "./providers.mjs";
 const cache = new Map(), inFlight = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 let ebayToken = null;
@@ -50,6 +52,7 @@ const productRules = [
   { match: /(?:office|coffee|side|console)\s+table|chair|desk|sofa|couch/i, rules: [{ id: "material", label: "Material", values: materials }, { id: "shape", label: "Shape", values: ["Rectangular", "Round", "Oval", "Square"] }] },
 ];
 const storeRules = [
+  [/tent|camping|sleeping bag|backpack/i, ["outdoor", "camping", "sporting goods", "department"]],
   [/clock|watch/i, ["clock", "watch", "home goods", "furniture", "antique", "gift", "department", "electronics"]],
   [/headphones?|earbuds?|speaker|audio/i, ["audio", "electronics", "computer", "department", "appliance", "music"]],
   [/shoes?|sneakers?|boots?|sandals?/i, ["shoe", "sporting goods", "department", "clothing", "outdoor"]],
@@ -71,6 +74,7 @@ const countryTlds = new Map([["IL", ".il"], ["GB", ".uk"], ["CA", ".ca"], ["DE",
 export function safeHttpUrl(value, fallback = "") { try { const decoded = String(value ?? "").replace(/\\u([0-9a-f]{4})/gi, (_match, code) => String.fromCharCode(Number.parseInt(code, 16))).replace(/\\\//g, "/"); const parsed = new URL(decoded); return ["https:", "http:"].includes(parsed.protocol) ? parsed.href : fallback; } catch { return fallback; } }
 function searchTokens(value) { const stop = new Set(["a", "an", "and", "at", "best", "buy", "cheap", "deals", "for", "in", "near", "of", "on", "price", "sale", "the", "to", "with"]); return [...new Set(String(value).toLowerCase().replace(/[^a-z0-9\u0590-\u05ff]+/g, " ").split(/\s+/).filter((token) => token.length > 1 && !stop.has(token)).map((token) => token.replace(/(?:ies|es|s)$/i, (ending) => ending === "ies" ? "y" : "")))]; }
 const translatedCategories = [
+  [/camping tent|tent/i, /אוהל/, "אוהל"],
   [/monitor|television|\btv\b/i, /מס[ךכ]/, "מסך"], [/headphones?|earbuds?/i, /אוזני[וה]ת/, "אוזניות"],
   [/dining\s+(?:table|set)/i, /שולח[ןנות]|פינת אוכל/, "שולחן אוכל"], [/clock/i, /שעו[ןנים]/, "שעון"],
   [/power supply|\bpsu\b/i, /ספק.*כ[ו]?ח/, "ספק כוח"], [/laptop|notebook/i, /מחשב.*נייד/, "מחשב נייד"],
@@ -78,6 +82,7 @@ const translatedCategories = [
   [/chair/i, /כיסא|כסא/, "כיסא"], [/desk/i, /שולחן/, "שולחן"], [/camera/i, /מצלמה/, "מצלמה"],
 ];
 export function isRelevantProduct(title, query) {
+  if (/camping tent/i.test(query) && /tent (?:stakes|poles|stove|footprint)|(?:stove|heater) (?:for|with).{0,15}tent|play tent|אוהל (?:משחק|ילדים)/i.test(title)) return false;
   if (/monitor|television|\btv\b/i.test(query)) {
     const wantedPanel = inferPanel(query), actualPanel = inferPanel(title);
     if (wantedPanel && actualPanel && !(wantedPanel === "OLED" ? actualPanel.includes("OLED") : actualPanel === wantedPanel)) return false;
@@ -108,7 +113,7 @@ export function shortRetailerName(value) { return String(value || "Retailer").sp
 const genericRules = [
   { id: "brand", label: "Brand", infer: (_text, meta) => meta?.brand }, { id: "color", label: "Color", values: colors }, { id: "material", label: "Material", values: materials }, { id: "features", label: "Features", values: features },
   { id: "dimensions", label: "Dimensions", infer: (text) => text.match(/\b(\d+(?:\.\d+)?\s*(?:x|×)\s*\d+(?:\.\d+)?(?:\s*(?:x|×)\s*\d+(?:\.\d+)?)?\s*(?:cm|mm|in(?:ches)?|"))/i)?.[1] },
-  { id: "capacity", label: "Capacity", infer: (text) => text.match(/\b(\d+(?:\.\d+)?\s*(?:ml|l|liters?|oz|cups?|quarts?))\b/i)?.[1] },
+  { id: "capacity", label: "Capacity", infer: (text) => text.match(/\b(\d+(?:\.\d+)?\s*(?:ml|l|liters?|oz|cups?|quarts?|people|person))\b/i)?.[1] },
   { id: "power", label: "Power", infer: (text) => text.match(/\b(\d{2,5})\s*w(?:att)?s?\b/i)?.[1] ? `${text.match(/\b(\d{2,5})\s*w(?:att)?s?\b/i)[1]} W` : undefined },
   { id: "packSize", label: "Pack size", infer: (text) => text.match(/\b(\d+)\s*(?:pack|count|ct|pieces?)\b/i)?.[1] ? `${text.match(/\b(\d+)\s*(?:pack|count|ct|pieces?)\b/i)[1]} pack` : undefined },
   { id: "storage", label: "Storage", infer: inferStorage },
@@ -117,7 +122,7 @@ const genericRules = [
 ];
 function rulesFor(query) { return [...(productRules.find((group) => group.match.test(query))?.rules ?? []), ...genericRules]; }
 function attributesFor(query, text, condition, merchant, meta = {}) {
-  text = `${text} ${meta.specificationText ?? ""}`;
+  text = translateTerms(`${text} ${meta.specificationText ?? ""}`);
   const attributes = { condition, retailer: shortRetailerName(merchant) };
   for (const rule of rulesFor(query)) {
     if (attributes[rule.id]) continue;
@@ -137,15 +142,14 @@ function relevance(place, query, origin) { const type = String(place.type ?? "")
 function shippingFor(item, itemPrice) { const text = `${item.delivery ?? ""} ${(item.extensions ?? []).join(" ")}`; if (/free (delivery|shipping)/i.test(text)) return { shippingPrice: 0, totalPrice: itemPrice, shippingEstimated: false }; const match = text.match(/(?:shipping|delivery)[^$]*\$([0-9]+(?:\.[0-9]{1,2})?)/i); const shippingPrice = match ? number(match[1]) : null; return { shippingPrice, totalPrice: itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice, shippingEstimated: shippingPrice !== null }; }
 function countryCode(location) { const text = String(location ?? "").toLowerCase(); for (const [name, code] of countries) if (text.includes(name)) return code; return null; }
 function isLocalResult(url, item, location) { const code = countryCode(location); if (!code || code === "US") return true; const tld = countryTlds.get(code), text = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${item.displayed_link ?? ""}`; if (tld && url.hostname.endsWith(tld)) return true; if (code === "IL") return /[\u0590-\u05ff]|₪|\bILS\b|\bIsrael\b/i.test(text); return String(location).toLowerCase().split(/[,\s]+/).filter((part) => part.length > 3).some((part) => text.toLowerCase().includes(part)); }
-async function fetchJson(url, options = {}, timeoutMs = 10000) { const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs); try { const response = await fetch(url, { ...options, signal: controller.signal }); const data = await response.json(); if (!response.ok || data.error) throw new Error(data.error || `Provider returned ${response.status}`); return data; } finally { clearTimeout(timer); } }
 
 async function ebayAccess(credentials) { if (!credentials?.clientId || !credentials?.clientSecret) return null; if (ebayToken?.expiresAt > Date.now() + 60000) return ebayToken.value; const basic = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64"); const data = await fetchJson("https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "https://api.ebay.com/oauth/api_scope" }) }); ebayToken = { value: data.access_token, expiresAt: Date.now() + (number(data.expires_in) ?? 7200) * 1000 }; return data.access_token; }
 async function ebaySearch(query, location, credentials) { const token = await ebayAccess(credentials); if (!token) return []; const country = countryCode(location), filters = ["conditions:{USED}"]; if (country) filters.push(`deliveryCountry:${country}`); const params = new URLSearchParams({ q: query, limit: "15", filter: filters.join(",") }), headers = { Authorization: `Bearer ${token}`, "X-EBAY-C-MARKETPLACE-ID": "EBAY_US" }; if (country) headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=country=${country}`; const data = await fetchJson(`https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`, { headers }, 8000); const items = data.itemSummaries ?? []; await Promise.all(items.slice(0, 4).map(async item => { if (!item.itemId) return; try { const detail = await fetchJson(`https://api.ebay.com/buy/browse/v1/item/${encodeURIComponent(item.itemId)}`, { headers }, 5000); item.specifications = specificationPairs(detail.localizedAspects); item.shippingOptions = detail.shippingOptions ?? item.shippingOptions; item.importCharges = detail.importCharges ?? item.importCharges; if (detail.brand) item.specifications.push({ name: "Manufacturer", value: detail.brand }); } catch { /* Basic offers remain available when detail enrichment fails. */ } })); return items.filter((item) => isRelevantProduct(item.title, query)).map((item, index) => { const price = item.price, shipping = item.shippingOptions?.[0]?.shippingCost, itemPrice = number(price?.convertedFromCurrency === "USD" ? price.convertedFromValue : price?.value), shippingPrice = number(shipping?.convertedFromCurrency === "USD" ? shipping.convertedFromValue : shipping?.value), totalPrice = itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice, condition = item.condition || "Used", merchant = "eBay"; return { id: `ebay-${item.itemId ?? index}`, category: "secondHand", merchant, merchantLogoUrl: "/ebay.svg", title: item.title || "Pre-owned eBay listing", subtitle: [condition, item.itemLocation?.country].filter(Boolean).join(" · "), imageUrl: safeHttpUrl(item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl), rating: number(item.seller?.feedbackPercentage) ? Math.min(5, number(item.seller.feedbackPercentage) / 20) : 0, reviewCount: number(item.seller?.feedbackScore) ?? 0, itemPrice, shippingPrice, totalPrice, currency: price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD", ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: amountInCurrency(item.shippingOptions?.[0]?.importCharges ?? item.importCharges, price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD"), crossBorder: !!country && !!item.itemLocation?.country && item.itemLocation.country !== country }), priceVerified: totalPrice !== null, availability: "Available on eBay", condition, attributes: attributesFor(query, item.title || "", condition, "eBay", item), attributeLabels: attributeLabelsFor(query, item.title || "", item), destinationUrl: safeHttpUrl(item.itemWebUrl), linkLabel: "View product" }; }).filter((offer) => offer.destinationUrl); }
 function shoppingOffer(item, index, query) { if (!isRelevantProduct(item.title, query) || !safeHttpUrl(item.link || item.product_link)) return null; const itemPrice = number(item.extracted_price ?? item.price), shipping = shippingFor(item, itemPrice), isUsed = used(item), isLocal = !isUsed && local(item), merchant = shortRetailerName(item.source || item.merchant || item.seller || "Retailer"), text = `${item.title ?? ""} ${(item.extensions ?? []).join(" ")}`, condition = isUsed ? (item.condition || (/refurb|renewed/i.test(text) ? "Refurbished" : "Used")) : "New", shippingPrice = isLocal ? null : shipping.shippingPrice; return { id: `serp-${item.product_id ?? item.position ?? index}`, category: isUsed ? "secondHand" : isLocal ? "local" : "order", merchant, merchantLogoUrl: safeHttpUrl(item.source_icon || item.favicon), title: item.title || "Product offer", subtitle: (item.extensions ?? []).slice(0, 3).join(" · ") || item.delivery || "See retailer for product details", imageUrl: safeHttpUrl(item.thumbnail || item.image), rating: number(item.rating) ?? 0, reviewCount: number(item.reviews) ?? 0, itemPrice, shippingPrice, totalPrice: itemPrice === null ? null : shippingPrice === null ? itemPrice : shipping.totalPrice, currency: /₪|NIS|ILS/i.test(`${item.price ?? ""} ${text}`) ? "ILS" : /€|EUR/i.test(`${item.price ?? ""} ${text}`) ? "EUR" : /£|GBP/i.test(`${item.price ?? ""} ${text}`) ? "GBP" : "USD", shippingEstimated: shipping.shippingEstimated, priceVerified: itemPrice !== null, availability: isLocal ? "Check local stock" : "Available online", arrival: isLocal ? undefined : item.delivery, condition, attributes: attributesFor(query, text, condition, merchant), destinationUrl: safeHttpUrl(item.link || item.product_link), linkLabel: "View product" }; }
-function mapOffer(place, index, query, origin) { const merchant = place.title || place.name || "Local store", itemPrice = number(place.extracted_price ?? place.product_price), point = place.gps_coordinates ? { lat: place.gps_coordinates.latitude, lon: place.gps_coordinates.longitude } : null; return { id: `local-${place.place_id ?? place.data_id ?? index}`, category: "local", merchant, merchantLogoUrl: safeHttpUrl(place.favicon), title: `${query} at ${merchant}`, subtitle: [place.type, place.address].filter(Boolean).join(" · ") || "Nearby store", imageUrl: "", rating: number(place.rating) ?? 0, reviewCount: number(place.reviews) ?? 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency: "USD", priceVerified: itemPrice !== null, availability: place.open_state || "Check product availability", distanceMiles: distanceMiles(origin, point), condition: "New", attributes: { condition: "New", retailer: shortRetailerName(merchant) }, destinationUrl: safeHttpUrl(place.website || place.links?.directions || place.google_maps_url), linkLabel: "View store" }; }
+function mapOffer(place, index, query, origin) { const merchant = place.title || place.name || "Local store", itemPrice = number(place.extracted_price ?? place.product_price), point = place.gps_coordinates ? { lat: place.gps_coordinates.latitude, lon: place.gps_coordinates.longitude } : null; return { id: `local-${place.place_id ?? place.data_id ?? index}`, category: "local", merchant, merchantLogoUrl: safeHttpUrl(place.favicon), title: merchant, subtitle: [place.type, place.address].filter(Boolean).join(" · ") || "Nearby store", imageUrl: "", rating: number(place.rating) ?? 0, reviewCount: number(place.reviews) ?? 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency: "USD", priceVerified: itemPrice !== null, potentialStore: true, availability: "Potential retailer · confirm product stock", distanceMiles: distanceMiles(origin, point), attributes: { retailer: shortRetailerName(merchant) }, destinationUrl: safeHttpUrl(place.website || place.links?.directions || place.google_maps_url), linkLabel: "View store" }; }
 function explicitCurrency(text) { return /₪|\bNIS\b|\bILS\b/i.test(text) ? "ILS" : /€|\bEUR\b/i.test(text) ? "EUR" : /£|\bGBP\b/i.test(text) ? "GBP" : /\$|\bUSD\b/i.test(text) ? "USD" : null; }
 function localPrice(text, extracted) { const direct = number(extracted); if (direct !== null) return { value: direct, currency: explicitCurrency(text) ?? "USD" }; const ils = text.match(/(?:₪|NIS|ILS)\s*([0-9][0-9,.]*)|([0-9][0-9,.]*)\s*(?:₪|NIS|ILS)/i); if (ils) return { value: number(ils[1] ?? ils[2]), currency: "ILS" }; const usd = text.match(/\$\s*([0-9][0-9,.]*)/); return usd ? { value: number(usd[1]), currency: "USD" } : { value: null, currency: "USD" }; }
-async function localProduct(item, index, query, location) { const link = safeHttpUrl(item.link); if (!link || isCategoryPage(item.title, link) || !isRelevantProduct(item.title, query)) return null; const url = new URL(link); if (excludedHosts.test(url.hostname) || url.pathname === "/" || /\/cat(?:\/|\b)|models\.aspx|[?&]act=cat\b/i.test(link) || /zap\.co\.il$/i.test(url.hostname) || !isLocalResult(url, item, location)) return null; const snippet = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${(item.rich_snippet?.top?.extensions ?? []).join(" ")}`, page = await enrichProductPage(link), title = page.title || item.title; if (page.isCatalog || isCategoryPage(title, link) || !isRelevantProduct(title, query)) return null; const fallback = localPrice(snippet, item.extracted_price), itemPrice = page.price ?? fallback.value, currency = explicitCurrency(snippet) ?? (page.price !== null && page.price !== undefined ? page.currency : fallback.currency), merchant = shortRetailerName(item.source || item.displayed_link?.split(" › ")[0] || url.hostname.replace(/^www\./, "").split(".")[0]); return { id: `local-product-${index}-${url.hostname}`, category: "local", merchant, merchantLogoUrl: safeHttpUrl(item.favicon), title, subtitle: String(item.snippet ?? "").slice(0, 150) || `Available near ${location}`, imageUrl: page.imageUrl || safeHttpUrl(item.thumbnail || item.image), rating: 0, reviewCount: 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency, priceVerified: itemPrice !== null, availability: page.price != null ? "Product listed · check local stock" : "Check local stock", condition: "New", attributes: attributesFor(query, `${snippet} ${title}`, "New", merchant, page), attributeLabels: attributeLabelsFor(query, `${snippet} ${title}`, page), destinationUrl: link, linkLabel: "View product" }; }
+async function localProduct(item, index, query, location) { const link = safeHttpUrl(item.link); if (!link || isCategoryPage(item.title, link) || !isRelevantProduct(item.title, query)) return null; const url = new URL(link); if (excludedHosts.test(url.hostname) || url.pathname === "/" || /\/cat(?:\/|\b)|models\.aspx|[?&]act=cat\b/i.test(link) || /zap\.co\.il$/i.test(url.hostname) || !isLocalResult(url, item, location)) return null; const snippet = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${(item.rich_snippet?.top?.extensions ?? []).join(" ")}`, page = await enrichProductPage(link), title = page.title || item.title; if (page.isCatalog || isCategoryPage(title, link) || !isRelevantProduct(title, query)) return null; const fallback = localPrice(snippet, item.extracted_price), itemPrice = page.price ?? fallback.value, currency = explicitCurrency(snippet) ?? (page.price !== null && page.price !== undefined ? page.currency : fallback.currency), merchant = shortRetailerName(item.source || item.displayed_link?.split(" › ")[0] || url.hostname.replace(/^www\./, "").split(".")[0]); if (!page.isProduct && fallback.value === null) return null; return { id: `local-product-${index}-${url.hostname}`, category: "order", merchant, merchantLogoUrl: safeHttpUrl(item.favicon), title, subtitle: String(item.snippet ?? "").slice(0, 150) || `Available near ${location}`, imageUrl: page.imageUrl || safeHttpUrl(item.thumbnail || item.image), imageUrls: page.imageUrls ?? [], gtin: page.gtin, rating: 0, reviewCount: 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency, priceVerified: itemPrice !== null, availability: "Listed by retailer · confirm delivery", totalEstimated: true, condition: "New", attributes: attributesFor(query, `${title}`, "New", merchant, page), attributeLabels: attributeLabelsFor(query, `${snippet} ${title}`, page), destinationUrl: link, linkLabel: "View product" }; }
 
 async function enrichOffer(offer, query) {
   if (!offer?.destinationUrl) return offer;
@@ -154,7 +158,7 @@ async function enrichOffer(offer, query) {
   const page = await enrichProductPage(offer.destinationUrl);
   if (page.isCatalog || (page.title && !isRelevantProduct(page.title, query))) return offer;
   const itemPrice = offer.itemPrice ?? page.price ?? null, shippingPrice = offer.shippingPrice;
-  return { ...offer, title: page.title && isRelevantProduct(page.title, query) ? page.title : offer.title, imageUrl: offer.imageUrl || page.imageUrl || "", itemPrice, ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: offer.importTaxPrice, taxPrice: offer.taxPrice, providerTotal: offer.totalPrice, crossBorder: offer.importTaxUnknown }), currency: offer.itemPrice === null && page.price !== null ? page.currency : offer.currency, priceVerified: itemPrice !== null, attributeLabels: { ...offer.attributeLabels, ...attributeLabelsFor(query, `${offer.title} ${page.specificationText ?? ""}`, page) }, attributes: { ...offer.attributes, ...attributesFor(query, `${offer.title} ${offer.subtitle} ${page.title ?? ""}`, offer.condition, offer.merchant, page) } };
+  return { ...offer, title: page.title && isRelevantProduct(page.title, query) ? page.title : offer.title, imageUrl: page.imageUrl || offer.imageUrl || "", imageUrls: [...new Set([...(page.imageUrls ?? []), offer.imageUrl].filter(Boolean))], gtin: page.gtin || offer.gtin, itemPrice, ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: offer.importTaxPrice, taxPrice: offer.taxPrice, providerTotal: offer.totalPrice, crossBorder: offer.importTaxUnknown }), currency: offer.itemPrice === null && page.price !== null ? page.currency : offer.currency, priceVerified: itemPrice !== null, attributeLabels: { ...offer.attributeLabels, ...attributeLabelsFor(query, `${offer.title} ${page.specificationText ?? ""}`, page) }, attributes: { ...offer.attributes, ...attributesFor(query, `${offer.title} ${offer.subtitle} ${page.title ?? ""}`, offer.condition, offer.merchant, page) } };
 }
 
 function mergeLocalProducts(mapOffers, productOffers) {
@@ -171,7 +175,7 @@ function mergeLocalProducts(mapOffers, productOffers) {
     unusedMaps.delete(match);
     return { ...product, rating: match.rating || product.rating, reviewCount: match.reviewCount || product.reviewCount, distanceMiles: match.distanceMiles, subtitle: product.subtitle || match.subtitle };
   });
-  const supplemental = [...unusedMaps].sort((a, b) => (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity)).slice(0, enriched.length ? 2 : 4);
+  const supplemental = [...unusedMaps].sort((a, b) => (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity));
   return [...enriched, ...supplemental];
 }
 
@@ -181,15 +185,20 @@ function nearbyProductOffers(maps, offers) {
   })).map(offer => ({ ...offer, id: `${offer.id}-pickup`, category: "local", totalPrice: offer.itemPrice, shippingPrice: null, importTaxPrice: null, taxPrice: null, otherFeesPrice: 0, importTaxUnknown: false, totalEstimated: false, availability: "Product listed · check branch stock" }));
 }
 
-function isCategoryPage(title, link) {
+export function isCategoryPage(title, link) {
+  let path; try { path = decodeURIComponent(new URL(link).pathname); } catch { path = String(link); }
+  if (/\/(?:blogs?|articles?|guides?|news)(?:\/|$)/i.test(path)) return true;
+  if (/\/collections?(?:\/|$)/i.test(path) && !/\/products?\//i.test(path)) return true;
+  if (/\/(?:\d+-)?(?:אוהלים|מסכים|מחשבים|tent[s]?|monitors)\/?$/i.test(path) && /^(?:אוהלים|מסכים|מחשבים|tents|monitors)(?:\s*[|–-]|$)/i.test(String(title))) return true;
   return /\/cat(?:\/|\b)|models\.aspx|product-category|[?&](?:act=cat|catid=)/i.test(link)
     || /^(?:מסכי(?:ם|\s)|מסכים|מגוון|כל המוצרים)|מסכים מומלצים|^\s*(?:all products|shop all|browse)/i.test(String(title));
 }
 
 export function buildFacets(offers, query) {
+  offers = offers.map(normalizeOfferFacets);
   const specificIds = new Set((productRules.find((group) => group.match.test(query))?.rules ?? []).map(({ id }) => id));
   const discovered = new Map(offers.flatMap(offer => Object.entries(offer.attributeLabels ?? {})));
-  const definitions = [["condition", "Condition"], ...rulesFor(query).map(({ id, label }) => [id, id === "brand" ? "Manufacturer" : label]), ...discovered, ["retailer", "Retailer"]];
+  const definitions = [["condition", "Condition"], ...rulesFor(query).map(({ id, label }) => [id, id === "brand" ? "Manufacturer" : label]), ...discovered, ["retailer", "Retailer"]].filter(([, label]) => englishLabel(label));
   return definitions.filter(([id], index) => definitions.findIndex(([other]) => other === id) === index).map(([id, label]) => {
     const counts = new Map();
     let covered = 0;
@@ -200,25 +209,68 @@ export function buildFacets(offers, query) {
     return { id, label: discovered.get(id) ?? label, options: [...counts].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, count })) };
   }).filter(Boolean);
 }
-function makeResult(query, offers) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, clean = offers.filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
+export function shareProductSpecs(offers) {
+  const groups = new Map();
+  for (const offer of offers) {
+    if (!/^\d{8,14}$/.test(offer.gtin ?? "")) continue;
+    const group = groups.get(offer.gtin) ?? [];
+    group.push(offer); groups.set(offer.gtin, group);
+  }
+  return offers.map(offer => {
+    const group = groups.get(offer.gtin);
+    if (!group) return offer;
+    const attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
+    for (const donor of group) for (const [id, values] of Object.entries(donor.attributes)) {
+      if (["retailer", "condition"].includes(id) || attributes[id] !== undefined) continue;
+      const known = group.filter(item => item.attributes[id] !== undefined);
+      if (!known.every(item => JSON.stringify(item.attributes[id]) === JSON.stringify(values))) continue;
+      attributes[id] = values;
+      if (donor.attributeLabels?.[id]) attributeLabels[id] = donor.attributeLabels[id];
+    }
+    return { ...offer, attributes, attributeLabels };
+  });
+}
+function makeResult(query, offers) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, clean = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
 async function shoppingSearch(query, location, key) {
   const code = countryCode(location), params = new URLSearchParams({ engine: "google_shopping", q: localQuery(query, code), api_key: key, hl: code === "IL" ? "he" : "en", num: "40" });
   if (code) params.set("gl", code.toLowerCase());
   if (location && location !== "Current location") params.set("location", providerLocation(location));
   let data;
-  try { data = await fetchJson(`https://serpapi.com/search.json?${params}`, {}, 14000); }
+  try { data = await searchProvider(params, key, 14000); }
   catch (error) {
     if (!/unsupported.*location/i.test(error.message) || !params.has("location")) throw error;
     params.delete("location");
-    data = await fetchJson(`https://serpapi.com/search.json?${params}`, {}, 14000);
+    data = await searchProvider(params, key, 14000);
   }
   const items = [...(data.shopping_results ?? []), ...(data.inline_shopping_results ?? [])].filter(item => isRelevantProduct(item.title, query));
+  if (typeof key === "object") {
+    const rows = await mapConcurrent(items.slice(0, 6), 6, async (item, index) => {
+      const url = safeHttpUrl(item.link);
+      if (url && !/(^|\.)google\./i.test(new URL(url).hostname)) {
+        const offer = shoppingOffer(item, index, query);
+        return offer ? [await enrichOffer(offer, query)] : [];
+      }
+      // A Google product-group URL is not a merchant product URL. Discover actual
+      // product pages and extract their own prices; never attach another shop's price.
+      const shop = shortRetailerName(item.source);
+      const restriction = /^[a-z\d.-]+\.[a-z]{2,}$/i.test(shop) ? "site:" + shop : shop;
+      try {
+        const params = new URLSearchParams({ engine: "google", q: item.title + " " + restriction + " buy", gl: code?.toLowerCase() || "", hl: "en" });
+        const found = await searchProvider(params, key, 10000);
+        return (await Promise.all((found.organic_results ?? []).filter(result => isRelevantProduct(result.title, query)).slice(0, 2)
+          .map((result, n) => localProduct(result, index * 2 + n, query, location)))).filter(Boolean);
+      } catch { return []; }
+    });
+    const offers = rows.flat();
+    if (items.length && !offers.length) throw new Error("Merchant product pages unavailable");
+    return offers;
+  }
   // Resolve a bounded set of product groups concurrently; each can contain several retailers.
   const direct = items.filter(item => item.link && !/google\./i.test(new URL(safeHttpUrl(item.link) || "https://google.com").hostname));
-  const grouped = items.filter(item => item.immersive_product_page_token).slice(0, 4);
+  const grouped = items.filter(item => item.immersive_product_page_token).slice(0, 8);
   const resolved = await Promise.allSettled(grouped.map(async (item) => {
     const params = new URLSearchParams({ engine: "google_immersive_product", page_token: item.immersive_product_page_token, api_key: key });
-    const detail = (await fetchJson(`https://serpapi.com/search.json?${params}`, {}, 10000)).product_results ?? {};
+    const detail = (await searchProvider(params, key, 10000)).product_results ?? {};
     return (detail.stores ?? []).filter(store => !store.monthly_payment_duration && !store.installments_description).map((store, index) => ({ ...store, product_id: `${item.product_id}-${index}`, title: store.title || detail.title || item.title, source: store.name, source_icon: store.logo, thumbnail: item.thumbnail || detail.thumbnails?.[0], extensions: (store.details_and_offers ?? []).filter(text => !/משלוח|shipping|delivery/i.test(text)), specificationText: detail.about_the_product?.description, specifications: specificationPairs(detail.about_the_product?.features), brand: detail.brand }));
   }));
   if (grouped.length && resolved.every(result => result.status === "rejected") && !direct.length) throw new Error("Product links unavailable");
@@ -231,24 +283,88 @@ async function shoppingSearch(query, location, key) {
     const shippingPrice = number(item.shipping_extracted) ?? (/free|חינם/i.test(item.shipping ?? "") ? 0 : offer.shippingPrice);
     return { ...offer, ...costBreakdown({ itemPrice: offer.itemPrice, shippingPrice, importTaxPrice: number(item.import_charges_extracted ?? item.extracted_import_charges), taxPrice: number(item.extracted_estimated_tax), providerTotal: number(item.extracted_total) }), attributeLabels: attributeLabelsFor(query, `${item.title} ${item.specificationText ?? ""}`, item), attributes: attributesFor(query, `${item.title} ${(item.extensions ?? []).join(" ")}`, offer.condition, offer.merchant, item) };
   }).filter(Boolean);
-  return Promise.all(offers.map((offer, index) => index < 16 ? enrichOffer(offer, query) : offer));
+  return mapConcurrent(offers, 10, (offer, index) => index < 50 ? enrichOffer(offer, query) : offer);
 }
 async function mapsSearch(query, location, key, coordinates) {
   const origin = validCoordinates(coordinates);
   if (!origin && (!location || location === "Current location")) return [];
   const storeType = storeRules.find(([match]) => match.test(query))?.[1][0];
-  const target = storeType ? `${storeType} stores` : `where to buy ${query}`;
+  const target = storeType ? storeType + " stores" : "where to buy " + query;
   const place = location && location !== "Current location" ? providerLocation(location) : "";
-  const params = new URLSearchParams({ engine: "google_maps", type: "search", q: place ? `${target} near ${place}` : `${target} near me`, api_key: key, hl: "en" });
-  if (origin) params.set("ll", `@${origin.lat},${origin.lon},14z`);
+  const params = new URLSearchParams({ engine: "google_maps", type: "search", q: target + (place ? " near " + place : " near me"), api_key: key, hl: "en" });
+  if (origin) params.set("ll", "@" + origin.lat + "," + origin.lon + ",14z");
   if (!place && origin) params.set("nearby", "true");
-  const data = await fetchJson(`https://serpapi.com/search.json?${params}`, {}, 14000);
-  return (data.local_results ?? []).map((place, index) => ({ place, index, score: relevance(place, query, origin) })).filter(({ score }) => Number.isFinite(score) && score >= 2).sort((a, b) => b.score - a.score).slice(0, 10).map(({ place, index }) => mapOffer(place, index, query, origin));
+  let data;
+  try { data = await searchProvider(params, key, 12000); }
+  catch (error) {
+    // A separate engine can still return the local pack when Maps is unavailable.
+    const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
+    const pack = await searchProvider(fallback, key, 6000);
+    const places = Array.isArray(pack.local_results) ? pack.local_results : pack.local_results?.places;
+    if (!places?.length) throw error;
+    data = { local_results: places };
+  }
+  let places = data.local_results ?? [];
+  if (places.length >= 20) {
+    const next = new URLSearchParams(params); next.set("start", "20");
+    try { const page = await searchProvider(next, key, 6000); places = [...places, ...(page.local_results ?? [])]; } catch { /* retain first page */ }
+  }
+  const seen = new Set();
+  return places.map((place, index) => ({ place, index, score: relevance(place, query, origin) }))
+    .filter(({ place, score }) => { const id = place.place_id || place.data_id || (place.title + "|" + place.address); if (!Number.isFinite(score) || score < 2 || seen.has(id)) return false; seen.add(id); return true; })
+    .sort((a, b) => b.score - a.score).slice(0, 50).map(({ place, index }) => mapOffer(place, index, query, origin));
 }
-async function localProductSearch(query, location, key) { if (!location || location === "Current location") return []; const code = countryCode(location), tld = code ? countryTlds.get(code) : undefined, localTerms = code === "IL" ? `מחיר site:${tld}` : tld ? `price site:${tld}` : `price near ${location}`, params = new URLSearchParams({ engine: "google", q: `${localQuery(query, code)} ${localTerms} -inurl:cat -inurl:models -inurl:category`, api_key: key, hl: code === "IL" ? "he" : "en", num: "20" }); if (code) params.set("gl", code.toLowerCase()); const data = await fetchJson(`https://serpapi.com/search.json?${params}`, {}, 11000); const candidates = (data.organic_results ?? []).filter((item) => isRelevantProduct(item.title, query)).slice(0, 10); return (await Promise.all(candidates.map((item, index) => localProduct(item, index, query, location)))).filter(Boolean); }
-async function runScope(scope, query, location, key, coordinates, credentials) { const jobs = scope === "online" ? [shoppingSearch(query, location, key), ebaySearch(query, location, credentials)] : scope === "local" ? [mapsSearch(query, location, key, coordinates)] : scope === "local-products" ? [localProductSearch(query, location, key)] : [shoppingSearch(query, location, key), mapsSearch(query, location, key, coordinates), localProductSearch(query, location, key), ebaySearch(query, location, credentials)]; const settled = await Promise.allSettled(jobs); if (settled.every(({ status }) => status === "rejected")) throw settled[0].reason; let offers = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []); if (scope === "all") { const online = settled[0]?.status === "fulfilled" ? settled[0].value : [], maps = settled[1]?.status === "fulfilled" ? settled[1].value : [], products = settled[2]?.status === "fulfilled" ? settled[2].value : [], usedOffers = settled[3]?.status === "fulfilled" ? settled[3].value : []; offers = [...mergeLocalProducts(maps, [...products, ...nearbyProductOffers(maps, online)]), ...online, ...usedOffers]; } const result = makeResult(query, await localizeOffers(offers, location));
-  const labels = scope === "online" ? ["Online stores", "Second-hand listings"] : scope === "local" ? ["Nearby stores"] : scope === "local-products" ? ["Local product pages"] : ["Online stores", "Nearby stores", "Local product pages", "Second-hand listings"];
-  result.warnings = settled.flatMap((entry, index) => entry.status === "rejected" ? [`${labels[index]} could not be searched. Please try again.`] : []);
+async function localProductSearch(query, location, key) {
+  if (!location || location === "Current location") return [];
+  const code = countryCode(location), tld = code ? countryTlds.get(code) : undefined;
+  const terms = code === "IL" ? "מחיר site:" + tld : tld ? "price site:" + tld : "price near " + location;
+  const base = localQuery(query, code) + " " + terms + " -inurl:cat -inurl:models -inurl:category";
+  const queries = [base, query + " buy " + (tld ? "site:" + tld : "near " + location) + " -inurl:category"];
+  const pages = await Promise.allSettled(queries.map(q => {
+    const params = new URLSearchParams({ engine: "google", q, api_key: key, hl: code === "IL" ? "he" : "en", num: "30" });
+    if (code) params.set("gl", code.toLowerCase());
+    return searchProvider(params, key, 10000);
+  }));
+  if (pages.every(p => p.status === "rejected")) throw pages[0].reason;
+  const seen = new Set(), domains = new Map();
+  const candidates = pages.flatMap(p => p.status === "fulfilled" ? p.value.organic_results ?? [] : []).filter(item => {
+    const link = safeHttpUrl(item.link);
+    if (!link || seen.has(link) || !isRelevantProduct(item.title, query)) return false;
+    seen.add(link); return true;
+  }).map(item => { const domain = new URL(item.link).hostname; const rank = domains.get(domain) ?? 0; domains.set(domain, rank + 1); return { item, rank }; })
+    .sort((a, b) => a.rank - b.rank).slice(0, 40).map(({ item }) => item);
+  return (await mapConcurrent(candidates, 10, (item, index) => localProduct(item, index, query, location))).filter(Boolean);
+}
+async function runScope(scope, query, location, key, coordinates, credentials) {
+  const jobs = scope === "online" ? [shoppingSearch(query, location, key), localProductSearch(query, location, key), ebaySearch(query, location, credentials)]
+    : scope === "local" ? [mapsSearch(query, location, key, coordinates)]
+    : scope === "local-products" ? [localProductSearch(query, location, key)]
+    : [shoppingSearch(query, location, key), mapsSearch(query, location, key, coordinates), localProductSearch(query, location, key), ebaySearch(query, location, credentials)];
+  const settled = await Promise.allSettled(jobs);
+  if (settled.every(({ status }) => status === "rejected")) throw settled[0].reason;
+  const value = index => settled[index]?.status === "fulfilled" ? settled[index].value : [];
+  let offers = settled.flatMap(result => result.status === "fulfilled" ? result.value : []);
+  if (scope === "all") {
+    const online = [...value(0), ...value(2)], maps = value(1);
+    const covered = new Set(online.map(offer => new URL(offer.destinationUrl).hostname.replace(/^www\./, "")));
+    const domains = [...new Set(maps.map(store => { try { return new URL(store.destinationUrl).hostname.replace(/^www\./, ""); } catch { return ""; } }))]
+      .filter(domain => domain && !covered.has(domain) && !/google\.|maps\.|facebook\./i.test(domain)).slice(0, 12);
+    if (domains.length >= 3) {
+      const params = new URLSearchParams({ engine: "google", q: localQuery(query, countryCode(location)) + " (" + domains.map(domain => "site:" + domain).join(" OR ") + ")", api_key: key, hl: countryCode(location) === "IL" ? "he" : "en", num: "30" });
+      try {
+        const extra = await searchProvider(params, key, 6000);
+        const candidates = (extra.organic_results ?? []).filter(item => { try { return domains.includes(new URL(item.link).hostname.replace(/^www\./, "")); } catch { return false; } }).slice(0, 20);
+        online.push(...(await mapConcurrent(candidates, 10, (item, index) => localProduct(item, index, query, location))).filter(Boolean));
+      } catch { /* preserve successfully discovered stores and products */ }
+    }
+    offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
+  }
+  const result = makeResult(query, await localizeOffers(shareProductSpecs(offers), location));
+  const labels = scope === "online" ? ["Online stores", "Retailer product pages", "Second-hand listings"]
+    : scope === "local" ? ["Nearby stores"] : scope === "local-products" ? ["Retailer product pages"]
+    : ["Online stores", "Nearby stores", "Retailer product pages", "Second-hand listings"];
+  result.warnings = settled.flatMap((entry, index) => entry.status === "rejected" ? [labels[index] + " could not be searched. Please try again."] : []);
   if ((!location || location === "Current location") && !coordinates && scope !== "online") result.warnings.push("Choose a location to include nearby stores.");
-  return result; }
-export async function searchCatalog(query, location, apiKey, coordinates, credentials, scope = "all") { if (!apiKey) throw new Error("SERPAPI_API_KEY is not configured"); const safeScope = ["all", "online", "local", "local-products"].includes(scope) ? scope : "all", point = validCoordinates(coordinates), cacheKey = `${safeScope}|${query.trim().toLowerCase()}|${String(location || "").trim().toLowerCase()}|${point ? `${point.lat.toFixed(4)},${point.lon.toFixed(4)}` : ""}`; const cached = cache.get(cacheKey); if (cached && Date.now() - cached.at < CACHE_MS) return cached.value; if (inFlight.has(cacheKey)) return inFlight.get(cacheKey); const request = runScope(safeScope, query.trim(), location, apiKey, point, credentials).then((value) => { if (!value.warnings?.length) cache.set(cacheKey, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(cacheKey)); inFlight.set(cacheKey, request); return request; }
+  return result;
+}
+export async function searchCatalog(query, location, apiKey, coordinates, credentials, scope = "all") { if (!apiKey || (typeof apiKey === "object" && (!apiKey.apiKey || !apiKey.zone))) throw new Error("Bright Data API key and SERP zone must be configured"); const safeScope = ["all", "online", "local", "local-products"].includes(scope) ? scope : "all", point = validCoordinates(coordinates), cacheKey = `${safeScope}|${query.trim().toLowerCase()}|${String(location || "").trim().toLowerCase()}|${point ? `${point.lat.toFixed(4)},${point.lon.toFixed(4)}` : ""}`; const cached = cache.get(cacheKey); if (cached && Date.now() - cached.at < CACHE_MS) return cached.value; if (inFlight.has(cacheKey)) return inFlight.get(cacheKey); const request = runScope(safeScope, query.trim(), location, apiKey, point, credentials).then((value) => { if (!value.warnings?.length) cache.set(cacheKey, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(cacheKey)); inFlight.set(cacheKey, request); return request; }
