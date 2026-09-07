@@ -68,6 +68,7 @@ const storeRules = [
 const nonRetail = /repair service|museum|tourist attraction|consultant|contractor|school|university|doctor|clinic|hospital|hotel|lawyer|accountant|real estate|software company|manufacturer/i;
 const generalRetail = /store|shop|retailer|market|mall|department|supermarket|pharmacy|hardware|supply/i;
 const excludedHosts = /(?:amazon|ebay|etsy|facebook|pinterest|aliexpress|temu|wikipedia)\./i;
+const comparisonHosts = /(^|\.)(?:zap\.co\.il|wisebuy\.co\.il|pricez\.co\.il|pricerunner\.[a-z.]+|pricespy\.[a-z.]+|idealo\.[a-z.]+|camelcamelcamel\.com|keepa\.com|pcpartpicker\.com)$/i;
 const countries = new Map([["israel", "IL"], ["united states", "US"], ["usa", "US"], ["canada", "CA"], ["united kingdom", "GB"], ["uk", "GB"], ["germany", "DE"], ["france", "FR"], ["italy", "IT"], ["spain", "ES"], ["australia", "AU"]]);
 const countryTlds = new Map([["IL", ".il"], ["GB", ".uk"], ["CA", ".ca"], ["DE", ".de"], ["FR", ".fr"], ["IT", ".it"], ["ES", ".es"], ["AU", ".au"]]);
 
@@ -80,6 +81,7 @@ const translatedCategories = [
   [/power supply|\bpsu\b/i, /ספק.*כ[ו]?ח/, "ספק כוח"], [/laptop|notebook/i, /מחשב.*נייד/, "מחשב נייד"],
   [/vacuum/i, /שואב/, "שואב אבק"], [/printer/i, /מדפסת/, "מדפסת"], [/phone|smartphone/i, /טלפון/, "טלפון"],
   [/chair/i, /כיסא|כסא/, "כיסא"], [/desk/i, /שולחן/, "שולחן"], [/camera/i, /מצלמה/, "מצלמה"],
+  [/charger/i, /מטען/, "מטען"],
 ];
 export function isRelevantProduct(title, query) {
   if (/camping tent/i.test(query) && /tent (?:carpet|rug|spring buckle|rope tensioner)|camping (?:complex|site)|(?:פנס|עששית|תאורה|אירוח|מתחם קמפינג).*אוהל/i.test(title)) return false;
@@ -163,16 +165,17 @@ function shoppingOffer(item, index, query) { if (!isRelevantProduct(item.title, 
 function mapOffer(place, index, query, origin) { const merchant = place.title || place.name || "Local store", itemPrice = number(place.extracted_price ?? place.product_price), point = place.gps_coordinates ? { lat: place.gps_coordinates.latitude, lon: place.gps_coordinates.longitude } : null; return { id: `local-${place.place_id ?? place.data_id ?? index}`, category: "local", merchant, merchantLogoUrl: safeHttpUrl(place.favicon), title: merchant, subtitle: [place.type, place.address].filter(Boolean).join(" · ") || "Nearby store", imageUrl: "", rating: number(place.rating) ?? 0, reviewCount: number(place.reviews) ?? 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency: "USD", priceVerified: itemPrice !== null, potentialStore: true, availability: "Potential retailer · confirm product stock", distanceMiles: distanceMiles(origin, point), attributes: { retailer: shortRetailerName(merchant) }, destinationUrl: safeHttpUrl(place.website || place.links?.directions || place.google_maps_url), linkLabel: "View store" }; }
 function explicitCurrency(text) { return /₪|\bNIS\b|\bILS\b/i.test(text) ? "ILS" : /€|\bEUR\b/i.test(text) ? "EUR" : /£|\bGBP\b/i.test(text) ? "GBP" : /\$|\bUSD\b/i.test(text) ? "USD" : null; }
 function localPrice(text, extracted) { const direct = number(extracted); if (direct !== null) return { value: direct, currency: explicitCurrency(text) ?? "USD" }; const ils = text.match(/(?:₪|NIS|ILS)\s*([0-9][0-9,.]*)|([0-9][0-9,.]*)\s*(?:₪|NIS|ILS)/i); if (ils) return { value: number(ils[1] ?? ils[2]), currency: "ILS" }; const usd = text.match(/\$\s*([0-9][0-9,.]*)/); return usd ? { value: number(usd[1]), currency: "USD" } : { value: null, currency: "USD" }; }
-async function localProduct(item, index, query, location) { const link = safeHttpUrl(item.link); if (!link || isCategoryPage(item.title, link) || !isRelevantProduct(item.title, query)) return null; const url = new URL(link); if (excludedHosts.test(url.hostname) || url.pathname === "/" || /\/cat(?:\/|\b)|models\.aspx|[?&]act=cat\b/i.test(link) || /zap\.co\.il$/i.test(url.hostname) || !isLocalResult(url, item, location)) return null; const snippet = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${(item.rich_snippet?.top?.extensions ?? []).join(" ")}`, page = await enrichProductPage(link), title = page.title || item.title; if (page.isCatalog || isCategoryPage(title, link) || !isRelevantProduct(title, query)) return null; const fallback = localPrice(snippet, item.extracted_price), itemPrice = page.price ?? fallback.value, currency = explicitCurrency(snippet) ?? (page.price !== null && page.price !== undefined ? page.currency : fallback.currency), merchant = shortRetailerName(item.source || item.displayed_link?.split(" › ")[0] || url.hostname.replace(/^www\./, "").split(".")[0]); if (!page.isProduct && fallback.value === null) return null; return { id: `local-product-${index}-${url.hostname}`, category: "order", merchant, merchantLogoUrl: safeHttpUrl(item.favicon), title, subtitle: String(item.snippet ?? "").slice(0, 150) || `Available near ${location}`, imageUrl: page.imageUrl || productImageUrl(item.thumbnail || item.image), imageUrls: page.imageUrls ?? [], gtin: page.gtin, rating: 0, reviewCount: 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency, priceVerified: itemPrice !== null, availability: page.availability || "", totalEstimated: true, condition: "New", attributes: attributesFor(query, `${snippet} ${title}`, "New", merchant, page), attributeLabels: attributeLabelsFor(query, `${snippet} ${title}`, page), destinationUrl: link, linkLabel: "View product" }; }
+async function localProduct(item, index, query, location) { const link = safeHttpUrl(item.link); if (!link || isCategoryPage(item.title, link) || !isRelevantProduct(item.title, query)) return null; const url = new URL(link); if (comparisonHosts.test(url.hostname) || excludedHosts.test(url.hostname) || url.pathname === "/" || /\/cat(?:\/|\b)|models\.aspx|[?&]act=cat\b/i.test(link) || /zap\.co\.il$/i.test(url.hostname) || !isLocalResult(url, item, location)) return null; const snippet = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${(item.rich_snippet?.top?.extensions ?? []).join(" ")}`, page = await enrichProductPage(link), title = page.title || item.title; if (page.unavailable || page.isCatalog || isCategoryPage(title, link) || !isRelevantProduct(title, query)) return null; const fallback = localPrice(snippet, item.extracted_price), itemPrice = page.price ?? fallback.value, currency = page.price != null ? page.currency : explicitCurrency(snippet) ?? fallback.currency, merchant = shortRetailerName(item.source || item.displayed_link?.split(" › ")[0] || url.hostname.replace(/^www\./, "").split(".")[0]); if (!page.isProduct) return null; return { id: `local-product-${index}-${url.hostname}`, category: "order", merchant, merchantLogoUrl: safeHttpUrl(item.favicon), title, subtitle: String(item.snippet ?? "").slice(0, 150) || `Available near ${location}`, imageUrl: page.imageUrl || productImageUrl(item.thumbnail || item.image), imageUrls: page.imageUrls ?? [], gtin: page.gtin, mpn: page.mpn, productBrand: page.brand, rating: 0, reviewCount: 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency, priceVerified: page.price != null, availability: page.availability || "", totalEstimated: true, condition: "New", attributes: attributesFor(query, `${snippet} ${title}`, "New", merchant, page), attributeLabels: attributeLabelsFor(query, `${snippet} ${title}`, page), destinationUrl: link, linkLabel: "View product" }; }
 
-async function enrichOffer(offer, query) {
+async function enrichOffer(offer, query, requireProductPage = false) {
   if (!offer?.destinationUrl) return offer;
   const host = new URL(offer.destinationUrl).hostname;
-  if (excludedHosts.test(host) || /(?:google|serpapi)\./i.test(host)) return offer;
+  if (comparisonHosts.test(host)) return null;
+  if (excludedHosts.test(host) || /(?:google|serpapi)\./i.test(host)) return requireProductPage ? null : offer;
   const page = await enrichProductPage(offer.destinationUrl);
-  if (page.isCatalog || (page.title && !isRelevantProduct(page.title, query))) return offer;
-  const itemPrice = offer.itemPrice ?? page.price ?? null, shippingPrice = offer.shippingPrice;
-  return { ...offer, availability: page.availability || "", title: page.title && isRelevantProduct(page.title, query) ? page.title : offer.title, imageUrl: page.imageUrl || offer.imageUrl || "", imageUrls: [...new Set([...(page.imageUrls ?? []), offer.imageUrl].filter(Boolean))], gtin: page.gtin || offer.gtin, itemPrice, ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: offer.importTaxPrice, taxPrice: offer.taxPrice, providerTotal: offer.totalPrice, crossBorder: offer.importTaxUnknown }), currency: offer.itemPrice === null && page.price !== null ? page.currency : offer.currency, priceVerified: itemPrice !== null, attributeLabels: { ...offer.attributeLabels, ...attributeLabelsFor(query, `${offer.title} ${page.specificationText ?? ""}`, page) }, attributes: { ...offer.attributes, ...attributesFor(query, `${offer.title} ${offer.subtitle} ${page.title ?? ""}`, offer.condition, offer.merchant, page) } };
+  if (page.unavailable || page.isCatalog || (page.title && !isRelevantProduct(page.title, query)) || (requireProductPage && !page.isProduct)) return null;
+  const itemPrice = page.price ?? offer.itemPrice ?? null, shippingPrice = offer.shippingPrice;
+  return { ...offer, availability: page.availability || "", title: page.title && isRelevantProduct(page.title, query) ? page.title : offer.title, imageUrl: page.imageUrl || offer.imageUrl || "", imageUrls: [...new Set([...(page.imageUrls ?? []), offer.imageUrl].filter(Boolean))], gtin: page.gtin || offer.gtin, mpn: page.mpn || offer.mpn, productBrand: page.brand || offer.productBrand, itemPrice, ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: offer.importTaxPrice, taxPrice: offer.taxPrice, providerTotal: offer.totalPrice, crossBorder: offer.importTaxUnknown }), currency: page.price != null ? page.currency : offer.currency, priceVerified: page.price != null, attributeLabels: { ...offer.attributeLabels, ...attributeLabelsFor(query, `${offer.title} ${page.specificationText ?? ""}`, page) }, attributes: { ...offer.attributes, ...attributesFor(query, `${offer.title} ${offer.subtitle} ${page.title ?? ""}`, offer.condition, offer.merchant, page) } };
 }
 
 function mergeLocalProducts(mapOffers, productOffers) {
@@ -231,14 +234,17 @@ export function buildFacets(offers, query) {
   }).filter(Boolean);
 }
 export function shareProductSpecs(offers) {
+  const identity = offer => /^\d{8,14}$/.test(offer.gtin ?? "") ? "gtin:" + offer.gtin
+    : offer.productBrand && /[a-z]/i.test(offer.mpn ?? "") && /^[a-z\d][a-z\d._/-]{3,}$/i.test(offer.mpn ?? "") ? "mpn:" + String(offer.productBrand).trim().toLowerCase() + ":" + offer.mpn.toLowerCase() : null;
   const groups = new Map();
   for (const offer of offers) {
-    if (!/^\d{8,14}$/.test(offer.gtin ?? "")) continue;
-    const group = groups.get(offer.gtin) ?? [];
-    group.push(offer); groups.set(offer.gtin, group);
+    const key = identity(offer);
+    if (!key) continue;
+    const group = groups.get(key) ?? [];
+    group.push(offer); groups.set(key, group);
   }
   return offers.map(offer => {
-    const group = groups.get(offer.gtin);
+    const group = groups.get(identity(offer));
     if (!group) return offer;
     const attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     for (const donor of group) for (const [id, values] of Object.entries(donor.attributes)) {
@@ -252,6 +258,31 @@ export function shareProductSpecs(offers) {
   });
 }
 function makeResult(query, offers) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, clean = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
+export async function recoverModelSpecifications(offers, query, location, key) {
+  if (typeof key !== "object") return offers;
+  const propertyIds = new Set([...rulesFor(query).map(rule => rule.id), ...offers.flatMap(offer => Object.keys(offer.attributes ?? {}))]);
+  const candidates = new Map();
+  for (const offer of offers) {
+    if (![...propertyIds].some(id => !offer.attributes?.[id])) continue;
+    const id = /^\d{8,14}$/.test(offer.gtin ?? "") ? offer.gtin : offer.productBrand && /[a-z]/i.test(offer.mpn ?? "") && /^[a-z\d._/-]{4,}$/i.test(offer.mpn ?? "") ? `${offer.productBrand} ${offer.mpn}` : null;
+    if (id && !candidates.has(id)) candidates.set(id, offer);
+  }
+  // One lookup per identifier, not per offer/filter. Bound the extra latency and
+  // requests; missing specifications remain missing rather than being invented.
+  const donors = await mapConcurrent([...candidates].slice(0, 6), 6, async ([id, offer]) => {
+    try {
+      const params = new URLSearchParams({ engine: "google", q: `"${id}" specifications`, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
+      const result = await searchProvider(params, key, 8000);
+      const pages = await mapConcurrent((result.organic_results ?? []).slice(0, 2), 2, item => enrichProductPage(item.link));
+      return pages.filter(page => page.isProduct && !page.unavailable && (offer.gtin && page.gtin === offer.gtin || offer.mpn && /[a-z]/i.test(offer.mpn) && page.mpn?.toLowerCase() === offer.mpn.toLowerCase() && String(page.brand ?? "").toLowerCase() === String(offer.productBrand).toLowerCase())).map(page => ({
+        gtin: offer.gtin, mpn: offer.mpn, productBrand: offer.productBrand,
+        attributes: attributesFor(query, page.title ?? "", undefined, "", page),
+        attributeLabels: attributeLabelsFor(query, page.title ?? "", page),
+      }));
+    } catch { return []; }
+  });
+  return shareProductSpecs([...offers, ...donors.flat()]).slice(0, offers.length);
+}
 async function shoppingSearch(query, location, key) {
   const code = countryCode(location), params = new URLSearchParams({ engine: "google_shopping", q: localQuery(query, code), api_key: key, hl: code === "IL" ? "he" : "en", num: "40" });
   if (code) params.set("gl", code.toLowerCase());
@@ -269,7 +300,7 @@ async function shoppingSearch(query, location, key) {
       const url = safeHttpUrl(item.link);
       if (url && !/(^|\.)google\./i.test(new URL(url).hostname)) {
         const offer = shoppingOffer(item, index, query);
-        return offer ? [await enrichOffer(offer, query)] : [];
+        return offer ? [await enrichOffer(offer, query, true)].filter(Boolean) : [];
       }
       // A Google product-group URL is not a merchant product URL. Discover actual
       // product pages and extract their own prices; never attach another shop's price.
@@ -282,7 +313,7 @@ async function shoppingSearch(query, location, key) {
           .map((result, n) => localProduct(result, index * 2 + n, query, location)))).filter(Boolean).map(offer => matchingShoppingEvidence(item, offer));
       } catch { return []; }
     });
-    const offers = rows.flat();
+    const offers = rows.flat().filter(Boolean);
     if (items.length && !offers.length) throw new Error("Merchant product pages unavailable");
     return offers;
   }
@@ -304,7 +335,7 @@ async function shoppingSearch(query, location, key) {
     const shippingPrice = number(item.shipping_extracted) ?? (/free|חינם/i.test(item.shipping ?? "") ? 0 : offer.shippingPrice);
     return { ...offer, ...costBreakdown({ itemPrice: offer.itemPrice, shippingPrice, importTaxPrice: number(item.import_charges_extracted ?? item.extracted_import_charges), taxPrice: number(item.extracted_estimated_tax), providerTotal: number(item.extracted_total) }), attributeLabels: attributeLabelsFor(query, `${item.title} ${item.specificationText ?? ""}`, item), attributes: attributesFor(query, `${item.title} ${(item.extensions ?? []).join(" ")}`, offer.condition, offer.merchant, item) };
   }).filter(Boolean);
-  return mapConcurrent(offers, 10, (offer, index) => index < 50 ? enrichOffer(offer, query) : offer);
+  return (await mapConcurrent(offers, 10, (offer, index) => index < 50 ? enrichOffer(offer, query) : offer)).filter(Boolean);
 }
 async function mapsSearch(query, location, key, coordinates) {
   const origin = validCoordinates(coordinates);
@@ -318,12 +349,26 @@ async function mapsSearch(query, location, key, coordinates) {
   let data;
   try { data = await searchProvider(params, key, 12000); }
   catch (error) {
+    if (typeof key === "object") {
+      // A fresh, related retailer query can recover a failed Maps scrape while
+      // retaining the selected coordinates; do not silently search another city.
+      const alternatives = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
+      const alternate = alternatives.find(type => type === "electronics") || alternatives.find(type => type !== storeType);
+      if (alternate) {
+        const retry = new URLSearchParams(params);
+        retry.set("q", alternate + " stores" + (place ? " near " + place : " near me"));
+        retry.set("start", "0");
+        try { data = await searchProvider(retry, key, 12000); } catch { /* try the local pack below */ }
+      }
+    }
     // A separate engine can still return the local pack when Maps is unavailable.
+    if (!data?.local_results?.length) {
     const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
     const pack = await searchProvider(fallback, key, 6000);
     const places = Array.isArray(pack.local_results) ? pack.local_results : pack.local_results?.places;
     if (!places?.length) throw error;
     data = { local_results: places };
+    }
   }
   let places = data.local_results ?? [];
   if (places.length >= 20) {
@@ -376,9 +421,9 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     const domains = [...new Set(maps.map(store => { try { return new URL(store.destinationUrl).hostname.replace(/^www\./, ""); } catch { return ""; } }))]
       .filter(domain => domain && !covered.has(domain) && !/google\.|maps\.|facebook\./i.test(domain)).slice(0, 12);
     if (typeof key === "object" && domains.length) {
-      const discovered = await mapConcurrent(domains.slice(0, 8), 8, async domain => {
+      const discovered = await mapConcurrent(domains, 8, async domain => {
         try {
-          const params = new URLSearchParams({ engine: "google", q: query + " site:" + domain + " price -inurl:category -inurl:blog -inurl:collections", gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
+          const params = new URLSearchParams({ engine: "google", q: localQuery(query, countryCode(location)) + " site:" + domain + " price -inurl:category -inurl:blog -inurl:collections", gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
           const data = await searchProvider(params, key, 10000);
           const candidates = (data.organic_results ?? []).filter(item => { try { const host = new URL(item.link).hostname.replace(/^www\./, ""); return (host === domain || host.endsWith("." + domain)) && isRelevantProduct(item.title, query) && !isCategoryPage(item.title, item.link); } catch { return false; } }).slice(0, 3);
           return (await mapConcurrent(candidates, 2, (item, i) => localProduct(item, i, query, location))).filter(Boolean);
@@ -395,12 +440,15 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     }
     offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
   }
-  const result = makeResult(query, await localizeOffers(shareProductSpecs(offers.map(offer => ({ ...offer, availability: offer.availability === "Out of stock" ? "Out of stock" : "" }))), location));
+  const enriched = await recoverModelSpecifications(shareProductSpecs(offers), query, location, key);
+  const result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.availability === "Out of stock" ? "Out of stock" : "" })), location));
   const labels = scope === "online" ? ["Online stores", "Retailer product pages", "Second-hand listings"]
     : scope === "local" ? ["Nearby stores"] : scope === "local-products" ? ["Retailer product pages"]
     : ["Online stores", "Nearby stores", "Retailer product pages", "Second-hand listings"];
   result.warnings = settled.flatMap((entry, index) => entry.status === "rejected" ? [labels[index] + " could not be searched. Please try again."] : []);
+  result.partialFailure = settled.some(entry => entry.status === "rejected");
+  if (result.offers.some(offer => offer.category === "order")) result.warnings = result.warnings.filter(warning => !/^(Online stores|Retailer product pages) could not/.test(warning));
   if ((!location || location === "Current location") && !coordinates && scope !== "online") result.warnings.push("Choose a location to include nearby stores.");
   return result;
 }
-export async function searchCatalog(query, location, apiKey, coordinates, credentials, scope = "all") { if (!apiKey || (typeof apiKey === "object" && (!apiKey.apiKey || !apiKey.zone))) throw new Error("Bright Data API key and SERP zone must be configured"); const safeScope = ["all", "online", "local", "local-products"].includes(scope) ? scope : "all", point = validCoordinates(coordinates), cacheKey = `${safeScope}|${query.trim().toLowerCase()}|${String(location || "").trim().toLowerCase()}|${point ? `${point.lat.toFixed(4)},${point.lon.toFixed(4)}` : ""}`; const cached = cache.get(cacheKey); if (cached && Date.now() - cached.at < CACHE_MS) return cached.value; if (inFlight.has(cacheKey)) return inFlight.get(cacheKey); const request = runScope(safeScope, query.trim(), location, apiKey, point, credentials).then((value) => { if (!value.warnings?.length) cache.set(cacheKey, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(cacheKey)); inFlight.set(cacheKey, request); return request; }
+export async function searchCatalog(query, location, apiKey, coordinates, credentials, scope = "all") { if (!apiKey || (typeof apiKey === "object" && (!apiKey.apiKey || !apiKey.zone))) throw new Error("Bright Data API key and SERP zone must be configured"); const safeScope = ["all", "online", "local", "local-products"].includes(scope) ? scope : "all", point = validCoordinates(coordinates), cacheKey = `${safeScope}|${query.trim().toLowerCase()}|${String(location || "").trim().toLowerCase()}|${point ? `${point.lat.toFixed(4)},${point.lon.toFixed(4)}` : ""}`; const cached = cache.get(cacheKey); if (cached && Date.now() - cached.at < CACHE_MS) return cached.value; if (inFlight.has(cacheKey)) return inFlight.get(cacheKey); const request = runScope(safeScope, query.trim(), location, apiKey, point, credentials).then((value) => { if (!value.partialFailure && !value.warnings?.length) cache.set(cacheKey, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(cacheKey)); inFlight.set(cacheKey, request); return request; }

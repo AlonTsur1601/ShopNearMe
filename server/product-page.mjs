@@ -127,8 +127,9 @@ export function extractProductData(html, baseUrl = "") {
     isProduct: !!product.name || dom.isProduct || !!metaPrice || /(?:add.to.cart|הוסף.{0,12}לסל|הוספה.{0,12}לסל)/i.test(scope),
     title,
     gtin: String(product.gtin ?? product.gtin13 ?? product.gtin14 ?? product.gtin12 ?? product.gtin8 ?? "").trim(),
+    mpn: String(product.mpn ?? "").trim(),
     brand: typeof product.brand === "string" ? product.brand : product.brand?.name,
-    specifications: extractNamedSpecifications(scope + dom.specificationsHtml, product),
+    specifications: [...extractNamedSpecifications(scope + dom.specificationsHtml, product), ...dom.namedProperties],
     specificationText: [product.model, product.mpn, product.description, dom.description, ...[product.additionalProperty ?? []].flat().map((property) => `${property.name ?? ""} ${property.value ?? ""} ${property.unitText ?? ""}`)].filter(Boolean).join(" ").replace(/<[^>]*>/g, " ").slice(0, 18000),
     imageUrl: imageUrls[0] ?? "",
     imageUrls,
@@ -163,18 +164,21 @@ export async function enrichProductPage(value) {
       const parsed = new URL(url), itemId = /(^|\.)ksp\.co\.il$/i.test(parsed.hostname) ? parsed.pathname.match(/\/web\/item\/(\d+)/)?.[1] : undefined;
       const candidates = itemId ? [url, parsed.origin + "/?print=" + itemId] : [url];
       let best = {};
+      let gone = false;
       for (const candidate of candidates) {
         const response = await fetch(candidate, { signal: controller.signal, redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
+        if ([404, 410].includes(response.status)) { gone = true; continue; }
         if (!response.ok || !String(response.headers?.get?.("content-type") || "").includes("html")) continue;
         const html = (await readProductHtml(response)).slice(0, 2000000);
         if (/הגישה נחסמה|בקשה.{0,20}נחסמה|access denied|verify you are human|checking your browser/i.test(html.slice(0, 15000))) continue;
         const result = extractProductData(html, response.url || candidate);
+        if (!result.isProduct && /(?:<title[^>]*>|<h1[^>]*>)[^<]*(?:404|page not found|product not found|הדף לא נמצא|המוצר לא נמצא)/i.test(html)) { gone = true; continue; }
         if (result.isCatalog) return { isCatalog: true };
         if (result.isProduct) best = result;
         if (result.isProduct && result.price !== null && result.imageUrl) break;
       }
       if (best.isProduct) { if (pageCache.size >= 300) pageCache.delete(pageCache.keys().next().value); pageCache.set(url, { at: Date.now(), value: best }); }
-      return best;
+      return best.isProduct ? best : gone ? { unavailable: true } : best;
     } catch { return {}; }
   })();
   const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({}); }, 5500); });

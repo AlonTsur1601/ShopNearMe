@@ -22,6 +22,21 @@ export function merchantDom(html, baseUrl = "") {
     if (amount && (amount.match(/\d[\d.,]*/g) ?? []).length === 1) { currentPrice = amount; break; }
   }
   const images = [];
+  const namedProperties = [];
+  scope.find(".specification-row,.spec-row,.attribute-row,.product-specification,[role='row']").each((_i, element) => {
+    const row = $(element), cells = row.children().toArray().map(cell => text($(cell))).filter(Boolean);
+    if (cells.length === 2 && cells[0].length <= 48 && cells[1].length <= 200) namedProperties.push({ name: cells[0].replace(/:$/, ""), value: cells[1] });
+  });
+  // Product descriptions often use paragraphs/divs separated by <br>, not tables.
+  descriptions.each((_i, element) => {
+    const node = $(element).clone();
+    node.find("br").replaceWith("\n");
+    node.find("p,li,div").append("\n");
+    for (const line of node.text().split(/\n/)) {
+      const match = line.trim().match(/^([^:：]{2,48})[:：]\s*(.{1,200})$/);
+      if (match) namedProperties.push({ name: match[1].trim(), value: match[2].trim() });
+    }
+  });
   const stock = scope.find(".stock,.stock-status,.product-availability,[itemprop='availability']").first();
   const availability = stock.attr("content") || stock.attr("href") || text(stock);
   $("#productslider img,.product-gallery img,.product__media img,.product-images img,[itemprop='image'],[data-zoom-image],.fotorama img,.woocommerce-product-gallery img").each((_i, element) => {
@@ -32,5 +47,5 @@ export function merchantDom(html, baseUrl = "") {
   });
   if (isPrint && printTitle) scope.find("img").each((_i, element) => { const src = $(element).attr("src"); if (src && !/logo|banner|icon/i.test(src)) images.push(src); });
   const isCatalog = !product.length && $(".products-grid .product-item,.products.list .product-item,.collection .grid__item,.product-list .product-item").length > 1;
-  return { availability, title: printTitle || undefined, currentPrice: printPrice || currentPrice, description: [description, metadata, printTitle ? bodyText : ""].filter(Boolean).join("\n").slice(0, 18000), images, isCatalog, isProduct: !!printTitle || (!!product.length && !!currentPrice && !!scope.find("h1").length), specificationsHtml: descriptions.toArray().map(element => $.html(element)).join("\n") };
+  return { namedProperties, availability, title: printTitle || undefined, currentPrice: printPrice || currentPrice, description: [description, metadata, printTitle ? bodyText : ""].filter(Boolean).join("\n").slice(0, 18000), images, isCatalog, isProduct: !!printTitle || (!!product.length && !!currentPrice && !!scope.find("h1").length), specificationsHtml: descriptions.toArray().map(element => $.html(element)).join("\n") };
 }
