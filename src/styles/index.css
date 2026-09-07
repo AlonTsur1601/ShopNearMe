@@ -153,6 +153,7 @@ a {
 .offer-specs strong { font-size: 13px; font-weight: 500; }
 .stars { color: #ff9000; font-size: 13px; letter-spacing: 1px; }
 .offer-availability strong { color: var(--green); font-size: 13px; }
+.offer-availability strong.stock-unavailable { color: var(--red); }
 .pickup-label { width: max-content; padding: 2px 5px; border-radius: 3px; background: #dff4fb; color: #047497; font-size: 11px; }
 .offer-price strong { font-size: 16px; }
 .free-shipping { color: var(--green); }

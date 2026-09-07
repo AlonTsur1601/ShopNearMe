@@ -1,4 +1,4 @@
-import { enrichProductPage, productImageUrl } from "./product-page.mjs";
+import { enrichProductPage, isSearchResultsUrl, productImageUrl } from "./product-page.mjs";
 import { localizeOffers } from "./currency.mjs";
 import { monitorAttributes, proseAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
 import { amountInCurrency, costBreakdown } from "./costs.mjs";
@@ -211,6 +211,7 @@ function nearbyProductOffers(maps, offers) {
 
 export function isCategoryPage(title, link) {
   let path; try { path = decodeURIComponent(new URL(link).pathname); } catch { path = String(link); }
+  if (isSearchResultsUrl(link)) return true;
   if (/\/(?:product-tag|product-category|tags?)(?:\/|$)/i.test(path)) return true;
   if (/\/(?:blogs?|articles?|guides?|news)(?:\/|$)/i.test(path)) return true;
   if (/\/collections?(?:\/|$)/i.test(path) && !/\/products?\//i.test(path)) return true;

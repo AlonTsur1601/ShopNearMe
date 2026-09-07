@@ -38,12 +38,11 @@ export function App() {
   const showcase: ShowcaseSearch = searchResult ?? { query: activeQuery ?? "", offers: [], facets: [], resultCount: 0 };
 
   const visibleOffers = useMemo(() => {
-    const available = Object.fromEntries(showcase.facets.map(facet => [facet.id, facet.options.map(option => option.value)]));
     const offers = showcase.offers.filter((offer) => {
       if (offer.distanceMiles !== undefined && offer.distanceMiles > distance) return false;
       if (priceMin && (offer.totalPrice === null || offer.totalPrice < Number(priceMin))) return false;
       if (priceMax && (offer.totalPrice === null || offer.totalPrice > Number(priceMax))) return false;
-      return matchesFacets(offer.attributes, selected, available);
+      return matchesFacets(offer.attributes, selected);
     });
     return [...offers].sort((a, b) => {
       if (sort.startsWith("distance")) {

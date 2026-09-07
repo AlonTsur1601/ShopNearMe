@@ -14,6 +14,10 @@ vi.mock("./services/productSearch", () => ({
 }));
 
 describe("App", () => {
+  it("marks an out-of-stock notice for the red status style", () => {
+    render(<OfferSection category="order" distanceUnit="km" offers={[{ ...clockShowcase.offers[0], availability: "Out of stock" }]} />);
+    expect(screen.getByText("Out of stock")).toHaveClass("stock-unavailable");
+  });
   beforeEach(() => { localStorage.clear(); vi.mocked(searchProducts).mockClear(); });
   afterEach(() => { vi.unstubAllGlobals(); sessionStorage.clear(); });
 

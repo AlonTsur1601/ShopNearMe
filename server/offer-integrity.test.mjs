@@ -6,6 +6,16 @@ import { normalizeOfferFacets } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("rejects store search URLs but preserves product identity and tracking parameters", () => {
+  for (const path of ["/search?q=lamp", "/?s=lamp&post_type=product", "/catalogsearch/result/?q=lamp", "/search.aspx?keyword=lamp", "/?route=product/search", "/חיפוש/lamp"]) expect(isCategoryPage("Desk lamp", "https://store.example" + path)).toBe(true);
+  expect(isCategoryPage("Desk lamp", "https://store.example/catalog.php?id=123&srsltid=tracking")).toBe(false);
+});
+
+it("rejects a deleted product that redirects to store search results", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, url: "https://redirect.example/search?q=lamp", headers: { get: () => "text/html" }, text: async () => '<script type="application/ld+json">{"@type":"Product","name":"Lamp","offers":{"price":99}}</script>' })));
+  expect(await enrichProductPage("https://redirect.example/old-lamp")).toEqual({ isCatalog: true });
+});
+
 it("rejects product-tag pages and preserves decimal power and canonical colors", () => {
   expect(isCategoryPage("מטען GaN 65W", "https://mobilestyleono.co.il/product-tag/charger/")).toBe(true);
   expect(isCategoryPage("מטען", "https://mobilestyleono.co.il/product/charger/")).toBe(false);

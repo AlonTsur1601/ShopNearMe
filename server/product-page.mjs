@@ -3,6 +3,14 @@ import { merchantDom } from "./merchant-dom.mjs";
 const pageCache = new Map();
 const pageRequests = new Map();
 const CACHE_MS = 15 * 60 * 1000;
+export function isSearchResultsUrl(value) {
+  try {
+    const url = new URL(value), path = decodeURIComponent(url.pathname);
+    return /\/(?:search|search-results|searchresults|catalogsearch|חיפוש)(?:[/.]|$)/i.test(path)
+      || ["s", "search", "search_query", "searchTerm", "searchterm", "keyword", "keywords", "query", "q"].some(key => url.searchParams.has(key))
+      || /^(?:search|searchresults)$/i.test(url.searchParams.get("route")?.split("/").at(-1) ?? "");
+  } catch { return false; }
+}
 
 function numeric(value) {
   let normalized = String(value ?? "").replace(/\s|\u00a0/g, "").replace(/[^0-9.,]/g, "");
@@ -154,6 +162,7 @@ export async function readProductHtml(response) {
 export async function enrichProductPage(value) {
   const url = webUrl(value);
   if (!url) return {};
+  if (isSearchResultsUrl(url)) return { isCatalog: true };
   const cached = pageCache.get(url);
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
   if (pageRequests.has(url)) return pageRequests.get(url);
@@ -167,6 +176,7 @@ export async function enrichProductPage(value) {
       let gone = false;
       for (const candidate of candidates) {
         const response = await fetch(candidate, { signal: controller.signal, redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
+        if (response.url && isSearchResultsUrl(response.url)) return { isCatalog: true };
         if ([404, 410].includes(response.status)) { gone = true; continue; }
         if (!response.ok || !String(response.headers?.get?.("content-type") || "").includes("html")) continue;
         const html = (await readProductHtml(response)).slice(0, 2000000);
