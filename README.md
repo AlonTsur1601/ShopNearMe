@@ -2,7 +2,7 @@
 
 ![ShopNearMe thumbnail](docs/assets/thumbnail.png)
 
-**Submission (frozen):** [https://shopnearme-webmcp.vercel.app](https://shopnearme-webmcp.vercel.app) — commit `4a3010e0879c3d03c5082d61c7413615531fcc58`.
+**Submission (frozen):** [https://shopnearme-webmcp.vercel.app](https://shopnearme-webmcp.vercel.app) — commit `aa03c5eced6a2d8734a339255905a5782c87ab32` (September 4, 2026, 07:40:15 Israel time; before the 08:00 cutoff).
 
 **Current development:** [https://shopnearme-webmcp-testing.vercel.app](https://shopnearme-webmcp-testing.vercel.app).
 
