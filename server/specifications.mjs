@@ -176,7 +176,7 @@ export function proseAttributes(text) {
   const pairs = [], add = (name, value) => { if (value) pairs.push({ name, value }); };
   for (const [name, regex] of [
     ["Capacity", /\b(\d+(?:[-–]\d+)?)\s*(?:people|persons?|person|man)\b/i],
-    ["Power", /\b(\d{2,5})\s*(?:W|watts?)\b/i],
+    ["Power", /(?<![\d.])(\d{1,5}(?:\.\d+)?)\s*(?:W|watts?)\b/i],
     ["Weight", /\b(\d+(?:\.\d+)?)\s*(?:kg|kilograms?)\b/i],
     ["Battery life", /\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\s*(?:battery|runtime|of use)/i],
   ]) { const match = text.match(regex); if (match) add(name, match[1] + ({ Capacity: " people", Power: " W", Weight: " kg", "Battery life": " hours" }[name])); }

@@ -1,9 +1,17 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { enrichProductPage, extractProductData } from "./product-page.mjs";
-import { recoverModelSpecifications, searchCatalog, shareProductSpecs } from "./search.mjs";
-import { structuredAttributes } from "./specifications.mjs";
+import { isCategoryPage, recoverModelSpecifications, searchCatalog, shareProductSpecs } from "./search.mjs";
+import { proseAttributes, structuredAttributes } from "./specifications.mjs";
+import { normalizeOfferFacets } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("rejects product-tag pages and preserves decimal power and canonical colors", () => {
+  expect(isCategoryPage("מטען GaN 65W", "https://mobilestyleono.co.il/product-tag/charger/")).toBe(true);
+  expect(isCategoryPage("מטען", "https://mobilestyleono.co.il/product/charger/")).toBe(false);
+  expect(proseAttributes("Baseus 22.5W 20000mAh").attributes.power).toEqual(["22.5 W"]);
+  expect(normalizeOfferFacets({ attributes: { color: ["White", "white", "grey"] } }).attributes.color).toEqual(["White", "Gray"]);
+});
 
 it("recovers missing facets from an exact manufacturer part without copying donor prices", async () => {
   const offers = [

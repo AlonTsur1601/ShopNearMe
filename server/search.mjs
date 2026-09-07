@@ -132,7 +132,7 @@ function attributesFor(query, text, condition, merchant, meta = {}) {
     const value = rule.infer ? rule.infer(text, meta) : rule.values.filter(value => includesPhrase(text, value)).filter((value, _, matches) => !matches.some(other => other !== value && includesPhrase(other, value)));
     if (value && (!Array.isArray(value) || value.length)) attributes[rule.id] = Array.isArray(value) && value.length === 1 ? value[0] : value;
   }
-  const result = { ...attributes, ...proseAttributes(text).attributes, ...monitorAttributes(query, text).attributes, ...structuredAttributes(meta.specifications).attributes };
+  const result = { ...attributes, ...proseAttributes(translateTerms(meta.specificationText ?? "") + " " + text).attributes, ...monitorAttributes(query, text).attributes, ...structuredAttributes(meta.specifications).attributes };
   if (result.brand) result.brand = Array.isArray(result.brand) ? result.brand.map(value => value.toUpperCase()) : result.brand.toUpperCase();
   return result;
 }
@@ -211,6 +211,7 @@ function nearbyProductOffers(maps, offers) {
 
 export function isCategoryPage(title, link) {
   let path; try { path = decodeURIComponent(new URL(link).pathname); } catch { path = String(link); }
+  if (/\/(?:product-tag|product-category|tags?)(?:\/|$)/i.test(path)) return true;
   if (/\/(?:blogs?|articles?|guides?|news)(?:\/|$)/i.test(path)) return true;
   if (/\/collections?(?:\/|$)/i.test(path) && !/\/products?\//i.test(path)) return true;
   if (/\/(?:\d+-)?(?:אוהלים|מסכים|מחשבים|tents|monitors)\/?$/i.test(path)) return true;
