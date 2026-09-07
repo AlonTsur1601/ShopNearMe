@@ -20,6 +20,12 @@ describe("safeHttpUrl", () => {
 });
 
 describe("product page enrichment", () => {
+  it("reports explicit product stock without guessing when it is absent", () => {
+    for (const [status, expected] of [["OutOfStock", "Out of stock"], ["InStock", ""], ["PreOrder", ""], ["", ""]]) {
+      const html = `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Clock", offers: { price: 50, availability: status ? `https://schema.org/${status}` : undefined } })}</script>`;
+      expect(extractProductData(html).availability).toBe(expected);
+    }
+  });
   it("extracts the actual product image, price, currency, and brand from JSON-LD", () => {
     const data = extractProductData(`<script type="application/ld+json">{"@type":"Product","name":"Oak dining table","brand":{"name":"Furni"},"image":"https://shop.example/table.jpg","offers":{"@type":"Offer","price":"1299","priceCurrency":"ILS"}}</script>`);
     expect(data).toMatchObject({ title: "Oak dining table", brand: "Furni", imageUrl: "https://shop.example/table.jpg", price: 1299, currency: "ILS" });

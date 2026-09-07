@@ -133,8 +133,15 @@ export function extractProductData(html, baseUrl = "") {
     imageUrl: imageUrls[0] ?? "",
     imageUrls,
     price,
+    availability: productAvailability(offer.availability ?? attributeValue(scope, "itemprop", "availability") ?? meta(html, "product:availability") ?? dom.availability),
     currency: String(currency).toUpperCase(),
   };
+}
+export function productAvailability(value) {
+  const status = String(value ?? "").split(/[/#]/).pop().toLowerCase().replace(/[\s_-]/g, "");
+  if (["אזלהמלאי", "חסרבמלאי", "לאבמלאי", "המוצראזלבמלאי"].includes(status)) return "Out of stock";
+  if (["outofstock", "soldout", "discontinued"].includes(status)) return "Out of stock";
+  return "";
 }
 export async function readProductHtml(response) {
   if (!response.arrayBuffer) return response.text();

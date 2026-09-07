@@ -22,6 +22,8 @@ export function merchantDom(html, baseUrl = "") {
     if (amount && (amount.match(/\d[\d.,]*/g) ?? []).length === 1) { currentPrice = amount; break; }
   }
   const images = [];
+  const stock = scope.find(".stock,.stock-status,.product-availability,[itemprop='availability']").first();
+  const availability = stock.attr("content") || stock.attr("href") || text(stock);
   $("#productslider img,.product-gallery img,.product__media img,.product-images img,[itemprop='image'],[data-zoom-image],.fotorama img,.woocommerce-product-gallery img").each((_i, element) => {
     const node = $(element);
     for (const attr of ["data-zoom-image", "data-large-image", "data-src", "content", "src"]) if (node.attr(attr)) images.push(node.attr(attr));
@@ -30,5 +32,5 @@ export function merchantDom(html, baseUrl = "") {
   });
   if (isPrint && printTitle) scope.find("img").each((_i, element) => { const src = $(element).attr("src"); if (src && !/logo|banner|icon/i.test(src)) images.push(src); });
   const isCatalog = !product.length && $(".products-grid .product-item,.products.list .product-item,.collection .grid__item,.product-list .product-item").length > 1;
-  return { title: printTitle || undefined, currentPrice: printPrice || currentPrice, description: [description, metadata, printTitle ? bodyText : ""].filter(Boolean).join("\n").slice(0, 18000), images, isCatalog, isProduct: !!printTitle || (!!product.length && !!currentPrice && !!scope.find("h1").length), specificationsHtml: descriptions.toArray().map(element => $.html(element)).join("\n") };
+  return { availability, title: printTitle || undefined, currentPrice: printPrice || currentPrice, description: [description, metadata, printTitle ? bodyText : ""].filter(Boolean).join("\n").slice(0, 18000), images, isCatalog, isProduct: !!printTitle || (!!product.length && !!currentPrice && !!scope.find("h1").length), specificationsHtml: descriptions.toArray().map(element => $.html(element)).join("\n") };
 }
