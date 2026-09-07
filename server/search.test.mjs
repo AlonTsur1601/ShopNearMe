@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildFacets, isRelevantProduct, providerLocation, safeHttpUrl, searchCatalog, shortRetailerName } from "./search.mjs";
+import { buildFacets, isRelevantProduct, merchantWebsite, providerLocation, safeHttpUrl, searchCatalog, shortRetailerName } from "./search.mjs";
 import { extractProductData } from "./product-page.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("safeHttpUrl", () => {
+  it("requires an actual business website, not maps or social profiles", () => {
+    for (const url of [undefined, "https://www.google.com/maps/place/store", "https://maps.app.goo.gl/example", "https://www.google.co.il/maps", "https://facebook.com/store", "https://g.page/store"]) expect(merchantWebsite(url)).toBe("");
+    expect(merchantWebsite("https://shop.example/products/clock")).toBe("https://shop.example/products/clock");
+  });
   it("allows web links and rejects unsafe or malformed schemes", () => {
     expect(safeHttpUrl("https://shop.example/item?id=1")).toBe("https://shop.example/item?id=1");
     expect(safeHttpUrl("http://shop.example/item")).toBe("http://shop.example/item");
@@ -95,12 +99,12 @@ describe("searchCatalog", () => {
       return { ok: true, json: async () => ({ shopping_results: [{ position: 1, title: "Silent wall clock", source: "Online Shop", extracted_price: 29.99, delivery: "Free shipping", product_link: "https://online.example/clock", thumbnail: "https://images.example/clock.jpg" }] }) };
     }));
     const result = await searchCatalog("clock test local merge", "Tel Aviv", "test-key", { lat: 32.08, lon: 34.78 });
-    expect(result.offers.some((offer) => offer.category === "local" && offer.merchant === "Clock Corner")).toBe(true);
+    expect(result.offers.some((offer) => offer.category === "local" && offer.merchant === "Clock Corner")).toBe(false);
     expect(result.offers.some((offer) => offer.merchant === "PC Doctor")).toBe(false);
     expect(result.offers.some((offer) => offer.merchant === "Remote Clock Shop")).toBe(false);
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
-    expect(result.offers[0].category).toBe("local");
+    expect(result.offers[0].category).toBe("order");
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(4);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
@@ -152,6 +156,10 @@ describe("searchCatalog", () => {
     expect(offer.attributes).toMatchObject({ wattage: "700–899 W", efficiency: "80 Plus Gold", modularity: "Fully modular" });
     expect(offer.attributes["spec:protection_circuits"]).toEqual(["Overvoltage", "Overcurrent"]);
     expect(result.facets.find(facet => facet.id === "spec:protection_circuits")?.options).toEqual([{ value: "Overvoltage", count: 2 }, { value: "Overcurrent", count: 2 }]);
+    const localOnly = await searchCatalog("MSI MAG PSU", "Tel Aviv, Israel", "local-product-key", { lat: 32.08, lon: 34.78 }, undefined, "local");
+    expect(localOnly.offers).toHaveLength(1);
+    expect(localOnly.offers[0]).toMatchObject({ category: "local", destinationUrl: "https://local-pc.co.il/products/a750gl", itemPrice: 529, imageUrl: "https://local-pc.co.il/psu.jpg" });
+    expect(localOnly.offers.some(item => item.potentialStore || item.linkLabel === "View store")).toBe(false);
   });
 
   it("coalesces identical in-flight scoped searches", async () => {

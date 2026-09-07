@@ -189,8 +189,15 @@ function mergeLocalProducts(mapOffers, productOffers) {
     unusedMaps.delete(match);
     return { ...product, rating: match.rating || product.rating, reviewCount: match.reviewCount || product.reviewCount, distanceMiles: match.distanceMiles, subtitle: product.subtitle || match.subtitle };
   });
-  const supplemental = [...unusedMaps].sort((a, b) => (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity));
-  return [...enriched, ...supplemental];
+  // Map listings are discovery inputs, never evidence that a product is sold.
+  return enriched;
+}
+
+export function merchantWebsite(value) {
+  const link = safeHttpUrl(value);
+  if (!link) return "";
+  const host = new URL(link).hostname.toLowerCase();
+  return /(^|\.)(?:google\.[a-z.]+|goo\.gl|maps\.app\.goo\.gl|facebook\.com|instagram\.com|waze\.com|yelp\.com|g\.page)$/.test(host) ? "" : link;
 }
 
 function nearbyProductOffers(maps, offers) {
@@ -325,7 +332,7 @@ async function mapsSearch(query, location, key, coordinates) {
   }
   const seen = new Set();
   return places.map((place, index) => ({ place, index, score: relevance(place, query, origin) }))
-    .filter(({ place, score }) => { const id = place.place_id || place.data_id || (place.title + "|" + place.address); if (!Number.isFinite(score) || score < 2 || seen.has(id)) return false; seen.add(id); return true; })
+    .filter(({ place, score }) => { const id = place.place_id || place.data_id || (place.title + "|" + place.address); if (!merchantWebsite(place.website) || !Number.isFinite(score) || score < 2 || seen.has(id)) return false; seen.add(id); return true; })
     .sort((a, b) => b.score - a.score).slice(0, 50).map(({ place, index }) => mapOffer(place, index, query, origin));
 }
 async function localProductSearch(query, location, key) {
@@ -350,6 +357,11 @@ async function localProductSearch(query, location, key) {
   return (await mapConcurrent(candidates, 10, (item, index) => localProduct(item, index, query, location))).filter(Boolean);
 }
 async function runScope(scope, query, location, key, coordinates, credentials) {
+  if (scope === "local") {
+    // Local-only searches need the same product discovery as combined searches.
+    const result = await runScope("all", query, location, key, coordinates, undefined);
+    return { ...result, ...makeResult(query, result.offers.filter(offer => offer.category === "local")) };
+  }
   const jobs = scope === "online" ? [shoppingSearch(query, location, key), localProductSearch(query, location, key), ebaySearch(query, location, credentials)]
     : scope === "local" ? [mapsSearch(query, location, key, coordinates)]
     : scope === "local-products" ? [localProductSearch(query, location, key)]
