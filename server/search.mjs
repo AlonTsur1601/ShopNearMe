@@ -311,7 +311,7 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     const wanted = searchTokens(offer.title), actual = searchTokens(page.title);
     return wanted.length > 0 && wanted.filter(token => actual.includes(token)).length >= Math.min(3, wanted.length);
   };
-  const recovered = await mapConcurrent(shared, 6, async offer => {
+  const recovered = await mapConcurrent(shared, 10, async offer => {
     if (offer.potentialStore) return offer;
     let missing = propertyIds.filter(id => !valuesForFacet(offer, id).length);
     if (!missing.length) return offer;
@@ -319,18 +319,18 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     if (!lookup) return offer;
     let attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     const requested = missing.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
-    for (const search of [`"${lookup}" specifications ${requested}`.trim(), `"${lookup}" technical specifications`]) {
+    for (const search of [`"${lookup}" technical specifications ${requested}`.trim()]) {
       try {
         const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
         if (typeof key === "string") params.set("api_key", key);
-        const result = await searchProvider(params, key, 6500);
-        const pages = await mapConcurrent((result.organic_results ?? []).slice(0, 3), 3, item => enrichProductPage(item.link));
+        const result = await searchProvider(params, key, 5500);
+        const pages = await mapConcurrent((result.organic_results ?? []).slice(0, 2), 2, item => enrichProductPage(item.link));
         for (const page of pages) {
           if (!page.isProduct || page.unavailable || !sameProduct(offer, page)) continue;
           attributes = { ...attributes, ...attributesFor(query, page.title ?? "", offer.condition, offer.merchant, page) };
           attributeLabels = { ...attributeLabels, ...attributeLabelsFor(query, page.title ?? "", page) };
         }
-      } catch { /* A second deterministic lookup still gets a chance to fill the missing values. */ }
+      } catch { /* The unresolved required values receive the explicit Other option below. */ }
       missing = propertyIds.filter(id => !valuesForFacet({ attributes }, id).length);
       if (!missing.length) break;
     }
@@ -464,7 +464,7 @@ async function localProductSearch(query, location, key) {
     if (!link || seen.has(link) || !isRelevantProduct(item.title, query)) return false;
     seen.add(link); return true;
   }).map(item => { const domain = new URL(item.link).hostname; const rank = domains.get(domain) ?? 0; domains.set(domain, rank + 1); return { item, rank }; })
-    .sort((a, b) => a.rank - b.rank).slice(0, 40).map(({ item }) => item);
+    .sort((a, b) => a.rank - b.rank).slice(0, 16).map(({ item }) => item);
   return (await mapConcurrent(candidates, 10, (item, index) => localProduct(item, index, query, location))).filter(Boolean);
 }
 async function runScope(scope, query, location, key, coordinates, credentials) {
@@ -483,27 +483,6 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   let offers = settled.flatMap(result => result.status === "fulfilled" ? result.value : []);
   if (scope === "all") {
     const online = [...value(0), ...value(2)], maps = value(1);
-    const covered = new Set(online.map(offer => new URL(offer.destinationUrl).hostname.replace(/^www\./, "")));
-    const domains = [...new Set(maps.map(store => { try { return new URL(store.destinationUrl).hostname.replace(/^www\./, ""); } catch { return ""; } }))]
-      .filter(domain => domain && !covered.has(domain) && !/google\.|maps\.|facebook\./i.test(domain)).slice(0, 12);
-    if (typeof key === "object" && domains.length) {
-      const discovered = await mapConcurrent(domains, 8, async domain => {
-        try {
-          const params = new URLSearchParams({ engine: "google", q: localQuery(query, countryCode(location)) + " site:" + domain + " price -inurl:category -inurl:blog -inurl:collections", gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
-          const data = await searchProvider(params, key, 10000);
-          const candidates = (data.organic_results ?? []).filter(item => { try { const host = new URL(item.link).hostname.replace(/^www\./, ""); return (host === domain || host.endsWith("." + domain)) && isRelevantProduct(item.title, query) && !isCategoryPage(item.title, item.link); } catch { return false; } }).slice(0, 3);
-          return (await mapConcurrent(candidates, 2, (item, i) => localProduct(item, i, query, location))).filter(Boolean);
-        } catch { return []; }
-      });
-      online.push(...discovered.flat());
-    } else if (domains.length >= 3) {
-      const params = new URLSearchParams({ engine: "google", q: localQuery(query, countryCode(location)) + " (" + domains.map(domain => "site:" + domain).join(" OR ") + ")", api_key: key, hl: countryCode(location) === "IL" ? "he" : "en", num: "30" });
-      try {
-        const extra = await searchProvider(params, key, 6000);
-        const candidates = (extra.organic_results ?? []).filter(item => { try { return domains.includes(new URL(item.link).hostname.replace(/^www\./, "")); } catch { return false; } }).slice(0, 20);
-        online.push(...(await mapConcurrent(candidates, 10, (item, index) => localProduct(item, index, query, location))).filter(Boolean));
-      } catch { /* preserve successfully discovered stores and products */ }
-    }
     offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
   }
   const shared = shareProductSpecs(offers), required = requiredFacetIds(shared, query);

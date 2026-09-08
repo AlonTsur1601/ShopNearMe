@@ -38,7 +38,7 @@ it("recovers missing facets from an exact manufacturer part without copying dono
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
-it("repeats specification search when the first lookup leaves a filter value empty", async () => {
+it("runs a specification search when the initial offer leaves a filter value empty", async () => {
   const offers = [
     { title: "Maker Cable X200", attributes: {}, destinationUrl: "https://shop.example/x200" },
     { title: "Maker Cable X100 USB-C", attributes: { connectivity: "USB-C" }, destinationUrl: "https://shop.example/x100" },
@@ -47,24 +47,24 @@ it("repeats specification search when the first lookup leaves a filter value emp
   vi.stubGlobal("fetch", vi.fn(async url => {
     if (String(url).includes("api.brightdata.com")) {
       searches++;
-      return new Response(JSON.stringify({ organic: searches === 1 ? [] : [{ title: "Maker Cable X200 specifications", link: "https://maker.example/x200" }] }));
+      return new Response(JSON.stringify({ organic: [{ title: "Maker Cable X200 specifications", link: "https://maker.example/x200" }] }));
     }
     return new Response('<script type="application/ld+json">{"@type":"Product","name":"Maker Cable X200","additionalProperty":[{"name":"Connector type","value":"Lightning"}]}</script>', { headers: { "Content-Type": "text/html" } });
   }));
   const result = await recoverModelSpecifications(offers, "charging cable", "Israel", { apiKey: "retry-fixture", zone: "zone" });
-  expect(searches).toBe(2);
+  expect(searches).toBe(1);
   expect(result[0].attributes.connectivity).toContain("Lightning");
   expect(buildFacets(result, "charging cable").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Lightning", "USB-C"]));
 });
 
-it("assigns an Other option only after both searches leave a required filter empty", async () => {
+it("assigns an Other option only after the repeated specification search leaves a required filter empty", async () => {
   const offers = [
     { title: "Wireless headphones A", attributes: { connectivity: "Wireless" }, destinationUrl: "https://shop.example/a" },
     { title: "Headphones B", attributes: {}, destinationUrl: "https://shop.example/b" },
   ];
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ organic: [] }))));
   const result = await recoverModelSpecifications(offers, "headphones", "Israel", { apiKey: "other-fixture", zone: "zone" });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(1);
   expect(result[1].attributes.connectivity).toBe("Other");
   expect(buildFacets(result, "headphones").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Wireless", "Other"]));
 });
