@@ -59,12 +59,6 @@ npm run dev
 
 Open `http://127.0.0.1:4173`.
 
-### Product specifications
-
-Product properties are extracted deterministically from titles, structured metadata and named specification rows. When a property recurs across products and a product is missing it, the server performs an exact-product specification search. Matching products may share a recovered property only when their verified identifiers agree and their known values do not conflict. Products still missing a required recurring property are omitted instead of returning an empty filter value.
-
-Explicitly unavailable products are excluded before the result is returned. Each search has a 19-second server processing budget shared by discovery, product pages and deterministic specification recovery; on expiry, pending network work is aborted and the offers already found are returned with an incomplete-results warning. Network transit and rendering add to that server time.
-
 ## Verification
 
 ```bash

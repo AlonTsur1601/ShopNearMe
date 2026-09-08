@@ -3,7 +3,7 @@ import { load } from "cheerio";
 // Read actual product content, not navigation, cart totals or related products.
 export function merchantDom(html, baseUrl = "") {
   const $ = load(html);
-  $("script,style,nav,header,footer,aside,del,s,.old-price,.price--compare,.related,.related-products,.recommendations,.upsells,.cross-sells,.recently-viewed,#otherProductsSlider,#products-that-might-interest-you").remove();
+  $("script,style,nav,header,footer,aside,del,s,.old-price,.price--compare,.related,.related-products,.recommendations,#otherProductsSlider,#products-that-might-interest-you").remove();
   const text = node => node.text().replace(/\s+/g, " ").trim();
   const product = $("#productMainBlock,.product-info-main,.product-detail,#product,[itemtype$='/Product']").first();
   const scope = product.length ? product : $("main").length ? $("main").first() : $("body");
@@ -37,12 +37,8 @@ export function merchantDom(html, baseUrl = "") {
       if (match) namedProperties.push({ name: match[1].trim(), value: match[2].trim() });
     }
   });
-  const stock = scope.find(".stock,.stock-status,.stockStatus,.product-stock,.availability,.product-availability,[itemprop='availability'],.out-of-stock,.sold-out,[data-stock-status],button,.notify-me,.single_add_to_cart_button");
-  const availability = stock.toArray().map(element => {
-    const node = $(element);
-    if (node.closest('[hidden],[aria-hidden="true"],[style*="display:none"],[style*="display: none"]').length) return "";
-    return [node.attr("content"), node.attr("href"), node.attr("data-stock-status"), node.hasClass("out-of-stock") ? "OutOfStock" : "", node.hasClass("sold-out") ? "SoldOut" : "", text(node)].filter(Boolean).join(" ");
-  }).join(" | ");
+  const stock = scope.find(".stock,.stock-status,.product-availability,[itemprop='availability']").first();
+  const availability = stock.attr("content") || stock.attr("href") || text(stock);
   $("#productslider img,.product-gallery img,.product__media img,.product-images img,[itemprop='image'],[data-zoom-image],.fotorama img,.woocommerce-product-gallery img").each((_i, element) => {
     const node = $(element);
     for (const attr of ["data-zoom-image", "data-large-image", "data-src", "content", "src"]) if (node.attr(attr)) images.push(node.attr(attr));

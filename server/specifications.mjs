@@ -65,7 +65,7 @@ const aliases = [
   ["bezelWidth", "Bezel width", /^רוחב מסגרת$/],
   ["type", "Product type", /^סוג מוצר$/],
 ];
-const nonSpecification = /(?:payment|installment|financing|phone|telephone|opening hours|sunday|monday|tuesday|wednesday|thursday|friday|saturday|contact|address|product code|price|shipping|delivery|returns?|warranty|seller|retailer|review|rating|attribute name|ebay condition|serial number|sto(?:c|k)k? total|sku|jan|\bupc\b|\bean\b|gtin|mpn|model(?: number)?|product id|product line|unit type|unit quantity|asin|url|description|overview|about|style|מחיר|משלוח|אחריות|קטלוג|יבואן|מבצע|הערה|מק["״]?ט)/i;
+const nonSpecification = /(?:price|shipping|delivery|returns?|warranty|seller|retailer|review|rating|attribute name|sku|\bupc\b|\bean\b|gtin|mpn|model(?: number)?|product id|product line|unit type|unit quantity|asin|url|description|overview|about|style|מחיר|משלוח|אחריות|קטלוג|יבואן|מבצע|הערה|מק["״]?ט)/i;
 export function cleanText(value) {
   return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Math.min(Number(code), 0x10ffff))).replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/\s+/g, " ").trim();
 }
@@ -110,25 +110,23 @@ function normalizedValue(id, raw, unit = "") {
   if (id === "finish") { if (/^(?:matt|matte|anti glare|anti-glare)$/i.test(value)) return "Matte / anti-glare"; if (/^glossy$/i.test(value)) return "Glossy"; }
   return value;
 }
-export function structuredAttributes(pairs, { allowEnglish = false } = {}) {
+export function structuredAttributes(pairs) {
   const attributes = {}, labels = {};
-  for (let pair of pairs ?? []) {
-    const canonical = canonicalSpecification({ name: pair.name, value: typeof pair.value === "string" ? pair.value : "" });
-    pair = { ...pair, name: canonical.name, value: typeof pair.value === "string" ? canonical.value : pair.value };
+  for (const pair of pairs ?? []) {
     const rawName = cleanText(pair.name).replace(/\b(?:exited tooltip|opens in a new window)\b/gi, "").replace(/[:：]$/, "").replace(/[-_]/g, " ").trim();
     const unit = rawName.match(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i)?.[1];
     const sourceName = rawName.replace(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i, "").replace(/^monitor\s+/i, "").trim();
     const name = englishLabel(sourceName) || sourceName;
     if (!name || name.length > 64 || /\uFFFD/.test(name) || nonSpecification.test(name) || /^(?:parameter|specification|פרמטר|דגם|מספר ספק|קישור ליצרן|זמן אספקה|תנאי תשלום|יתרון|תועלת)$/i.test(name)) continue;
     const alias = aliases.find(([, , match]) => match.test(name) || match.test(sourceName));
-    const label = alias?.[1] ?? (englishLabel(name) || (allowEnglish ? englishText(name, true) : ""));
+    const label = alias?.[1] ?? englishLabel(name);
     if (!label) continue;
     const id = alias?.[0] ?? `spec:${name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_")}`;
     const values = [pair.value].flat().flatMap(raw => {
       const text = valueText(raw);
       const parts = ["ports", "connectivity", "adaptiveSync", "standAdjustments", "features", "material", "color", "capacity"].includes(id) ? text.split(/,\s+|[;|]|\s+(?:and|&|\/)\s+/i) : [raw];
       return parts.map(part => normalizedValue(id, part, pair.unit || (/^\d+(?:\.\d+)?$/.test(valueText(part)) ? unit : "")));
-    }).map(value => englishText(value, allowEnglish || id === "brand")).filter(value => value && value.length <= 100 && !/https?:|www\.|out of stock|in stock/i.test(value));
+    }).map(value => englishText(value, id === "brand")).filter(value => value && value.length <= 100 && !/https?:|www\.|out of stock|in stock/i.test(value));
     if (!values.length) continue;
     const basePorts = id === "ports" ? values.flatMap(value => value.match(/HDMI|DisplayPort|USB-C|Thunderbolt|DVI|VGA/gi) ?? []) : [];
     attributes[id] = [...new Set([...[attributes[id] ?? []].flat(), ...values, ...basePorts])];
@@ -187,36 +185,9 @@ export function proseAttributes(text) {
     add(name, match?.[1]);
   }
   add("Dimensions", text.match(/\b\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?(?:\s*[x×]\s*\d+(?:\.\d+)?)?\s*(?:cm|mm|in)\b/i)?.[0]);
-  for (const match of text.matchAll(/(?:^|[.;]\s*|\b(?:has|with)\s+)(no|without)\s+([a-z][a-z -]{1,30}?)(?=[.;,]|\s+(?:and|but|with)\b|$)/gi)) {
-    const name = match[2].replace(/\b(?:included|available|support(?:ed)?)\b/gi, "").trim();
-    if (name) add(name, "No");
-  }
   for (const [name, yes, no] of [
     ["Chairs included", /(?:includes?|with)\s+(?:\d+\s+)?chairs|כולל.{0,8}כיסאות/i, /(?:without|no)\s+chairs|ללא כיסאות|לא כולל כיסאות/i],
     ["Extendable", /\bextendable|\bextending\b|נפתח(?:ת)?/i, /\bnon[- ]extendable|does not extend|לא נפתח/i],
   ]) add(name, no.test(text) ? "No" : yes.test(text) ? "Yes" : "");
-  return structuredAttributes(pairs, { allowEnglish: true });
+  return structuredAttributes(pairs);
 }
-
-// Normalize common paraphrases before deriving facet IDs across merchants.
-export function canonicalSpecification({ name, value }) {
-  name = normalize(name);
-  value = normalize(value);
-  if (/^(?:(?:rated|total) )?(?:wattage|watt|power output|output power|maximum power|power)$/i.test(name)) name = "Power";
-  if (/^(?:(?:80\s*(?:\+|plus))\s*)?certification$|^80\s*\+$/i.test(name) && /bronze|silver|gold|platinum|titanium/i.test(value)) {
-    name = "80 Plus certification";
-    value = value.replace(/^80\s*(?:\+|plus)\s*/i, "").replace(/\s+\d+(?:\.\d+)?%$/, "").toLowerCase().replace(/^./, char => char.toUpperCase());
-  }
-  if (/^fan (?:size|diameter)$/i.test(name)) {
-    name = "Fan diameter";
-    if (/^\d+(?:\.\d+)?\s*cm$/i.test(value)) value = `${Number.parseFloat(value) * 10} mm`;
-  }
-  if (/^(?:modular\/fixed|modularity)$/i.test(name)) {
-    name = "Modularity";
-    value = value.replace(/^fixed$/i, "Fixed");
-  }
-  name = name.replace(/^number of (.+) connectors$/i, "$1");
-  return { name, value };
-}
-
-function normalize(value) { return String(value ?? "").replace(/\s+/g, " ").trim(); }
