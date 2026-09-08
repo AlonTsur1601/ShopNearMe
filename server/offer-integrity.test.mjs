@@ -57,6 +57,18 @@ it("repeats specification search when the first lookup leaves a filter value emp
   expect(buildFacets(result, "charging cable").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Lightning", "USB-C"]));
 });
 
+it("assigns an Other option only after both searches leave a required filter empty", async () => {
+  const offers = [
+    { title: "Wireless headphones A", attributes: { connectivity: "Wireless" }, destinationUrl: "https://shop.example/a" },
+    { title: "Headphones B", attributes: {}, destinationUrl: "https://shop.example/b" },
+  ];
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ organic: [] }))));
+  const result = await recoverModelSpecifications(offers, "headphones", "Israel", { apiKey: "other-fixture", zone: "zone" });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(result[1].attributes.connectivity).toBe("Other");
+  expect(buildFacets(result, "headphones").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Wireless", "Other"]));
+});
+
 it("keeps only complete product offers for every generated filter", () => {
   const offers = [
     { title: "Black wired cable", attributes: { color: "Black", connectivity: "Wired", retailer: "One" } },

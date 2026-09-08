@@ -299,9 +299,10 @@ export function shareProductSpecs(offers) {
   });
 }
 function makeResult(query, offers, required) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, valid = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)), clean = requireCompleteFacets(valid, query, required ?? requiredFacetIds(valid, query)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
-export async function recoverModelSpecifications(offers, query, location, key) {
+export async function recoverModelSpecifications(offers, query, location, key, required = undefined) {
   const shared = shareProductSpecs(offers);
-  const propertyIds = recoveryFacetIds(shared, query);
+  const requiredIds = required ?? requiredFacetIds(shared, query);
+  const propertyIds = [...new Set([...recoveryFacetIds(shared, query), ...requiredIds])];
   if (!propertyIds.length) return shared;
   const labels = new Map(facetDefinitions(shared, query).definitions);
   const sameProduct = (offer, page) => {
@@ -333,6 +334,7 @@ export async function recoverModelSpecifications(offers, query, location, key) {
       missing = propertyIds.filter(id => !valuesForFacet({ attributes }, id).length);
       if (!missing.length) break;
     }
+    for (const id of requiredIds) if (!valuesForFacet({ attributes }, id).length) attributes[id] = "Other";
     return { ...offer, attributes, attributeLabels };
   });
   return shareProductSpecs(recovered);
@@ -505,7 +507,7 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
   }
   const shared = shareProductSpecs(offers), required = requiredFacetIds(shared, query);
-  const enriched = await recoverModelSpecifications(shared, query, location, key);
+  const enriched = await recoverModelSpecifications(shared, query, location, key, required);
   const result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.potentialStore ? offer.availability : offer.availability === "Out of stock" ? "Out of stock" : "" })), location), required);
   const labels = scope === "online" ? ["Online stores", "Retailer product pages", "Second-hand listings"]
     : scope === "local" ? ["Nearby stores"] : scope === "local-products" ? ["Retailer product pages"]
