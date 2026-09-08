@@ -58,8 +58,8 @@ button { padding: 6px 10px; border-radius: var(--radius-sm); background-clip: pa
 .theme-switch button[aria-pressed="true"] { background: var(--surface); color: var(--teal-dark); box-shadow: 0 1px 4px rgb(0 0 0 / .12); }
 .theme-switch button:focus-visible { outline: 2px solid var(--teal-dark); outline-offset: 2px; }
 .brand { overflow: hidden; position: relative; isolation: isolate; border: 0; border-radius: 12px; background: none; padding: 10px 16px; color: var(--navy); font-size: 29px; font-weight: 750; line-height: 1; letter-spacing: -0.045em; cursor: pointer; }
-.brand::before, .location-modal button::before { content: ""; position: absolute; inset: 0; z-index: 0; border-radius: inherit; background: transparent; pointer-events: none; transition: background-color 140ms ease; }
-.brand > span, .location-modal button > span, .location-modal button > svg { position: relative; z-index: 1; }
+.brand::before, .location-modal button:not(.location-search-button)::before { content: ""; position: absolute; inset: 0; z-index: 0; border-radius: inherit; background: transparent; pointer-events: none; transition: background-color 140ms ease; }
+.brand > span, .location-modal button:not(.location-search-button) > span, .location-modal button:not(.location-search-button) > svg { position: relative; z-index: 1; }
 .location-control { min-height: 38px; max-width: min(310px, 46vw); display: flex; align-items: center; gap: 9px; padding: 6px 13px; border: 1px solid #c9d1dc; border-radius: var(--radius-sm); background: #fff; color: var(--ink); cursor: pointer; }
 .location-control span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .primary-button, .secondary-button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); font-weight: 650; text-decoration: none; cursor: pointer; }
@@ -180,9 +180,9 @@ button { padding: 6px 10px; border-radius: var(--radius-sm); background-clip: pa
 .modal-title h2 { margin: 0; color: var(--navy); font-size: 22px; }
 .modal-search { height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border: 1px solid var(--teal); border-radius: var(--radius-sm); }
 .modal-search input { flex: 1; border: 0; outline: 0; font-size: 15px; }
-.location-modal button { position: relative; isolation: isolate; }
+.location-modal button:not(.location-search-button) { position: relative; isolation: isolate; }
 .modal-title .icon-button { overflow: hidden; padding: 9px; border-radius: 10px; }
-.modal-search button { height: 36px; overflow: hidden; padding: 8px 14px; border: 0; border-left: 1px solid var(--border); border-radius: 9px; background: #fff; color: var(--teal-dark); font-weight: 650; cursor: pointer; }
+.modal-search button { height: 34px; padding: 0 11px; border: 0; border-left: 1px solid var(--border); border-radius: 0; background: #fff; color: var(--teal-dark); font-weight: 650; cursor: pointer; }
 .current-location-button { height: 42px; overflow: hidden; display: flex; align-items: center; gap: 8px; margin: 13px 0; padding: 9px 15px; border: 1px solid #65c1c7; border-radius: 10px; background: #fff; color: var(--teal-dark); cursor: pointer; }
 .location-suggestions { overflow: hidden; margin: -4px 0 13px; border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 10px 24px rgb(15 23 42 / .08); }
 .location-suggestions button { width: 100%; min-height: 42px; overflow: hidden; display: flex; align-items: center; gap: 10px; padding: 9px 14px; border: 0; border-bottom: 1px solid var(--border-soft); border-radius: 9px; background: #fff; text-align: left; cursor: pointer; }
@@ -279,7 +279,7 @@ button { padding: 6px 10px; border-radius: var(--radius-sm); background-clip: pa
   .modal-title { flex: none; margin-bottom: 10px; }
   .modal-search { flex: none; height: 44px; padding: 0 9px; }
   .modal-search input { min-width: 0; font-size: 13px; }
-  .modal-search button { padding: 6px 7px; font-size: 12px; }
+  .modal-search button { padding: 0 7px; font-size: 12px; }
   .current-location-button { flex: none; margin: 9px 0; }
   .location-suggestions { max-height: 120px; overflow-y: auto; flex: none; }
   .map-frame { min-height: 220px; height: auto; flex: 1 1 auto; }
@@ -336,15 +336,17 @@ button { padding: 6px 10px; border-radius: var(--radius-sm); background-clip: pa
 [data-theme="dark"] .example-searches--recommended button { background: var(--teal-soft); border-color: #38616a; }
 button:not(:disabled), .offer-link { transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease; }
 button:focus-visible, .offer-link:focus-visible { outline: 2px solid var(--teal-dark); outline-offset: 2px; }
-.brand:focus-visible, .location-modal button:focus-visible { outline: 0; box-shadow: 0 0 0 3px rgb(0 137 145 / .24); }
-[data-theme="dark"] :is(.brand,.location-modal button):focus-visible { box-shadow: 0 0 0 3px rgb(128 225 230 / .28); }
+.brand:focus-visible, .location-modal button:not(.location-search-button):focus-visible { outline: 0; box-shadow: 0 0 0 3px rgb(0 137 145 / .24); }
+[data-theme="dark"] :is(.brand,.location-modal button:not(.location-search-button)):focus-visible { box-shadow: 0 0 0 3px rgb(128 225 230 / .28); }
 @media (hover: hover) {
   button:not(:disabled):hover { background-image: linear-gradient(rgb(0 118 123 / .10), rgb(0 118 123 / .10)); }
   [data-theme="dark"] button:not(:disabled):hover { background-image: linear-gradient(rgb(255 255 255 / .07), rgb(255 255 255 / .07)); }
   [data-theme="dark"] button.primary-button:not(:disabled):hover { background-image: linear-gradient(rgb(0 0 0 / .12), rgb(0 0 0 / .12)); }
-  .brand:not(:disabled):hover, .location-modal button:not(:disabled):hover { background-image: none; }
-  .brand:not(:disabled):hover::before, .location-modal button:not(:disabled):hover::before { background: rgb(0 118 123 / .10); }
-  [data-theme="dark"] :is(.brand,.location-modal button):not(:disabled):hover::before { background: rgb(255 255 255 / .07); }
+  .location-search-button:not(:disabled):hover { background-image: none; box-shadow: inset 0 0 0 999px rgb(0 118 123 / .10); }
+  [data-theme="dark"] .location-search-button:not(:disabled):hover { background-image: none; box-shadow: inset 0 0 0 999px rgb(255 255 255 / .07); }
+  .brand:not(:disabled):hover, .location-modal button:not(.location-search-button):not(:disabled):hover { background-image: none; }
+  .brand:not(:disabled):hover::before, .location-modal button:not(.location-search-button):not(:disabled):hover::before { background: rgb(0 118 123 / .10); }
+  [data-theme="dark"] :is(.brand,.location-modal button:not(.location-search-button)):not(:disabled):hover::before { background: rgb(255 255 255 / .07); }
   [data-theme="dark"] .location-modal button.primary-button:not(:disabled):hover::before { background: rgb(0 0 0 / .12); }
 }
 @media (prefers-reduced-motion: reduce) {
