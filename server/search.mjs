@@ -247,11 +247,12 @@ function requiredFacetIds(offers, query) {
 function recoveryFacetIds(offers, query) {
   const products = offers.map(normalizeOfferFacets).filter(offer => !offer.potentialStore);
   const { definitions } = facetDefinitions(products, query);
-  return definitions.map(([id]) => id).filter(id => id !== "retailer" && products.some(offer => valuesForFacet(offer, id).length));
+  const predefined = new Set(rulesFor(query).map(rule => rule.id));
+  const required = new Set(requiredFacetIds(products, query));
+  return definitions.map(([id]) => id).filter(id => id !== "retailer" && products.some(offer => valuesForFacet(offer, id).length) && (required.has(id) || predefined.has(id)));
 }
 
-export function requireCompleteFacets(offers, query) {
-  const required = requiredFacetIds(offers, query);
+export function requireCompleteFacets(offers, query, required = requiredFacetIds(offers, query)) {
   return offers.filter(offer => offer.potentialStore || required.every(id => valuesForFacet(offer, id).length));
 }
 
@@ -297,7 +298,7 @@ export function shareProductSpecs(offers) {
     return { ...offer, attributes, attributeLabels };
   });
 }
-function makeResult(query, offers) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, valid = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)), clean = requireCompleteFacets(valid, query).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
+function makeResult(query, offers, required) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, valid = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)), clean = requireCompleteFacets(valid, query, required ?? requiredFacetIds(valid, query)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
 export async function recoverModelSpecifications(offers, query, location, key) {
   const shared = shareProductSpecs(offers);
   const propertyIds = recoveryFacetIds(shared, query);
@@ -503,8 +504,9 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     }
     offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
   }
-  const enriched = await recoverModelSpecifications(shareProductSpecs(offers), query, location, key);
-  const result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.potentialStore ? offer.availability : offer.availability === "Out of stock" ? "Out of stock" : "" })), location));
+  const shared = shareProductSpecs(offers), required = requiredFacetIds(shared, query);
+  const enriched = await recoverModelSpecifications(shared, query, location, key);
+  const result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.potentialStore ? offer.availability : offer.availability === "Out of stock" ? "Out of stock" : "" })), location), required);
   const labels = scope === "online" ? ["Online stores", "Retailer product pages", "Second-hand listings"]
     : scope === "local" ? ["Nearby stores"] : scope === "local-products" ? ["Retailer product pages"]
     : ["Online stores", "Nearby stores", "Retailer product pages", "Second-hand listings"];
