@@ -176,7 +176,7 @@ a {
 .modal-search { height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border: 1px solid var(--teal); border-radius: var(--radius-sm); }
 .modal-search input { flex: 1; border: 0; outline: 0; font-size: 15px; }
 .location-close-button { overflow: hidden; position: relative; isolation: isolate; padding: 8px; border-radius: 9px; }
-.modal-search .location-modal-search-submit { height: 40px; padding: 0 18px; font-size: 16px; cursor: pointer; }
+.modal-search .location-modal-search-submit { height: 48px; margin-right: -15px; padding: 0 18px; font-size: 16px; cursor: pointer; }
 .current-location-button { height: 37px; display: flex; align-items: center; gap: 8px; margin: 13px 0; padding: 0 12px; border: 1px solid #65c1c7; border-radius: var(--radius-sm); background: #fff; color: var(--teal-dark); cursor: pointer; }
 .location-suggestions { margin: -4px 0 13px; border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: 0 10px 24px rgb(15 23 42 / .08); }
 .location-suggestions button { width: 100%; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border: 0; border-bottom: 1px solid var(--border-soft); background: #fff; text-align: left; cursor: pointer; }
@@ -273,7 +273,7 @@ a {
   .modal-title { flex: none; margin-bottom: 10px; }
   .modal-search { flex: none; height: 44px; padding: 0 9px; }
   .modal-search input { min-width: 0; font-size: 13px; }
-  .modal-search .location-modal-search-submit { height: 34px; padding: 0 10px; font-size: 14px; }
+  .modal-search .location-modal-search-submit { height: 44px; margin-right: -10px; padding: 0 10px; font-size: 14px; }
   .current-location-button { flex: none; margin: 9px 0; }
   .location-suggestions { max-height: 120px; overflow-y: auto; flex: none; }
   .map-frame { min-height: 220px; height: auto; flex: 1 1 auto; }
