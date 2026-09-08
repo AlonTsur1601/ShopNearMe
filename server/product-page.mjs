@@ -1,3 +1,4 @@
+import { searchSignal } from "./search-budget.mjs";
 import { extractNamedSpecifications } from "./specifications.mjs";
 import { merchantDom } from "./merchant-dom.mjs";
 const pageCache = new Map();
@@ -135,21 +136,20 @@ export function extractProductData(html, baseUrl = "") {
     isProduct: !!product.name || dom.isProduct || !!metaPrice || /(?:add.to.cart|הוסף.{0,12}לסל|הוספה.{0,12}לסל)/i.test(scope),
     title,
     gtin: String(product.gtin ?? product.gtin13 ?? product.gtin14 ?? product.gtin12 ?? product.gtin8 ?? "").trim(),
-    mpn: String(product.mpn ?? "").trim(),
+    mpn: String(product.mpn ?? (typeof product.model === "string" ? product.model : product.model?.name) ?? "").trim(),
     brand: typeof product.brand === "string" ? product.brand : product.brand?.name,
     specifications: [...extractNamedSpecifications(scope + dom.specificationsHtml, product), ...dom.namedProperties],
     specificationText: [product.model, product.mpn, product.description, dom.description, ...[product.additionalProperty ?? []].flat().map((property) => `${property.name ?? ""} ${property.value ?? ""} ${property.unitText ?? ""}`)].filter(Boolean).join(" ").replace(/<[^>]*>/g, " ").slice(0, 18000),
     imageUrl: imageUrls[0] ?? "",
     imageUrls,
     price,
-    availability: productAvailability(offer.availability ?? attributeValue(scope, "itemprop", "availability") ?? meta(html, "product:availability") ?? dom.availability),
+    availability: productAvailability([offer.availability, attributeValue(scope, "itemprop", "availability"), meta(html, "product:availability"), dom.availability].filter(Boolean).join(" | ")),
     currency: String(currency).toUpperCase(),
   };
 }
 export function productAvailability(value) {
-  const status = String(value ?? "").split(/[/#]/).pop().toLowerCase().replace(/[\s_-]/g, "");
-  if (["אזלהמלאי", "חסרבמלאי", "לאבמלאי", "המוצראזלבמלאי"].includes(status)) return "Out of stock";
-  if (["outofstock", "soldout", "discontinued"].includes(status)) return "Out of stock";
+  const status = String(value ?? "").toLowerCase().replace(/[\s_\-־]+/g, "");
+  if (/אזל(?:מה|ה)?מלאי|חסרבמלאי|(?:לא|אינו|אין)במלאי|לאקייםבמלאי|לאניתןלרכישה|לאזמין(?:לרכישה|במלאי)|המוצר(?:אינו|לא)זמין|outofstock|soldout|discontinued|nolongeravailable|currentlyunavailable|backorder|preorder|notifyme(?:when)?backinstock/.test(status)) return "Out of stock";
   return "";
 }
 export async function readProductHtml(response) {
@@ -175,7 +175,7 @@ export async function enrichProductPage(value) {
       let best = {};
       let gone = false;
       for (const candidate of candidates) {
-        const response = await fetch(candidate, { signal: controller.signal, redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
+        const response = await fetch(candidate, { signal: searchSignal(controller.signal), redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
         if (response.url && isSearchResultsUrl(response.url)) return { isCatalog: true };
         if ([404, 410].includes(response.status)) { gone = true; continue; }
         if (!response.ok || !String(response.headers?.get?.("content-type") || "").includes("html")) continue;

@@ -1,3 +1,4 @@
+import { searchSignal } from "./search-budget.mjs";
 import { createHash } from "node:crypto";
 
 const cache = new Map(), pending = new Map();
@@ -42,7 +43,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
           method: "POST",
           headers: { Authorization: "Bearer " + config.apiKey, "Content-Type": "application/json" },
           body: JSON.stringify({ zone: config.zone, url, format: "json" }),
-          signal: AbortSignal.timeout(attempt ? Math.min(timeoutMs, 6000) : timeoutMs),
+          signal: searchSignal(AbortSignal.timeout(attempt ? Math.min(timeoutMs, 6000) : timeoutMs)),
         });
         // Never expose upstream error text: it may echo request credentials.
         if (!response.ok) {
@@ -69,6 +70,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         }
         return data;
       } catch (error) {
+        if (searchSignal()?.aborted) throw error;
         const temporary = [408, 429, 500, 502, 503, 504].includes(error.status) || ["TimeoutError", "AbortError"].includes(error.name) || /fetch failed|network|did not return parsed/i.test(error.message);
         if (attempt || !temporary) throw error;
       }

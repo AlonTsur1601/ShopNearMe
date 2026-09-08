@@ -55,8 +55,8 @@ export function normalizeOfferFacets(offer) {
   const attributes = {}, attributeLabels = {};
   for (const [id, raw] of Object.entries(offer.attributes ?? {})) {
     const name = offer.attributeLabels?.[id];
-    if (name) { const label = englishLabel(name); if (!label) continue; attributeLabels[id] = label; }
-    let values = [raw].flat().map(value => englishText(value, id === "retailer" || id === "brand")).filter(Boolean);
+    if (name) { const label = englishLabel(name) || englishText(name, true); if (!label) continue; attributeLabels[id] = label; }
+    let values = [raw].flat().map(value => englishText(value, id === "retailer" || id === "brand" || !!name)).filter(Boolean);
     if (id === "color") values = values.map(value => value.toLowerCase().replace(/\bgrey\b/g, "gray").replace(/\b[a-z]/g, char => char.toUpperCase()));
     if (id === "retailer" && !values.length) {
       try { values = [new URL(offer.destinationUrl).hostname.replace(/^www\./, "")]; } catch { /* no safe merchant label */ }

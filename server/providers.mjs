@@ -1,3 +1,4 @@
+import { searchSignal } from "./search-budget.mjs";
 const cache = new Map(), pending = new Map();
 const TTL = 15 * 60 * 1000;
 export async function fetchJson(url, options = {}, timeoutMs = 10000) {
@@ -9,7 +10,7 @@ export async function fetchJson(url, options = {}, timeoutMs = 10000) {
     for (let attempt = 0; ; attempt++) {
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), attempt ? Math.min(timeoutMs, 6000) : timeoutMs);
       try {
-        const response = await fetch(url, { ...options, signal: controller.signal });
+        const response = await fetch(url, { ...options, signal: searchSignal(controller.signal) });
         const data = await response.json();
         if (!response.ok || data.error) {
           const error = new Error(data.error || "Provider returned " + response.status);
@@ -22,6 +23,7 @@ export async function fetchJson(url, options = {}, timeoutMs = 10000) {
         }
         return data;
       } catch (error) {
+        if (searchSignal()?.aborted) throw error;
         const temporary = error.name === "AbortError" || [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|temporar|timeout/i.test(error.message);
         if (!isSearch || attempt || !temporary || /quota|credits|run out|invalid api|unauthoriz/i.test(error.message)) throw error;
       } finally { clearTimeout(timer); }

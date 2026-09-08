@@ -56,13 +56,15 @@ it("applies merchant description facets and images to both local pickup and deli
       if (target.searchParams.get("tbm") === "shop") return new Response('{"shopping":[]}');
       return new Response(JSON.stringify({ organic: [{ title: "Camping tent T600", link: "https://fixture-shop.co.il/products/t600", source: "Outdoor Store", description: "Camping tent for 6 people, green" }] }));
     }
-    return new Response('<main><h1>Camping tent T600</h1><meta property="product:price:amount" content="299"><meta property="product:price:currency" content="ILS"><div class="product-description">Green waterproof camping tent for 6 people. Weight: 4 kg.</div><div class="product-gallery"><img data-src="/tent.jpg"></div></main>', { headers: { "content-type": "text/html" } });
+    return new Response('<main><h1>Camping tent T600</h1><meta property="product:price:amount" content="299"><meta property="product:price:currency" content="ILS"><div class="product-description">Green waterproof camping tent for 6 people. Weight: 4 kg. No windows.</div><div class="product-gallery"><img data-src="/tent.jpg"></div></main>', { headers: { "content-type": "text/html" } });
   }));
-  const result = await searchCatalog("camping tent T600", "Petah Tikva, Israel", { apiKey: "fixture", zone: "merchant-description-test" }, { lat: 32.08, lon: 34.88 });
+  const result = await searchCatalog("camping tent T600", "Petah Tikva, Israel", { apiKey: "fixture", zone: "merchant-description-test" }, { lat: 32.08, lon: 34.88 }, undefined, "all");
+  expect(result.facets).toContainEqual(expect.objectContaining({ id: "spec:windows", options: [{ value: "No", count: 2 }] }));
+  expect(JSON.stringify(result)).not.toContain("productEvidence");
   expect(result.offers.map(offer => offer.category)).toEqual(["local", "order"]);
   for (const offer of result.offers) {
     expect(offer.itemPrice).toBe(299);
     expect(offer.imageUrl).toBe("https://fixture-shop.co.il/tent.jpg");
-    expect(offer.attributes).toMatchObject({ capacity: ["6 people"], weight: ["4 kg"], color: "Green" });
+    expect(offer.attributes).toMatchObject({ capacity: ["6 people"], weight: ["4 kg"], color: "Green", "spec:windows": ["No"] });
   }
 });

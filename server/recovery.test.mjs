@@ -78,14 +78,15 @@ describe("bounded source recovery", () => {
     expect(maximum).toBe(5);
     expect(result).toHaveLength(30);
   });
-  it("does not turn 30 map listings into unconfirmed product offers", async () => {
+  it("keeps all relevant nearby map listings as clearly marked possible retailers", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const params = new URL(url).searchParams;
       const start = Number(params.get("start") ?? 0);
       return { ok: true, json: async () => params.get("engine") === "google_maps" ? { local_results: Array.from({ length: start ? 10 : 20 }, (_, i) => ({ place_id: "clock-" + (start + i), title: "Clock Store " + (start + i), type: "Clock store", website: "https://clocks-" + (start + i) + ".example/product", gps_coordinates: { latitude: 32.08, longitude: 34.78 } })) } : {} };
     }));
     const r = await searchCatalog("clock coverage fixture", "Tel Aviv, Israel", "coverage-fixture-key", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(r.offers).toHaveLength(0);
+    expect(r.offers).toHaveLength(30);
+    expect(r.offers.every(offer => offer.category === "local" && offer.potentialStore && offer.availability === "Potential retailer · confirm product stock")).toBe(true);
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(2);
   });
   it("uses organic new-product retailers if the shopping engine fails", async () => {
@@ -104,7 +105,8 @@ describe("bounded source recovery", () => {
       ? { ok: false, status: 503, json: async () => ({ error: "Temporary failure" }) }
       : { ok: true, json: async () => ({ local_results: { places: [{ title: "Fallback Clock Shop", type: "Clock store", website: "https://fallback-clock.example/", gps_coordinates: { latitude: 32.08, longitude: 34.78 } }] } }) }));
     const r = await searchCatalog("clock maps fallback fixture", "Tel Aviv, Israel", "local-fallback-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(r.offers).toHaveLength(0);
+    expect(r.offers).toHaveLength(1);
+    expect(r.offers[0]).toMatchObject({ merchant: "Fallback Clock Shop", category: "local", potentialStore: true });
     expect(r.warnings).toEqual([]);
     expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(url).searchParams.get("engine") === "google")).toBe(true);
   });

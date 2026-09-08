@@ -27,13 +27,14 @@ it("recovers missing facets from an exact manufacturer part without copying dono
   const offers = [
     { mpn: "ABC-123", productBrand: "Maker", title: "Desk lamp", itemPrice: 80, attributes: {}, destinationUrl: "https://receiver.example/lamp" },
     { title: "Other lamp", attributes: { color: "White" }, destinationUrl: "https://other.example/lamp" },
+    { title: "Third lamp", attributes: { color: "White" }, destinationUrl: "https://third.example/lamp" },
   ];
   vi.stubGlobal("fetch", vi.fn(async url => String(url).includes("api.brightdata.com")
     ? new Response(JSON.stringify({ organic: [{ title: "Maker ABC-123", link: "https://maker.example/ABC-123" }] }))
     : new Response('<script type="application/ld+json">{"@type":"Product","name":"Desk lamp","mpn":"ABC-123","brand":"Maker","color":"Black","offers":{"price":900}}</script>', { headers: { "Content-Type": "text/html" } })));
   const result = await recoverModelSpecifications(offers, "desk lamp", "Israel", { apiKey: "spec-fixture", zone: "zone" });
   expect(result[0]).toMatchObject({ itemPrice: 80, attributes: { color: ["Black"] } });
-  expect(result).toHaveLength(2);
+  expect(result).toHaveLength(3);
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
