@@ -103,7 +103,9 @@ a {
 .filters__header strong { margin-right: auto; }
 .filter-scroll { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0 24px 18px; }
 .facet { margin: 0; padding: 13px 0 14px; border: 0; border-bottom: 1px solid var(--border-soft); }
-.facet__title { width: 100%; min-height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 0 8px; font-weight: 680; font-size: 14px; line-height: 1.2; }
+.facet__title { width: 100%; min-height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 0 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-weight: 680; font-size: 14px; line-height: 1.2; text-align: left; cursor: pointer; }
+.facet__title svg { flex: none; transition: transform .16s ease; }
+.facet__title[aria-expanded="false"] svg { transform: rotate(-90deg); }
 .checkbox-row { min-height: 28px; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 8px; color: #253043; font-size: 13px; cursor: pointer; }
 .checkbox-row input { width: 15px; height: 15px; margin: 0; accent-color: var(--teal); }
 .checkbox-row small { color: var(--muted); }

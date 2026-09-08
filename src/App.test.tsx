@@ -94,7 +94,15 @@ describe("App", () => {
     render(<App />);
     fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() => expect(screen.getAllByText("Clock type")[0]).toBeVisible());
+    const clockType = await screen.findByRole("button", { name: "Clock type" });
+    expect(clockType).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("checkbox", { name: /Wall clock/ })).toBeVisible();
+    fireEvent.click(clockType);
+    expect(clockType).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("checkbox", { name: /Wall clock/ })).not.toBeInTheDocument();
+    fireEvent.click(clockType);
+    expect(clockType).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("checkbox", { name: /Wall clock/ })).toBeVisible();
     expect(screen.getAllByText("Movement")[0]).toBeVisible();
     const localHeading = screen.getByRole("heading", { name: /Buy in store/ });
     const onlineHeading = screen.getByRole("heading", { name: /Order online/ });

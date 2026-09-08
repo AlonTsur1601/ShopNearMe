@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { enrichProductPage, extractProductData } from "./product-page.mjs";
-import { isCategoryPage, recoverModelSpecifications, searchCatalog, shareProductSpecs } from "./search.mjs";
+import { buildFacets, isCategoryPage, recoverModelSpecifications, requireCompleteFacets, searchCatalog, shareProductSpecs } from "./search.mjs";
 import { proseAttributes, structuredAttributes } from "./specifications.mjs";
 import { normalizeOfferFacets } from "./facet-language.mjs";
 
@@ -34,7 +34,40 @@ it("recovers missing facets from an exact manufacturer part without copying dono
   const result = await recoverModelSpecifications(offers, "desk lamp", "Israel", { apiKey: "spec-fixture", zone: "zone" });
   expect(result[0]).toMatchObject({ itemPrice: 80, attributes: { color: ["Black"] } });
   expect(result).toHaveLength(2);
+  expect(buildFacets(result, "desk lamp").find(facet => facet.id === "color")?.options.map(option => option.value)).toEqual(["Black", "White"]);
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("repeats specification search when the first lookup leaves a filter value empty", async () => {
+  const offers = [
+    { title: "Maker Cable X200", attributes: {}, destinationUrl: "https://shop.example/x200" },
+    { title: "Maker Cable X100 USB-C", attributes: { connectivity: "USB-C" }, destinationUrl: "https://shop.example/x100" },
+  ];
+  let searches = 0;
+  vi.stubGlobal("fetch", vi.fn(async url => {
+    if (String(url).includes("api.brightdata.com")) {
+      searches++;
+      return new Response(JSON.stringify({ organic: searches === 1 ? [] : [{ title: "Maker Cable X200 specifications", link: "https://maker.example/x200" }] }));
+    }
+    return new Response('<script type="application/ld+json">{"@type":"Product","name":"Maker Cable X200","additionalProperty":[{"name":"Connector type","value":"Lightning"}]}</script>', { headers: { "Content-Type": "text/html" } });
+  }));
+  const result = await recoverModelSpecifications(offers, "charging cable", "Israel", { apiKey: "retry-fixture", zone: "zone" });
+  expect(searches).toBe(2);
+  expect(result[0].attributes.connectivity).toContain("Lightning");
+  expect(buildFacets(result, "charging cable").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Lightning", "USB-C"]));
+});
+
+it("keeps only complete product offers for every generated filter", () => {
+  const offers = [
+    { title: "Black wired cable", attributes: { color: "Black", connectivity: "Wired", retailer: "One" } },
+    { title: "White cable", attributes: { color: "White", connectivity: "", retailer: "Two" } },
+    { title: "Nearby cable shop", potentialStore: true, attributes: { retailer: "Local" } },
+  ];
+  const complete = requireCompleteFacets(offers, "headphones");
+  expect(complete.map(offer => offer.title)).toEqual(["Black wired cable", "Nearby cable shop"]);
+  const facets = buildFacets(complete, "headphones");
+  expect(facets.some(facet => facet.id === "connectivity")).toBe(true);
+  for (const offer of complete.filter(item => !item.potentialStore)) for (const facet of facets.filter(item => item.id !== "retailer")) expect([offer.attributes[facet.id]].flat().map(String).some(value => value.trim())).toBe(true);
 });
 
 it.each([404, 410])("marks HTTP %s product pages unavailable", async status => {

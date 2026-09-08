@@ -105,12 +105,12 @@ describe("searchCatalog", () => {
       return { ok: true, json: async () => ({ shopping_results: [{ position: 1, title: "Silent wall clock", source: "Online Shop", extracted_price: 29.99, delivery: "Free shipping", product_link: "https://online.example/clock", thumbnail: "https://images.example/clock.jpg" }] }) };
     }));
     const result = await searchCatalog("clock test local merge", "Tel Aviv", "test-key", { lat: 32.08, lon: 34.78 });
-    expect(result.offers.some((offer) => offer.category === "local" && offer.merchant === "Clock Corner")).toBe(false);
+    expect(result.offers.some((offer) => offer.category === "local" && offer.merchant === "Clock Corner" && offer.potentialStore)).toBe(true);
     expect(result.offers.some((offer) => offer.merchant === "PC Doctor")).toBe(false);
     expect(result.offers.some((offer) => offer.merchant === "Remote Clock Shop")).toBe(false);
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
-    expect(result.offers[0].category).toBe("order");
+    expect(result.offers[0].category).toBe("local");
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(4);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
@@ -120,9 +120,9 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       const request = new URL(String(url));
       if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
-        { position: 1, title: "72 inch solid wood extendable dining table for 8 people", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 800, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-8" },
-        { position: 2, title: "Round glass dining table with 4 chairs", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 650, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-4" },
-        { position: 3, title: "60 inch rectangular wood fixed dining table, table only", source: "Home Store - Official Site", extracted_price: 500, delivery: "Free shipping", product_link: "https://home.example/products/table" },
+        { position: 1, title: "72 inch rectangular solid wood extendable dining table with 8 chairs for 8 people", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 800, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-8" },
+        { position: 2, title: "Round glass fixed dining table with 4 chairs for 4 people", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 650, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-4" },
+        { position: 3, title: "60 inch rectangular wood fixed dining table for 6 people, table only", source: "Home Store - Official Site", extracted_price: 500, delivery: "Free shipping", product_link: "https://home.example/products/table" },
       ] }) };
       return { ok: true, json: async () => ({}) };
     }));
@@ -151,7 +151,10 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       const request = new URL(String(url));
       if (request.hostname === "local-pc.co.il") return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">{"@type":"Product","name":"MSI MAG A750GL PSU 750W 80 Plus Gold Fully Modular","image":"/psu.jpg","additionalProperty":[{"name":"Protection circuits","value":["Overvoltage","Overcurrent"]}],"offers":{"price":"529"}}</script>` };
-      if (request.searchParams.get("engine") === "google_maps") return { ok: true, json: async () => ({ local_results: [{ title: "Local PC", type: "Computer store", website: "https://local-pc.co.il", gps_coordinates: { latitude: 32.081, longitude: 34.781 } }] }) };
+      if (request.searchParams.get("engine") === "google_maps") return { ok: true, json: async () => ({ local_results: [
+        { title: "Local PC", type: "Computer store", website: "https://local-pc.co.il", gps_coordinates: { latitude: 32.081, longitude: 34.781 } },
+        { title: "Neighborhood Computers", type: "Computer store", place_id: "nearby-place", address: "2 Local St", gps_coordinates: { latitude: 32.082, longitude: 34.782 } },
+      ] }) };
       if (request.searchParams.get("engine") === "google") return { ok: true, json: async () => ({ organic_results: [{ title: "MSI MAG A750GL PSU 750W 80 Plus Gold Fully Modular", link: "https://local-pc.co.il/products/a750gl", source: "Local PC", snippet: "750W 80 Plus Gold fully modular power supply — 529 ₪" }] }) };
       return { ok: true, json: async () => ({ shopping_results: [] }) };
     }));
@@ -163,9 +166,9 @@ describe("searchCatalog", () => {
     expect(offer.attributes["spec:protection_circuits"]).toEqual(["Overvoltage", "Overcurrent"]);
     expect(result.facets.find(facet => facet.id === "spec:protection_circuits")?.options).toEqual([{ value: "Overvoltage", count: 2 }, { value: "Overcurrent", count: 2 }]);
     const localOnly = await searchCatalog("MSI MAG PSU", "Tel Aviv, Israel", "local-product-key", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(localOnly.offers).toHaveLength(1);
+    expect(localOnly.offers).toHaveLength(2);
     expect(localOnly.offers[0]).toMatchObject({ category: "local", destinationUrl: "https://local-pc.co.il/products/a750gl", itemPrice: 529, imageUrl: "https://local-pc.co.il/psu.jpg" });
-    expect(localOnly.offers.some(item => item.potentialStore || item.linkLabel === "View store")).toBe(false);
+    expect(localOnly.offers[1]).toMatchObject({ category: "local", merchant: "Neighborhood Computers", potentialStore: true, linkLabel: "View store", destinationUrl: "https://www.google.com/maps/search/?api=1&query_place_id=nearby-place" });
   });
 
   it("coalesces identical in-flight scoped searches", async () => {
