@@ -407,7 +407,7 @@ export async function recoverModelSpecifications(offers, query, location, key, r
   return shareProductSpecs(recovered);
 }
 async function shoppingSearch(query, location, key) {
-  const code = countryCode(location), variants = [...new Set([localQuery(query, code), query])];
+  const code = countryCode(location), translated = translatedCategories.find(([match]) => match.test(query)), preciseVariants = [...new Set([localQuery(query, code), query])], variants = [...new Set([...preciseVariants, translated?.[2]].filter(Boolean))];
   const searches = await Promise.allSettled(variants.map(async variant => {
     const params = new URLSearchParams({ engine: "google_shopping", q: variant, api_key: key, hl: variant === query ? "en" : code === "IL" ? "he" : "en", num: "40" });
     if (code) params.set("gl", code.toLowerCase());
@@ -420,7 +420,8 @@ async function shoppingSearch(query, location, key) {
     }
   }));
   if (searches.every(result => result.status === "rejected")) throw searches[0].reason;
-  const seenItems = new Set(), items = searches.flatMap(result => result.status === "fulfilled" ? [...(result.value.shopping_results ?? []), ...(result.value.inline_shopping_results ?? [])] : []).filter(item => {
+  const shoppingRows = searches.map(result => result.status === "fulfilled" ? [...(result.value.shopping_results ?? []), ...(result.value.inline_shopping_results ?? [])] : []), preciseRows = shoppingRows.slice(0, preciseVariants.length).flat(), sourceRows = preciseRows.some(item => isRelevantProduct(item.title, query)) ? preciseRows : shoppingRows.flat();
+  const seenItems = new Set(), items = sourceRows.filter(item => {
     if (!isRelevantProduct(item.title, query)) return false;
     const identity = safeHttpUrl(item.link || item.product_link) || `${item.source ?? ""}|${item.title ?? ""}`;
     if (seenItems.has(identity)) return false;

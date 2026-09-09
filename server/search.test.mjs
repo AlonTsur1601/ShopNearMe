@@ -51,10 +51,10 @@ describe("searchCatalog", () => {
     expect(result.offers[0].category).toBe("order");
     expect(result.warnings).toEqual([]);
     const shoppingCalls = vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_shopping");
-    expect(shoppingCalls).toHaveLength(4);
+    expect(shoppingCalls).toHaveLength(6);
     expect(shoppingCalls.every(([url]) => new URL(url).searchParams.get("gl") === "il")).toBe(true);
-    expect(shoppingCalls.filter(([url]) => new URL(url).searchParams.has("location"))).toHaveLength(2);
-    expect(new Set(shoppingCalls.map(([url]) => new URL(url).searchParams.get("q"))).size).toBe(2);
+    expect(shoppingCalls.filter(([url]) => new URL(url).searchParams.has("location"))).toHaveLength(3);
+    expect(new Set(shoppingCalls.map(([url]) => new URL(url).searchParams.get("q"))).size).toBe(3);
   });
 
   it("resolves retailer links, shipping and monitor facets from product groups", async () => {
@@ -113,7 +113,7 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("local");
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(7);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(8);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
   });
@@ -187,6 +187,17 @@ describe("searchCatalog", () => {
     expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.title)).toEqual(["Wireless headphones Alpha"]);
     expect(result.offers.filter(offer => offer.category === "order" && offer.potentialStore).map(offer => offer.merchant)).toEqual(["Store 1", "Store 2"]);
     expect(result.facets.find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(["Wireless"]);
+  });
+
+  it("uses the local category query only when precise bilingual Shopping queries are empty", async () => {
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q");
+      if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: search === "אוזניות" ? [{ title: "אוזניות Wireless ANC Sony", source: "Audio Store", extracted_price: 500, product_link: "https://audio.example/headphones" }] : [] }) };
+      if (request.hostname === "audio.example") return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => '<script type="application/ld+json">{"@type":"Product","name":"Wireless ANC Sony headphones","brand":"Sony","offers":{"price":500}}</script>' };
+      return { ok: true, json: async () => ({ organic_results: [] }) };
+    }));
+    const result = await searchCatalog("Wireless Headphones ANC", "Israel", "local-category-fallback-fixture", undefined, undefined, "online");
+    expect(result.offers.some(offer => offer.destinationUrl === "https://audio.example/headphones")).toBe(true);
   });
 
   it("makes a newly discovered product property mandatory for every product", async () => {
