@@ -270,6 +270,14 @@ function valuesForFacet(offer, id) {
   return [...new Set([offer.attributes?.[id] ?? []].flat().map(value => String(value).trim()).filter(Boolean))];
 }
 
+function onlineCandidatesFromMaps(maps) {
+  return maps.map((store, index) => {
+    const destinationUrl = merchantWebsite(store.destinationUrl);
+    if (!destinationUrl || /(^|\.)(?:google\.[a-z.]+|openstreetmap\.org)$/i.test(new URL(destinationUrl).hostname)) return null;
+    return { ...store, id: `map-online-${index}-${store.id}`, category: "order", title: store.merchant, subtitle: "Retailer website found from a nearby store listing", availability: "Potential online retailer · confirm online ordering and product availability", distanceMiles: undefined, attributes: { retailer: shortRetailerName(store.merchant) }, linkLabel: "View store" };
+  }).filter(Boolean);
+}
+
 function facetDefinitions(offers, query) {
   const specificIds = new Set((productRules.find((group) => group.match.test(query))?.rules ?? []).map(({ id }) => id));
   const discovered = new Map(offers.flatMap(offer => Object.entries(offer.attributeLabels ?? {})));
@@ -582,7 +590,8 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   let offers = settled.flatMap(result => result.status === "fulfilled" ? result.value : []);
   if (scope === "all") {
     const online = [...value(0), ...value(2)], maps = value(1);
-    offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
+    const mapOnline = online.some(offer => offer.category === "order") ? [] : onlineCandidatesFromMaps(maps);
+    offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...mapOnline, ...value(3)];
   }
   const shared = shareProductSpecs(offers);
   let required = requiredFacetIds(shared, query), enriched = shared;

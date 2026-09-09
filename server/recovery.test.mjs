@@ -125,8 +125,9 @@ describe("bounded source recovery", () => {
       if (params.get("engine") === "google_maps" || /stores near/i.test(params.get("q") ?? "")) return { ok: false, status: 503, json: async () => ({ error: "Temporary provider failure" }) };
       return { ok: true, json: async () => ({}) };
     }));
-    const r = await searchCatalog("Wireless Headphones", "Kiryat Ono, Israel", "osm-fallback-fixture", { lat: 32.059, lon: 34.856 }, undefined, "local");
+    const r = await searchCatalog("Wireless Headphones", "Kiryat Ono, Israel", "osm-fallback-fixture", { lat: 32.059, lon: 34.856 }, undefined, "all");
     expect(r.offers.some(offer => offer.category === "local" && offer.merchant === "Independent Audio" && offer.destinationUrl === "https://independent-audio.example/")).toBe(true);
+    expect(r.offers.some(offer => offer.category === "order" && offer.potentialStore && offer.availability === "Potential online retailer · confirm online ordering and product availability")).toBe(true);
     expect(r.warnings).toEqual([]);
   });
   it("does not return laptop replacement parts as laptop offers", () => {
