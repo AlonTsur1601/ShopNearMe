@@ -131,6 +131,17 @@ it("suppresses a source failure warning when another source supplies online offe
   expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(before);
 });
 
+it("returns honest online-store fallbacks when merchant product pages cannot be resolved", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+    const target = new URL(JSON.parse(options.body).url);
+    if (target.searchParams.get("tbm") === "shop") return new Response("", { status: 503 });
+    return new Response(JSON.stringify({ organic: [{ title: "Gaming Laptops", source: "PC Store", display_link: "https://pc-store.co.il › laptops", link: "https://www.google.com/goto?url=opaque", description: "Gaming Laptop models with 16GB RAM" }] }));
+  }));
+  const result = await searchCatalog("Gaming Laptop", "Israel", { apiKey: "online-store-fallback", zone: "zone" }, undefined, undefined, "online");
+  expect(result.offers[0]).toMatchObject({ category: "order", merchant: "PC Store", potentialStore: true, destinationUrl: "https://pc-store.co.il/", linkLabel: "View store" });
+  expect(result.warnings).toEqual([]);
+});
+
 it("extracts named description and div-row properties regardless of product category", () => {
   const page = extractProductData('<main><div class="product-description">Color: Black<br>Material: Steel<br>Width: 120 cm<br>Chairs included: No</div><div class="spec-row"><span>Capacity</span><span>6 people</span></div><div class="related-products"><div class="spec-row"><span>Color</span><span>Red</span></div></div></main>');
   const attrs = structuredAttributes(page.specifications).attributes;

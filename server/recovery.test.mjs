@@ -110,6 +110,10 @@ describe("bounded source recovery", () => {
     expect(r.warnings).toEqual([]);
     expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(url).searchParams.get("engine") === "google")).toBe(true);
   });
+  it("does not return laptop replacement parts as laptop offers", () => {
+    expect(isRelevantProduct("GPC70 motherboard for HP Pavilion Gaming Laptop", "Gaming Laptop")).toBe(false);
+    expect(isRelevantProduct("HP Victus 16 Gaming Laptop 16GB RAM", "Gaming Laptop")).toBe(true);
+  });
   it("tries a related local-store category when the primary Maps search is empty", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const params = new URL(url).searchParams;
