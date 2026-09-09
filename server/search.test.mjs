@@ -192,19 +192,21 @@ describe("searchCatalog", () => {
       if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
         { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://amazon.com/alpha" },
         { title: "Headphones Beta", source: "Store B", extracted_price: 110, product_link: "https://amazon.com/beta" },
+        { title: "Headphones Gamma", source: "Store C", extracted_price: 120, product_link: "https://amazon.com/gamma" },
       ] }) };
       if (engine === "google" && search.includes('"Headphones Beta"')) return { ok: true, json: async () => ({ organic_results: [{ title: "Headphones Beta Bluetooth specifications", link: "https://maker.example/beta" }] }) };
+      if (engine === "google" && search.includes('"Headphones Gamma"')) return { ok: true, json: async () => ({ organic_results: [{ title: "Headphones Gamma Wired specifications", link: "https://maker.example/gamma" }] }) };
       if (engine === "google" && search.includes('"Wireless headphones Alpha"')) return { ok: true, json: async () => ({ organic_results: [{ title: "Wireless headphones Alpha specifications", link: "https://maker.example/alpha" }] }) };
       if (request.hostname === "maker.example") {
-        const alpha = request.pathname.includes("alpha"), name = alpha ? "Wireless headphones Alpha" : "Headphones Beta Bluetooth", material = alpha ? "Metal" : "Plastic";
+        const alpha = request.pathname.includes("alpha"), gamma = request.pathname.includes("gamma"), name = alpha ? "Wireless headphones Alpha" : gamma ? "Headphones Gamma Wired" : "Headphones Beta Bluetooth", material = alpha ? "Metal" : gamma ? "Wood" : "Plastic";
         return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name, offers: { price: 100 }, additionalProperty: [{ name: "Material", value: material }] })}</script>` };
       }
       return { ok: true, json: async () => ({ organic_results: [] }) };
     }));
     const result = await searchCatalog("headphones expanding facet fixture", "Israel", "expanding-facet-fixture", undefined, undefined, "online");
-    expect(result.offers.filter(offer => !offer.potentialStore)).toHaveLength(2);
-    expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.attributes.material)).toEqual([["Metal"], ["Plastic"]]);
-    expect(result.facets.find(facet => facet.id === "material")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Metal", "Plastic"]));
+    expect(result.offers.filter(offer => !offer.potentialStore)).toHaveLength(3);
+    expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.attributes.material)).toEqual([["Metal"], ["Plastic"], ["Wood"]]);
+    expect(result.facets.find(facet => facet.id === "material")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Metal", "Plastic", "Wood"]));
   });
 
   it("keeps a Shopping merchant offer carried by Google's tracked outbound link", async () => {

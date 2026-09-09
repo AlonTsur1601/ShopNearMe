@@ -280,14 +280,14 @@ function facetDefinitions(offers, query) {
 function requiredFacetIds(offers, query) {
   const products = offers.map(normalizeOfferFacets).filter(offer => !offer.potentialStore);
   if (!products.length) return [];
-  const { definitions, discovered, specificIds } = facetDefinitions(products, query);
+  const { definitions, specificIds } = facetDefinitions(products, query);
   return definitions.map(([id]) => id).filter(id => {
     if (id === "retailer") return false;
     const populated = products.filter(offer => valuesForFacet(offer, id).length);
     if (!populated.length) return false;
     const options = new Set(populated.flatMap(offer => valuesForFacet(offer, id)));
     const minimum = Math.max(2, Math.ceil(products.length * (specificIds.has(id) ? .05 : .2)));
-    return discovered.has(id) || (options.size === 1 ? specificIds.has(id) : populated.length >= minimum);
+    return options.size === 1 ? specificIds.has(id) : populated.length >= minimum;
   });
 }
 
