@@ -65,7 +65,7 @@ it("never invents Other when repeated specification searches leave a required fi
   ];
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ organic: [] }))));
   const result = await recoverModelSpecifications(offers, "headphones", "Israel", { apiKey: "other-fixture", zone: "zone" });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(1);
   expect(result[1].attributes.connectivity).toBeUndefined();
   expect(requireCompleteFacets(result, "headphones").map(offer => offer.title)).toEqual(["Wireless headphones A"]);
   expect(buildFacets(requireCompleteFacets(result, "headphones"), "headphones").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(["Wireless"]);

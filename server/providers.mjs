@@ -23,7 +23,7 @@ export async function fetchJson(url, options = {}, timeoutMs = 10000) {
         return data;
       } catch (error) {
         const temporary = error.name === "AbortError" || [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|temporar|timeout/i.test(error.message);
-        if (!isSearch || attempt >= 2 || !temporary || /quota|credits|run out|invalid api|unauthoriz/i.test(error.message)) throw error;
+        if (!isSearch || attempt || !temporary || /quota|credits|run out|invalid api|unauthoriz/i.test(error.message)) throw error;
       } finally { clearTimeout(timer); }
     }
   })();

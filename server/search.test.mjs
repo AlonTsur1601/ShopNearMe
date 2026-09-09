@@ -78,7 +78,7 @@ describe("searchCatalog", () => {
     const second = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
     expect(first.warnings).toEqual(["Online stores could not be searched. Please try again.", "Retailer product pages could not be searched. Please try again."]);
     expect(second.warnings).toEqual(first.warnings);
-    expect(fetch).toHaveBeenCalledTimes(24);
+    expect(fetch).toHaveBeenCalledTimes(16);
   });
 
   it("reads structured specifications but identifies category pages", () => {

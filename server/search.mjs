@@ -353,11 +353,7 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     if (!lookup) return offer;
     let attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     const requested = missing.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
-    const searches = [...new Set([
-      `"${lookup}" technical specifications ${requested}`.trim(),
-      `"${lookup}" ${requested}`.trim(),
-      `${lookup} spec sheet ${requested}`.trim(),
-    ])];
+    const searches = [`"${lookup}" technical specifications ${requested}`.trim()];
     for (const search of searches) {
       try {
         const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
@@ -500,7 +496,7 @@ async function localProductSearch(query, location, key) {
     if (!link || seen.has(link) || !isRelevantProduct(item.title, query)) return false;
     seen.add(link); return true;
   }).map(item => { const domain = new URL(item.link).hostname; const rank = domains.get(domain) ?? 0; domains.set(domain, rank + 1); return { item, rank }; })
-    .sort((a, b) => a.rank - b.rank).slice(0, 24).map(({ item }) => item);
+    .sort((a, b) => a.rank - b.rank).slice(0, 16).map(({ item }) => item);
   return (await mapConcurrent(candidates, 10, (item, index) => localProduct(item, index, query, location))).filter(Boolean);
 }
 async function runScope(scope, query, location, key, coordinates, credentials) {

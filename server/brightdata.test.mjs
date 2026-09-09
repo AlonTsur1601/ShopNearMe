@@ -50,7 +50,7 @@ it("never echoes credentials in an upstream error or retries invalid credentials
 it("does not mistake an HTML response for parsed data", async () => {
   const fetcher = vi.fn(async () => new Response("<html>not JSON</html>")); vi.stubGlobal("fetch", fetcher);
   await expect(brightDataSearch({ query: "html" }, { apiKey: "test", zone: "zone" })).rejects.toThrow("did not return parsed");
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it("unwraps the native REST envelope used by a Full JSON zone", async () => {
