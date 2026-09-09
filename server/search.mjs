@@ -590,8 +590,7 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   let offers = settled.flatMap(result => result.status === "fulfilled" ? result.value : []);
   if (scope === "all") {
     const online = [...value(0), ...value(2)], maps = value(1);
-    const mapOnline = online.some(offer => offer.category === "order") ? [] : onlineCandidatesFromMaps(maps);
-    offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...mapOnline, ...value(3)];
+    offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
   }
   const shared = shareProductSpecs(offers);
   let required = requiredFacetIds(shared, query), enriched = shared;
@@ -601,7 +600,10 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     if (!additions.length) break;
     required = [...required, ...additions];
   }
-  const result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.potentialStore ? offer.availability : offer.availability === "Out of stock" ? "Out of stock" : "" })), location), required);
+  let result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.potentialStore ? offer.availability : offer.availability === "Out of stock" ? "Out of stock" : "" })), location), required);
+  if (scope === "all" && !result.offers.some(offer => offer.category === "order")) {
+    result = makeResult(query, [...result.offers, ...onlineCandidatesFromMaps(result.offers.filter(offer => offer.category === "local"))], required);
+  }
   const labels = scope === "online" ? ["Online stores", "Retailer product pages", "Second-hand listings"]
     : scope === "local" ? ["Nearby stores"] : scope === "local-products" ? ["Retailer product pages"]
     : ["Online stores", "Nearby stores", "Retailer product pages", "Second-hand listings"];
