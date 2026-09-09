@@ -23,7 +23,7 @@ export async function fetchJson(url, options = {}, timeoutMs = 10000) {
         return data;
       } catch (error) {
         const temporary = error.name === "AbortError" || [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|temporar|timeout/i.test(error.message);
-        if (!isSearch || attempt || !temporary || /quota|credits|run out|invalid api|unauthoriz/i.test(error.message)) throw error;
+        if (!isSearch || attempt >= 2 || !temporary || /quota|credits|run out|invalid api|unauthoriz/i.test(error.message)) throw error;
       } finally { clearTimeout(timer); }
     }
   })();
@@ -40,6 +40,10 @@ export async function mapConcurrent(items, limit, operation) {
 }
 import { brightDataSearch } from "./brightdata.mjs";
 
+function rows(...sources) {
+  return sources.flatMap(source => Array.isArray(source) ? source : Array.isArray(source?.places) ? source.places : Array.isArray(source?.results) ? source.results : []);
+}
+
 export async function searchProvider(params, config, timeoutMs = 15000) {
   // Keep the legacy interface for existing integration fixtures and older callers.
   // The deployed API supplies only the Bright Data configuration object.
@@ -51,11 +55,12 @@ export async function searchProvider(params, config, timeoutMs = 15000) {
     country: params.get("gl"), location: params.get("location"), start: Number(params.get("start") || 0),
     coordinates: match ? { lat: Number(match[1]), lon: Number(match[2]) } : undefined,
   }, config, engine === "google_maps" && !params.has("start") ? 25000 : timeoutMs);
+  const local = engine === "google_maps" ? rows(data.organic, data.local, data.places) : rows(data.local, data.places);
   return {
-    organic_results: (data.organic ?? []).map(item => ({ ...item, snippet: item.description, displayed_link: item.display_link, favicon: item.icon })),
-    shopping_results: (data.shopping ?? []).map(item => ({ ...item, source: item.shop, thumbnail: item.image, source_icon: item.shop_logo, reviews: item.reviews_cnt, product_id: item.cid ?? item.rank })),
-    local_results: (engine === "google_maps" ? data.organic ?? [] : Array.isArray(data.local) ? data.local : data.local?.places ?? data.places ?? []).map(item => ({
-      ...item, title: item.title ?? item.name, type: Array.isArray(item.category) ? item.category.map(c => (c.id ?? c.title ?? "").replaceAll("_", " ")).join(" · ") : item.category ?? item.type, website: item.website ?? item.link ?? item.url,
+    organic_results: rows(data.organic).map(item => ({ ...item, link: item.link ?? item.url, snippet: item.description ?? item.snippet, displayed_link: item.display_link, favicon: item.icon })),
+    shopping_results: rows(data.shopping).map(item => ({ ...item, link: item.link ?? item.url ?? item.product_url ?? item.merchant_url, source: item.shop ?? item.source ?? item.merchant, thumbnail: item.image ?? item.thumbnail, source_icon: item.shop_logo ?? item.source_icon, reviews: item.reviews_cnt ?? item.reviews, product_id: item.cid ?? item.product_id ?? item.rank })),
+    local_results: local.map(item => ({
+      ...item, title: item.title ?? item.name, type: Array.isArray(item.category) ? item.category.map(c => (c.id ?? c.title ?? "").replaceAll("_", " ")).join(" · ") : item.category ?? item.type, website: item.website ?? item.business_url ?? item.link ?? item.url,
       reviews: item.reviews_cnt ?? item.reviews, gps_coordinates: item.gps_coordinates ?? (item.latitude != null ? { latitude: item.latitude, longitude: item.longitude } : undefined),
       place_id: item.map_id_encoded ?? item.fid, google_maps_url: item.map_link,
     })),

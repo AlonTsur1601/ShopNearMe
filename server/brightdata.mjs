@@ -70,7 +70,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         return data;
       } catch (error) {
         const temporary = [408, 429, 500, 502, 503, 504].includes(error.status) || ["TimeoutError", "AbortError"].includes(error.name) || /fetch failed|network|did not return parsed/i.test(error.message);
-        if (attempt || !temporary) throw error;
+        if (attempt >= 2 || !temporary) throw error;
       }
     }
   })();

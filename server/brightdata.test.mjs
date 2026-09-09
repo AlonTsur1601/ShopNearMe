@@ -50,7 +50,7 @@ it("never echoes credentials in an upstream error or retries invalid credentials
 it("does not mistake an HTML response for parsed data", async () => {
   const fetcher = vi.fn(async () => new Response("<html>not JSON</html>")); vi.stubGlobal("fetch", fetcher);
   await expect(brightDataSearch({ query: "html" }, { apiKey: "test", zone: "zone" })).rejects.toThrow("did not return parsed");
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
 it("unwraps the native REST envelope used by a Full JSON zone", async () => {
@@ -67,4 +67,18 @@ it("maps native Maps coordinates, business categories and merchant links", async
   }));
   const data = await searchProvider(new URLSearchParams({ engine: "google_maps", q: "native maps fixture" }), { apiKey: "test", zone: "zone" });
   expect(data.local_results[0]).toMatchObject({ title: "Computer shop", type: "computer store", website: "https://shop.example/", reviews: 42, gps_coordinates: { latitude: 32.1, longitude: 34.8 } });
+});
+
+it("accepts alternate native shopping and Maps result fields", async () => {
+  const { searchProvider } = await import("./providers.mjs");
+  vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+    const target = new URL(JSON.parse(options.body).url);
+    return new Response(JSON.stringify(target.pathname.startsWith("/maps/")
+      ? { local: { places: [{ name: "Gaming Store", business_url: "https://gaming.example/", category: "gaming store", latitude: 32.1, longitude: 34.8 }] } }
+      : { shopping: [{ title: "Gaming Laptop RAM 16GB", url: "https://online.example/laptop", shop: "Online" }] }));
+  }));
+  const maps = await searchProvider(new URLSearchParams({ engine: "google_maps", q: "alternate maps fixture" }), { apiKey: "test", zone: "zone" });
+  expect(maps.local_results[0]).toMatchObject({ title: "Gaming Store", website: "https://gaming.example/" });
+  const shopping = await searchProvider(new URLSearchParams({ engine: "google_shopping", q: "alternate shopping fixture" }), { apiKey: "test", zone: "zone" });
+  expect(shopping.shopping_results[0]).toMatchObject({ title: "Gaming Laptop RAM 16GB", link: "https://online.example/laptop", source: "Online" });
 });

@@ -22,6 +22,8 @@ const aliases = [
   ["freeSync", "FreeSync support", /^(?:amd )?free ?sync(?: premium| support)?$/i],
   ["ports", "Ports", /^(ports|connections|connectors|connector type|inputs|audio\/video inputs|video inputs|display inputs|חיבורים|כניסות|סוגי החיבורים|סוגי חיבורים|חיבור usb)$/i],
   ["connectivity", "Connectivity", /^(connectivity|wireless technology|קישוריות)$/i],
+  ["memory", "Memory / RAM", /^(?:installed |system )?(?:memory|ram|memory size|memory capacity|זיכרון(?: פנימי)?|ראם)$/i],
+  ["storage", "Storage", /^(?:storage|storage capacity|internal storage|ssd|ssd capacity|solid state drive capacity|hard drive capacity|disk capacity|אחסון|נפח אחסון|כונן)$/i],
   ["weight", "Weight", /^(weight|item weight|product weight|net weight|משקל)$/i],
   ["dimensions", "Dimensions", /^(dimensions|product dimensions|item dimensions|מידות)$/i],
   ["material", "Material", /^(material|materials|חומר)$/i],
@@ -97,6 +99,10 @@ function normalizedValue(id, raw, unit = "") {
   if (id === "mounting") value = value.replace(/(\d)\s*[xX×]\s*(\d)/g, "$1 x $2");
   if (id === "adaptiveSync") value = value.replace(/(?:NVIDIA|AMD|™)/gi, "").replace(/g[- ]?sync/gi, "G-Sync").replace(/freesync/gi, "FreeSync").trim();
   if (id === "ports") value = value.replace(/displayport/gi, "DisplayPort").replace(/hdmi/gi, "HDMI").replace(/usb[- ]c/gi, "USB-C");
+  if (["memory", "storage"].includes(id)) {
+    const capacity = value.match(/\b(\d+(?:\.\d+)?)\s*(GB|TB)\b/i);
+    if (capacity) return `${Number(capacity[1])} ${capacity[2].toUpperCase()}`;
+  }
   if (id === "screenSize" && /^\d+(?:\.\d+)?(?:\s*in)?$/i.test(value)) return `${parseFloat(value)} in`;
   if (id === "responseTime") { value = value.replace(/milliseconds?/gi, "ms"); if (/^0\s*ms$/i.test(value)) return ""; }
   if (id === "speakers" && /^built[- ]in speakers?$/i.test(value)) return "Yes";

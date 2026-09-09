@@ -21,6 +21,31 @@ function inferChairs(text) { return /table only|without chairs|chairs not includ
 function inferExtendable(text) { return /non[- ]extendable|not extendable|fixed(?:[- ]length| top)? table|fixed dining table/i.test(text) ? "Fixed" : /extendable|extending|extension|expandable|drop[- ]leaf|butterfly[- ]leaf/i.test(text) ? "Extendable" : undefined; }
 function inferScreen(text) { const match = text.match(/\b(\d{1,3}(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?|"|''|אינץ)/i) || text.match(/"(\d{1,3}(?:\.\d+)?)\b/); return match ? `${match[1]} in` : undefined; }
 function inferStorage(text, qualifier = "") { const pattern = qualifier ? new RegExp(`\\b(\\d+)\\s*(GB|TB)\\s+${qualifier}\\b`, "i") : /\b(\d+)\s*(GB|TB)\b/i; const match = text.match(pattern); return match ? `${match[1]} ${match[2].toUpperCase()}` : undefined; }
+function capacity(value, unit) { return `${Number(value)} ${String(unit).toUpperCase()}`; }
+function inferMemory(text) {
+  const patterns = [
+    /\b(?:RAM|system memory|memory)\s*[:=-]?\s*(\d+)\s*(GB|TB)\b/i,
+    /\b(\d+)\s*(GB|TB)\s*(?:of\s+)?(?:RAM|system memory|memory)\b/i,
+    /\b(\d+)\s*(GB|TB)\s*(?:DDR[3-5]?|LPDDR[3-5X]*)\b/i,
+    /\b(?:DDR[3-5]?|LPDDR[3-5X]*)\s*(\d+)\s*(GB|TB)\b/i,
+    /(?:זיכרון|ראם)\s*[:=-]?\s*(\d+)\s*(GB|TB)\b/i,
+    /\b(\d+)\s*(GB|TB)\s*(?:זיכרון|ראם)\b/i,
+    /\b(\d+)\s*(GB|TB)\s*[+/|]\s*\d+\s*(?:GB|TB)\b/i,
+  ];
+  for (const pattern of patterns) { const match = text.match(pattern); if (match) return capacity(match[1], match[2]); }
+}
+function inferLaptopStorage(text) {
+  const patterns = [
+    /\b(?:storage|SSD|HDD|NVMe|eMMC)\s*[:=-]?\s*(\d+)\s*(GB|TB)\b/i,
+    /\b(\d+)\s*(GB|TB)\s*(?:SSD|HDD|NVMe|eMMC|storage)\b/i,
+    /(?:אחסון|כונן)\s*[:=-]?\s*(\d+)\s*(GB|TB)\b/i,
+    /\b\d+\s*(?:GB|TB)\s*[+/|]\s*(\d+)\s*(GB|TB)\b/i,
+  ];
+  for (const pattern of patterns) { const match = text.match(pattern); if (match) return capacity(match[1], match[2]); }
+  const candidates = [...text.matchAll(/\b(\d+)\s*(GB|TB)\b/gi)].map(match => ({ value: Number(match[1]), unit: match[2].toUpperCase() }));
+  const plausible = candidates.filter(({ value, unit }) => unit === "TB" || value >= 128);
+  return plausible.length ? capacity(plausible.at(-1).value, plausible.at(-1).unit) : undefined;
+}
 function inferShoeSize(text) { const match = text.match(/(?:size|US)\s*(\d{1,2}(?:\.5)?)/i); return match ? `US ${match[1]}` : undefined; }
 function inferWattage(text) { const match = text.match(/\b(\d{2,5})\s*w(?:att)?s?\b/i); if (!match) return undefined; const value = number(match[1]); return value === null ? undefined : value < 500 ? "Under 500 W" : value < 700 ? "500–699 W" : value < 900 ? "700–899 W" : value < 1200 ? "900–1199 W" : "1200 W+"; }
 function inferResolution(text) {
@@ -35,7 +60,7 @@ const productRules = [
   { match: /clock/i, rules: [{ id: "clockType", label: "Clock type", values: ["Wall clock", "Alarm clock", "Desk clock", "Smart clock", "Mantel clock"] }, { id: "movement", label: "Movement", values: ["Quartz", "Digital", "Mechanical", "Atomic"] }] },
   { match: /coffee\s+(?:maker|machine)|espresso|french press/i, rules: [{ id: "type", label: "Coffee maker type", values: ["Drip", "Espresso", "Pod", "Single serve", "Cold brew", "French press"] }] },
   { match: /shoes?|sneakers?|boots?/i, rules: [{ id: "activity", label: "Activity", values: ["Running", "Trail", "Walking", "Hiking", "Basketball", "Training"] }, { id: "shoeSize", label: "Size", infer: inferShoeSize }] },
-  { match: /laptop|notebook|chromebook/i, rules: [{ id: "platform", label: "Platform", values: ["Windows", "MacBook", "Chromebook", "Gaming"] }, { id: "screenSize", label: "Screen size", infer: inferScreen }, { id: "memory", label: "Memory", infer: (text) => inferStorage(text, "RAM") }, { id: "storage", label: "Storage", infer: inferStorage }] },
+  { match: /laptop|notebook|chromebook/i, rules: [{ id: "platform", label: "Platform", values: ["Windows", "MacBook", "Chromebook", "Gaming"] }, { id: "screenSize", label: "Screen size", infer: inferScreen }, { id: "memory", label: "Memory / RAM", infer: inferMemory }, { id: "storage", label: "Storage", infer: inferLaptopStorage }] },
   { match: /\b(?:phone|smartphone)s?\b/i, rules: [{ id: "network", label: "Network", values: ["Unlocked", "5G", "Dual SIM", "Prepaid"] }, { id: "storage", label: "Storage", infer: inferStorage }, { id: "screenSize", label: "Screen size", infer: inferScreen }] },
   { match: /camera|lens/i, rules: [{ id: "cameraType", label: "Camera type", values: ["Mirrorless", "DSLR", "Instant", "Action", "Digital", "Film"] }] },
   { match: /vacuum/i, rules: [{ id: "vacuumType", label: "Vacuum type", values: ["Robot", "Cordless", "Upright", "Canister", "Handheld"] }, { id: "features", label: "Features", values: features }] },
@@ -57,7 +82,7 @@ const storeRules = [
   [/headphones?|earbuds?|speaker|audio/i, ["audio", "electronics", "computer", "department", "appliance", "music"]],
   [/shoes?|sneakers?|boots?|sandals?/i, ["shoe", "sporting goods", "department", "clothing", "outdoor"]],
   [/coffee|espresso|kettle|toaster|blender/i, ["appliance", "kitchen", "home goods", "department", "coffee"]],
-  [/laptop|computer|keyboard|mouse|monitor|printer/i, ["computer", "electronics", "office supply", "department"]],
+  [/laptop|computer|keyboard|mouse|monitor|printer/i, ["computer", "gaming", "electronics", "office supply", "department"]],
   [/(?:power supply|\bpsu\b|graphics card|motherboard)/i, ["computer", "electronics", "hardware", "department"]],
   [/phone|smartphone|tablet|charger/i, ["cell phone", "mobile phone", "electronics", "computer", "department"]],
   [/camera|lens|tripod/i, ["camera", "photography", "electronics", "department"]],
@@ -123,7 +148,11 @@ const genericRules = [
   { id: "connectivity", label: "Connectivity", values: ["Bluetooth", "Wi-Fi", "Wired", "USB-C", "Lightning", "HDMI"] },
   { id: "weight", label: "Weight", infer: (text) => text.match(/\b(\d+(?:\.\d+)?\s*(?:kg|g|lb|lbs|oz))\b/i)?.[1] },
 ];
-function rulesFor(query) { return [...(productRules.find((group) => group.match.test(query))?.rules ?? []), ...genericRules]; }
+function rulesFor(query) {
+  const specific = productRules.find((group) => group.match.test(query))?.rules ?? [];
+  const ids = new Set(specific.map(({ id }) => id));
+  return [...specific, ...genericRules.filter(({ id }) => !ids.has(id))];
+}
 function attributesFor(query, text, condition, merchant, meta = {}) {
   text = translateTerms(`${text} ${meta.specificationText ?? ""}`);
   const attributes = { condition, retailer: shortRetailerName(merchant) };
@@ -165,7 +194,7 @@ function shoppingOffer(item, index, query) { if (!isRelevantProduct(item.title, 
 function mapOffer(place, index, query, origin) { const merchant = place.title || place.name || "Local store", itemPrice = number(place.extracted_price ?? place.product_price), point = place.gps_coordinates ? { lat: place.gps_coordinates.latitude, lon: place.gps_coordinates.longitude } : null, placeId = place.place_id ?? place.data_id, mapsUrl = placeId ? `https://www.google.com/maps/search/?api=1&query_place_id=${encodeURIComponent(placeId)}` : ""; return { id: `local-${placeId ?? index}`, category: "local", merchant, merchantLogoUrl: safeHttpUrl(place.favicon), title: merchant, subtitle: [place.type, place.address].filter(Boolean).join(" · ") || "Nearby store", imageUrl: "", rating: number(place.rating) ?? 0, reviewCount: number(place.reviews) ?? 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency: "USD", priceVerified: itemPrice !== null, potentialStore: true, availability: "Potential retailer · confirm product stock", distanceMiles: distanceMiles(origin, point), attributes: { retailer: shortRetailerName(merchant) }, destinationUrl: safeHttpUrl(place.website || place.links?.directions || place.google_maps_url || mapsUrl), linkLabel: "View store" }; }
 function explicitCurrency(text) { return /₪|\bNIS\b|\bILS\b/i.test(text) ? "ILS" : /€|\bEUR\b/i.test(text) ? "EUR" : /£|\bGBP\b/i.test(text) ? "GBP" : /\$|\bUSD\b/i.test(text) ? "USD" : null; }
 function localPrice(text, extracted) { const direct = number(extracted); if (direct !== null) return { value: direct, currency: explicitCurrency(text) ?? "USD" }; const ils = text.match(/(?:₪|NIS|ILS)\s*([0-9][0-9,.]*)|([0-9][0-9,.]*)\s*(?:₪|NIS|ILS)/i); if (ils) return { value: number(ils[1] ?? ils[2]), currency: "ILS" }; const usd = text.match(/\$\s*([0-9][0-9,.]*)/); return usd ? { value: number(usd[1]), currency: "USD" } : { value: null, currency: "USD" }; }
-async function localProduct(item, index, query, location) { const link = safeHttpUrl(item.link); if (!link || isCategoryPage(item.title, link) || !isRelevantProduct(item.title, query)) return null; const url = new URL(link); if (comparisonHosts.test(url.hostname) || excludedHosts.test(url.hostname) || url.pathname === "/" || /\/cat(?:\/|\b)|models\.aspx|[?&]act=cat\b/i.test(link) || /zap\.co\.il$/i.test(url.hostname) || !isLocalResult(url, item, location)) return null; const snippet = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${(item.rich_snippet?.top?.extensions ?? []).join(" ")}`, page = await enrichProductPage(link), title = page.title || item.title; if (page.unavailable || page.isCatalog || isCategoryPage(title, link) || !isRelevantProduct(title, query)) return null; const fallback = localPrice(snippet, item.extracted_price), itemPrice = page.price ?? fallback.value, currency = page.price != null ? page.currency : explicitCurrency(snippet) ?? fallback.currency, merchant = shortRetailerName(item.source || item.displayed_link?.split(" › ")[0] || url.hostname.replace(/^www\./, "").split(".")[0]); if (!page.isProduct) return null; return { id: `local-product-${index}-${url.hostname}`, category: "order", merchant, merchantLogoUrl: safeHttpUrl(item.favicon), title, subtitle: String(item.snippet ?? "").slice(0, 150) || `Available near ${location}`, imageUrl: page.imageUrl || productImageUrl(item.thumbnail || item.image), imageUrls: page.imageUrls ?? [], gtin: page.gtin, mpn: page.mpn, productBrand: page.brand, rating: 0, reviewCount: 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency, priceVerified: page.price != null, availability: page.availability || "", totalEstimated: true, condition: "New", attributes: attributesFor(query, `${snippet} ${title}`, "New", merchant, page), attributeLabels: attributeLabelsFor(query, `${snippet} ${title}`, page), destinationUrl: link, linkLabel: "View product" }; }
+async function localProduct(item, index, query, location) { const link = safeHttpUrl(item.link); if (!link || isCategoryPage(item.title, link) || !isRelevantProduct(item.title, query)) return null; const url = new URL(link); if (comparisonHosts.test(url.hostname) || excludedHosts.test(url.hostname) || url.pathname === "/" || /\/cat(?:\/|\b)|models\.aspx|[?&]act=cat\b/i.test(link) || /zap\.co\.il$/i.test(url.hostname) || !isLocalResult(url, item, location)) return null; const snippet = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${(item.rich_snippet?.top?.extensions ?? []).join(" ")}`, page = await enrichProductPage(link), title = page.title || item.title; if (page.unavailable || page.isCatalog || isCategoryPage(title, link) || !isRelevantProduct(title, query)) return null; const fallback = localPrice(snippet, item.extracted_price), itemPrice = page.price ?? fallback.value, currency = page.price != null ? page.currency : explicitCurrency(snippet) ?? fallback.currency, merchant = shortRetailerName(item.source || item.displayed_link?.split(" › ")[0] || url.hostname.replace(/^www\./, "").split(".")[0]); if (!page.isProduct) return null; return { id: `local-product-${index}-${url.hostname}`, category: "order", merchant, merchantLogoUrl: safeHttpUrl(item.favicon), title, subtitle: String(item.snippet ?? "").slice(0, 150) || (location && location !== "Current location" ? `Available near ${location}` : "Available online"), imageUrl: page.imageUrl || productImageUrl(item.thumbnail || item.image), imageUrls: page.imageUrls ?? [], gtin: page.gtin, mpn: page.mpn, productBrand: page.brand, rating: 0, reviewCount: 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency, priceVerified: page.price != null, availability: page.availability || "", totalEstimated: true, condition: "New", attributes: attributesFor(query, `${snippet} ${title}`, "New", merchant, page), attributeLabels: attributeLabelsFor(query, `${snippet} ${title}`, page), destinationUrl: link, linkLabel: "View product" }; }
 
 async function enrichOffer(offer, query, requireProductPage = false) {
   if (!offer?.destinationUrl) return offer;
@@ -305,11 +334,16 @@ export async function recoverModelSpecifications(offers, query, location, key, r
   const propertyIds = [...new Set([...recoveryFacetIds(shared, query), ...requiredIds])];
   if (!propertyIds.length) return shared;
   const labels = new Map(facetDefinitions(shared, query).definitions);
+  const matchingTitle = (offer, title) => {
+    const wanted = searchTokens(offer.title), actual = searchTokens(title);
+    const identifiers = wanted.filter(token => /\d/.test(token) && /[a-z]/i.test(token));
+    if (identifiers.length && identifiers.some(token => actual.includes(token))) return true;
+    return wanted.length > 0 && wanted.filter(token => actual.includes(token)).length >= Math.min(3, wanted.length);
+  };
   const sameProduct = (offer, page) => {
     if (offer.gtin) return page.gtin === offer.gtin;
     if (offer.mpn && /[a-z]/i.test(offer.mpn)) return page.mpn?.toLowerCase() === offer.mpn.toLowerCase() && (!offer.productBrand || String(page.brand ?? "").toLowerCase() === String(offer.productBrand).toLowerCase());
-    const wanted = searchTokens(offer.title), actual = searchTokens(page.title);
-    return wanted.length > 0 && wanted.filter(token => actual.includes(token)).length >= Math.min(3, wanted.length);
+    return matchingTitle(offer, page.title);
   };
   const recovered = await mapConcurrent(shared, 10, async offer => {
     if (offer.potentialStore) return offer;
@@ -319,22 +353,34 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     if (!lookup) return offer;
     let attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     const requested = missing.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
-    for (const search of [`"${lookup}" technical specifications ${requested}`.trim()]) {
+    const searches = [...new Set([
+      `"${lookup}" technical specifications ${requested}`.trim(),
+      `"${lookup}" ${requested}`.trim(),
+      `${lookup} spec sheet ${requested}`.trim(),
+    ])];
+    for (const search of searches) {
       try {
         const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
         if (typeof key === "string") params.set("api_key", key);
         const result = await searchProvider(params, key, 5500);
-        const pages = await mapConcurrent((result.organic_results ?? []).slice(0, 2), 2, item => enrichProductPage(item.link));
+        const results = result.organic_results ?? [];
+        for (const item of results.slice(0, 8)) {
+          const evidence = `${item.title ?? ""} ${item.snippet ?? ""}`;
+          if (!matchingTitle(offer, evidence)) continue;
+          attributes = { ...attributes, ...attributesFor(query, evidence, offer.condition, offer.merchant) };
+        }
+        const pages = await mapConcurrent(results.filter(item => safeHttpUrl(item.link)).slice(0, 4), 4, async item => {
+          try { return await enrichProductPage(item.link); } catch { return null; }
+        });
         for (const page of pages) {
-          if (!page.isProduct || page.unavailable || !sameProduct(offer, page)) continue;
+          if (!page?.isProduct || page.unavailable || !sameProduct(offer, page)) continue;
           attributes = { ...attributes, ...attributesFor(query, page.title ?? "", offer.condition, offer.merchant, page) };
           attributeLabels = { ...attributeLabels, ...attributeLabelsFor(query, page.title ?? "", page) };
         }
-      } catch { /* The unresolved required values receive the explicit Other option below. */ }
+      } catch { /* Continue with the next exact specification query. */ }
       missing = propertyIds.filter(id => !valuesForFacet({ attributes }, id).length);
       if (!missing.length) break;
     }
-    for (const id of requiredIds) if (!valuesForFacet({ attributes }, id).length) attributes[id] = "Other";
     return { ...offer, attributes, attributeLabels };
   });
   return shareProductSpecs(recovered);
@@ -402,44 +448,33 @@ async function mapsSearch(query, location, key, coordinates) {
   const params = new URLSearchParams({ engine: "google_maps", type: "search", q: target + (place ? " near " + place : " near me"), api_key: key, hl: "en" });
   if (origin) params.set("ll", "@" + origin.lat + "," + origin.lon + ",14z");
   if (!place && origin) params.set("nearby", "true");
-  let data;
-  try { data = await searchProvider(params, key, 12000); }
-  catch (error) {
-    if (typeof key === "object") {
-      // A fresh, related retailer query can recover a failed Maps scrape while
-      // retaining the selected coordinates; do not silently search another city.
-      const alternatives = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
-      const alternate = alternatives.find(type => type === "electronics") || alternatives.find(type => type !== storeType);
-      if (alternate) {
-        const retry = new URLSearchParams(params);
-        retry.set("q", alternate + " stores" + (place ? " near " + place : " near me"));
-        retry.set("start", "0");
-        try { data = await searchProvider(retry, key, 12000); } catch { /* try the local pack below */ }
-      }
-    }
-    // A separate engine can still return the local pack when Maps is unavailable.
-    if (!data?.local_results?.length) {
-    const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
-    const pack = await searchProvider(fallback, key, 6000);
-    const places = Array.isArray(pack.local_results) ? pack.local_results : pack.local_results?.places;
-    if (!places?.length) throw error;
-    data = { local_results: places };
-    }
-  }
-  let places = data.local_results ?? [];
+  const localRows = data => Array.isArray(data?.local_results) ? data.local_results : Array.isArray(data?.local_results?.places) ? data.local_results.places : [];
+  let places = [], primaryError, pageParams = params;
+  try { places = localRows(await searchProvider(params, key, 12000)); }
+  catch (error) { primaryError = error; }
   if (!places.length) {
-    const alternatives = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
-    const alternate = alternatives.find(type => type !== storeType);
-    if (alternate) {
+    const alternatives = (storeRules.find(([match]) => match.test(query))?.[1] ?? []).filter(type => type !== storeType).slice(0, 3);
+    const attempts = alternatives.map(type => {
       const retry = new URLSearchParams(params);
-      retry.set("q", alternate + " stores" + (place ? " near " + place : " near me"));
+      retry.set("q", type + " stores" + (place ? " near " + place : " near me"));
       retry.set("start", "0");
-      try { places = (await searchProvider(retry, key, 6500)).local_results ?? []; } catch { /* Preserve the successful empty primary response. */ }
+      return { params: retry, request: searchProvider(retry, key, 9000) };
+    });
+    const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
+    attempts.push({ params: fallback, request: searchProvider(fallback, key, 9000) });
+    const recovered = await Promise.allSettled(attempts.map(({ request }) => request));
+    for (let index = 0; index < recovered.length; index++) {
+      const result = recovered[index];
+      const found = result.status === "fulfilled" ? localRows(result.value) : [];
+      if (!found.length) continue;
+      places.push(...found);
+      if (pageParams === params && attempts[index].params.get("engine") === "google_maps") pageParams = attempts[index].params;
     }
+    if (!places.length && primaryError) throw primaryError;
   }
   if (places.length >= 20) {
-    const next = new URLSearchParams(params); next.set("start", "20");
-    try { const page = await searchProvider(next, key, 6000); places = [...places, ...(page.local_results ?? [])]; } catch { /* retain first page */ }
+    const next = new URLSearchParams(pageParams); next.set("start", "20");
+    try { const page = await searchProvider(next, key, 6000); places = [...places, ...localRows(page)]; } catch { /* retain first page */ }
   }
   const seen = new Set();
   return places.map((place, index) => ({ place, index, score: relevance(place, query, origin) }))
@@ -447,11 +482,12 @@ async function mapsSearch(query, location, key, coordinates) {
     .sort((a, b) => b.score - a.score).slice(0, 50).map(({ place, index }) => mapOffer(place, index, query, origin));
 }
 async function localProductSearch(query, location, key) {
-  if (!location || location === "Current location") return [];
   const code = countryCode(location), tld = code ? countryTlds.get(code) : undefined;
-  const terms = code === "IL" ? "מחיר site:" + tld : tld ? "price site:" + tld : "price near " + location;
+  const hasLocation = location && location !== "Current location";
+  const terms = code === "IL" ? "מחיר site:" + tld : tld ? "price site:" + tld : hasLocation ? "price near " + location : "price buy";
   const base = localQuery(query, code) + " " + terms + " -inurl:cat -inurl:models -inurl:category";
-  const queries = [base, query + " buy " + (tld ? "site:" + tld : "near " + location) + " -inurl:category"];
+  const destination = tld ? "site:" + tld : hasLocation ? "near " + location : "online";
+  const queries = [base, `"${query}" buy ${destination} -inurl:category -inurl:search`, `${query} price ${destination} product`];
   const pages = await Promise.allSettled(queries.map(q => {
     const params = new URLSearchParams({ engine: "google", q, api_key: key, hl: code === "IL" ? "he" : "en", num: "30" });
     if (code) params.set("gl", code.toLowerCase());
@@ -464,7 +500,7 @@ async function localProductSearch(query, location, key) {
     if (!link || seen.has(link) || !isRelevantProduct(item.title, query)) return false;
     seen.add(link); return true;
   }).map(item => { const domain = new URL(item.link).hostname; const rank = domains.get(domain) ?? 0; domains.set(domain, rank + 1); return { item, rank }; })
-    .sort((a, b) => a.rank - b.rank).slice(0, 16).map(({ item }) => item);
+    .sort((a, b) => a.rank - b.rank).slice(0, 24).map(({ item }) => item);
   return (await mapConcurrent(candidates, 10, (item, index) => localProduct(item, index, query, location))).filter(Boolean);
 }
 async function runScope(scope, query, location, key, coordinates, credentials) {

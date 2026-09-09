@@ -21,6 +21,7 @@ it("rejects product-tag pages and preserves decimal power and canonical colors",
   expect(isCategoryPage("מטען", "https://mobilestyleono.co.il/product/charger/")).toBe(false);
   expect(proseAttributes("Baseus 22.5W 20000mAh").attributes.power).toEqual(["22.5 W"]);
   expect(normalizeOfferFacets({ attributes: { color: ["White", "white", "grey"] } }).attributes.color).toEqual(["White", "Gray"]);
+  expect(normalizeOfferFacets({ attributes: { memory: "Other" } }).attributes.memory).toBeUndefined();
 });
 
 it("recovers missing facets from an exact manufacturer part without copying donor prices", async () => {
@@ -57,16 +58,17 @@ it("runs a specification search when the initial offer leaves a filter value emp
   expect(buildFacets(result, "charging cable").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Lightning", "USB-C"]));
 });
 
-it("assigns an Other option only after the repeated specification search leaves a required filter empty", async () => {
+it("never invents Other when repeated specification searches leave a required filter empty", async () => {
   const offers = [
     { title: "Wireless headphones A", attributes: { connectivity: "Wireless" }, destinationUrl: "https://shop.example/a" },
     { title: "Headphones B", attributes: {}, destinationUrl: "https://shop.example/b" },
   ];
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ organic: [] }))));
   const result = await recoverModelSpecifications(offers, "headphones", "Israel", { apiKey: "other-fixture", zone: "zone" });
-  expect(fetch).toHaveBeenCalledTimes(1);
-  expect(result[1].attributes.connectivity).toBe("Other");
-  expect(buildFacets(result, "headphones").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Wireless", "Other"]));
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(result[1].attributes.connectivity).toBeUndefined();
+  expect(requireCompleteFacets(result, "headphones").map(offer => offer.title)).toEqual(["Wireless headphones A"]);
+  expect(buildFacets(requireCompleteFacets(result, "headphones"), "headphones").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(["Wireless"]);
 });
 
 it("keeps only complete product offers for every generated filter", () => {

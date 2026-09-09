@@ -36,7 +36,6 @@ export function englishLabel(value) {
   if (!/[\p{L}]/u.test(label)) return "";
   return labels[label.toLowerCase()] ?? englishText(label);
 }
-vocabulary.add("other");
 for (const word of "wattage source settings dpi sensor focus focal zoom stabilizer stabilization stabilisation megapixels fps aperture pixel pixels mode thread fire retardant ventilation bag included poles stakes jack stove skirt snow seams taped double single layer layers pu pvc pe tpu polyester polycotton oxford ripstop ultralight lightweight freestanding pop instant dome tunnel geodesic footprint flysheet rainfly fiberglass fibreglass dac denier index resistance windproof breathable fabric inner outer number rooms seasons oz person sleeping headroom vestibule entrances head space carry bag hood sleeves doors door printed plain mesh net insect protection coated construction ultraviolet".split(" ")) vocabulary.add(word);
 export function englishText(value, properName = false) {
   let text = String(value ?? "").replace(/[\u200e\u200f\u202a-\u202e]/g, "").trim();

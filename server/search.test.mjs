@@ -78,7 +78,7 @@ describe("searchCatalog", () => {
     const second = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
     expect(first.warnings).toEqual(["Online stores could not be searched. Please try again.", "Retailer product pages could not be searched. Please try again."]);
     expect(second.warnings).toEqual(first.warnings);
-    expect(fetch).toHaveBeenCalledTimes(12);
+    expect(fetch).toHaveBeenCalledTimes(24);
   });
 
   it("reads structured specifications but identifies category pages", () => {
@@ -111,7 +111,7 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("local");
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(4);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(5);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
   });
@@ -147,6 +147,30 @@ describe("searchCatalog", () => {
     expect(result.facets.map(({ id }) => id)).toEqual(expect.arrayContaining(["wattage", "efficiency", "modularity", "pcie", "retailer"]));
   });
 
+  it("extracts real laptop RAM and storage from common title orders without Other", async () => {
+    const titles = [
+      "Gaming Laptop RAM 16GB 512GB SSD",
+      "Gaming Laptop 32GB DDR5 1TB NVMe",
+      "Gaming Laptop DDR4 8GB 256GB SSD",
+      "Gaming Laptop 64GB/2TB SSD",
+    ];
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      const request = new URL(String(url));
+      if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: titles.map((title, index) => ({ title, source: `Store ${index}`, extracted_price: 1000 + index, product_link: `https://laptop-${index}.example/product` })) }) };
+      if (request.hostname.endsWith(".example")) {
+        const index = Number(request.hostname.match(/laptop-(\d+)/)?.[1]);
+        return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: titles[index], offers: { price: 1000 + index } })}</script>` };
+      }
+      return { ok: true, json: async () => ({ organic_results: [] }) };
+    }));
+    const result = await searchCatalog("Gaming Laptop RAM title fixture", "Israel", "ram-title-fixture", undefined, undefined, "online");
+    const memory = result.facets.find(facet => facet.id === "memory");
+    expect(memory?.options.map(({ value }) => value)).toEqual(expect.arrayContaining(["8 GB", "16 GB", "32 GB", "64 GB"]));
+    expect(result.offers.map(offer => offer.attributes.memory)).toEqual(["16 GB", "32 GB", "8 GB", "64 GB"]);
+    expect(result.offers.map(offer => offer.attributes.storage)).toEqual(["512 GB", "1 TB", "256 GB", "2 TB"]);
+    expect(memory?.options.some(({ value }) => value === "Other")).toBe(false);
+  });
+
   it("merges a nearby store with its actual local product page price, image, distance, and facets", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       const request = new URL(String(url));
@@ -177,7 +201,7 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", fetchMock);
     const first = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
     const second = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     releases.forEach(release => release());
     const [a, b] = await Promise.all([first, second]);
     expect(a).toBe(b);
