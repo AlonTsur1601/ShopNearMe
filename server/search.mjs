@@ -366,7 +366,7 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     if (offer.mpn && /[a-z]/i.test(offer.mpn)) return page.mpn?.toLowerCase() === offer.mpn.toLowerCase() && (!offer.productBrand || String(page.brand ?? "").toLowerCase() === String(offer.productBrand).toLowerCase());
     return matchingTitle(offer, page.title);
   };
-  const recovered = await mapConcurrent(shared, 10, async offer => {
+  const recovered = await mapConcurrent(shared, 20, async offer => {
     if (offer.potentialStore) return offer;
     let missing = propertyIds.filter(id => !valuesForFacet(offer, id).length);
     if (!missing.length) return offer;
@@ -459,7 +459,7 @@ async function shoppingSearch(query, location, key) {
     const shippingPrice = number(item.shipping_extracted) ?? (/free|חינם/i.test(item.shipping ?? "") ? 0 : offer.shippingPrice);
     return { ...offer, ...costBreakdown({ itemPrice: offer.itemPrice, shippingPrice, importTaxPrice: number(item.import_charges_extracted ?? item.extracted_import_charges), taxPrice: number(item.extracted_estimated_tax), providerTotal: number(item.extracted_total) }), attributeLabels: attributeLabelsFor(query, `${item.title} ${item.specificationText ?? ""}`, item), attributes: attributesFor(query, `${item.title} ${(item.extensions ?? []).join(" ")}`, offer.condition, offer.merchant, item) };
   }).filter(Boolean);
-  return (await mapConcurrent(offers, 10, (offer, index) => index < 50 ? enrichOffer(offer, query) : offer)).filter(Boolean);
+  return (await mapConcurrent(offers, 20, (offer, index) => index < 50 ? enrichOffer(offer, query) : offer)).filter(Boolean);
 }
 async function mapsSearch(query, location, key, coordinates) {
   const origin = validCoordinates(coordinates);
@@ -526,7 +526,7 @@ async function localProductSearch(query, location, key) {
     seen.add(link); return true;
   }).map(item => { const domain = new URL(item.link).hostname; const rank = domains.get(domain) ?? 0; domains.set(domain, rank + 1); return { item, rank }; })
     .sort((a, b) => a.rank - b.rank).slice(0, 16).map(({ item }) => item);
-  const products = (await mapConcurrent(candidates, 10, (item, index) => localProduct(item, index, query, location))).filter(Boolean);
+  const products = (await mapConcurrent(candidates, 16, (item, index) => localProduct(item, index, query, location))).filter(Boolean);
   if (products.length) return products;
   const merchants = new Set();
   return candidates.map((item, index) => onlineStoreOffer(item, index, query)).filter(offer => offer && !merchants.has(offer.merchant.toLowerCase()) && merchants.add(offer.merchant.toLowerCase())).slice(0, 12);
@@ -551,7 +551,7 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   }
   const shared = shareProductSpecs(offers);
   let required = requiredFacetIds(shared, query), enriched = shared;
-  for (let pass = 0; pass < 3; pass++) {
+  for (let pass = 0; pass < 2; pass++) {
     enriched = await recoverModelSpecifications(enriched, query, location, key, required);
     const expanded = requiredFacetIds(enriched, query), additions = expanded.filter(id => !required.includes(id));
     if (!additions.length) break;
