@@ -36,7 +36,7 @@ it("recovers missing facets from an exact manufacturer part without copying dono
   expect(result[0]).toMatchObject({ itemPrice: 80, attributes: { color: ["Black"] } });
   expect(result).toHaveLength(2);
   expect(buildFacets(result, "desk lamp").find(facet => facet.id === "color")?.options.map(option => option.value)).toEqual(["Black", "White"]);
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(3);
 });
 
 it("runs a specification search when the initial offer leaves a filter value empty", async () => {
@@ -53,7 +53,7 @@ it("runs a specification search when the initial offer leaves a filter value emp
     return new Response('<script type="application/ld+json">{"@type":"Product","name":"Maker Cable X200","additionalProperty":[{"name":"Connector type","value":"Lightning"}]}</script>', { headers: { "Content-Type": "text/html" } });
   }));
   const result = await recoverModelSpecifications(offers, "charging cable", "Israel", { apiKey: "retry-fixture", zone: "zone" });
-  expect(searches).toBe(1);
+  expect(searches).toBe(2);
   expect(result[0].attributes.connectivity).toContain("Lightning");
   expect(buildFacets(result, "charging cable").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Lightning", "USB-C"]));
 });

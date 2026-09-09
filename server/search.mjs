@@ -375,28 +375,28 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     let attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     const requested = missing.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
     const searches = [`"${lookup}" technical specifications ${requested}`.trim(), `"${lookup}" ${requested} product specifications`.trim()];
-    for (const search of searches) {
-      try {
+    const attempts = await Promise.allSettled(searches.map(async search => {
         const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
         if (typeof key === "string") params.set("api_key", key);
-        const result = await searchProvider(params, key, 4500);
-        const results = result.organic_results ?? [];
-        for (const item of results.slice(0, 8)) {
-          const evidence = `${item.title ?? ""} ${item.snippet ?? ""}`;
-          if (!matchingTitle(offer, evidence)) continue;
-          attributes = fillMissingAttributes(attributes, attributesFor(query, evidence, offer.condition, offer.merchant));
-        }
-        const pages = await mapConcurrent(results.filter(item => safeHttpUrl(item.link)).slice(0, 2), 2, async item => {
-          try { return await enrichProductPage(item.link); } catch { return null; }
-        });
-        for (const page of pages) {
-          if (!page?.isProduct || page.unavailable || !sameProduct(offer, page)) continue;
-          attributes = fillMissingAttributes(attributes, attributesFor(query, page.title ?? "", offer.condition, offer.merchant, page));
-          attributeLabels = { ...attributeLabels, ...attributeLabelsFor(query, page.title ?? "", page) };
-        }
-      } catch { /* Continue with the next exact specification query. */ }
-      missing = propertyIds.filter(id => !valuesForFacet({ attributes }, id).length);
-      if (!missing.length) break;
+        return searchProvider(params, key, 4500);
+    }));
+    const seenLinks = new Set(), results = attempts.flatMap(attempt => attempt.status === "fulfilled" ? attempt.value.organic_results ?? [] : []).filter(item => {
+      const link = safeHttpUrl(item.link), identity = link || `${item.title ?? ""}|${item.snippet ?? ""}`;
+      if (seenLinks.has(identity)) return false;
+      seenLinks.add(identity); return true;
+    });
+    for (const item of results.slice(0, 12)) {
+      const evidence = `${item.title ?? ""} ${item.snippet ?? ""}`;
+      if (!matchingTitle(offer, evidence)) continue;
+      attributes = fillMissingAttributes(attributes, attributesFor(query, evidence, offer.condition, offer.merchant));
+    }
+    const pages = await mapConcurrent(results.filter(item => safeHttpUrl(item.link)).slice(0, 2), 2, async item => {
+      try { return await enrichProductPage(item.link); } catch { return null; }
+    });
+    for (const page of pages) {
+      if (!page?.isProduct || page.unavailable || !sameProduct(offer, page)) continue;
+      attributes = fillMissingAttributes(attributes, attributesFor(query, page.title ?? "", offer.condition, offer.merchant, page));
+      attributeLabels = { ...attributeLabels, ...attributeLabelsFor(query, page.title ?? "", page) };
     }
     return { ...offer, attributes, attributeLabels };
   });
