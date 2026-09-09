@@ -477,32 +477,26 @@ async function mapsSearch(query, location, key, coordinates) {
     if (!website || comparisonHosts.test(new URL(website).hostname)) return null;
     return { title: shortRetailerName(item.source || new URL(website).hostname.replace(/^www\./, "")), type: `${storeType || "retail"} store`, address: `Near ${place || "the selected location"} · location unverified`, website, favicon: item.favicon, locationUnverified: true };
   }).filter(Boolean);
-  let places = [], primaryError, pageParams = params;
-  try { places = localRows(await searchProvider(params, key, 12000)); }
-  catch (error) { primaryError = error; }
-  if (!places.length) {
-    const related = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
-    const alternatives = related.filter(type => type !== storeType).slice(0, 1);
-    const attempts = alternatives.map(type => {
-      const retry = new URLSearchParams(params);
-      retry.set("q", type + " stores" + (place ? " near " + place : " near me"));
-      retry.set("start", "0");
-      return retry;
-    });
-    const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
-    attempts.push(fallback);
-    for (const attempt of attempts) {
-      try {
-        const data = await searchProvider(attempt, key, 9000);
-        const found = localRows(data).length ? localRows(data) : attempt.get("engine") === "google" ? organicRows(data) : [];
-        if (!found.length) continue;
-        places = found;
-        if (attempt.get("engine") === "google_maps") pageParams = attempt;
-        break;
-      } catch { /* Try the next independent local source. */ }
-    }
-    if (!places.length && primaryError) throw primaryError;
+  const related = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
+  const alternatives = related.filter(type => type !== storeType).slice(0, 1).map(type => {
+    const retry = new URLSearchParams(params);
+    retry.set("q", type + " stores" + (place ? " near " + place : " near me"));
+    retry.set("start", "0");
+    return retry;
+  });
+  const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
+  const attempts = [params, ...alternatives, fallback], settled = await Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, attempt === params ? 12000 : 9000)));
+  let places = [], pageParams = params;
+  for (let index = 0; index < attempts.length; index++) {
+    const result = settled[index];
+    if (result.status !== "fulfilled") continue;
+    const attempt = attempts[index], local = localRows(result.value), found = local.length ? local : attempt.get("engine") === "google" ? organicRows(result.value) : [];
+    if (!found.length) continue;
+    places = found;
+    if (attempt.get("engine") === "google_maps") pageParams = attempt;
+    break;
   }
+  if (!places.length && settled[0].status === "rejected") throw settled[0].reason;
   if (places.length >= 20) {
     const next = new URLSearchParams(pageParams); next.set("start", "20");
     try { const page = await searchProvider(next, key, 6000); places = [...places, ...localRows(page)]; } catch { /* retain first page */ }

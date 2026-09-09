@@ -87,7 +87,7 @@ describe("bounded source recovery", () => {
     const r = await searchCatalog("clock coverage fixture", "Tel Aviv, Israel", "coverage-fixture-key", { lat: 32.08, lon: 34.78 }, undefined, "local");
     expect(r.offers).toHaveLength(30);
     expect(r.offers.every(offer => offer.category === "local" && offer.potentialStore && offer.linkLabel === "View store")).toBe(true);
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(2);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(3);
   });
   it("uses organic new-product retailers if the shopping engine fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
