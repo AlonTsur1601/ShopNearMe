@@ -153,6 +153,7 @@ describe("searchCatalog", () => {
       "Gaming Laptop 32GB DDR5 1TB NVMe",
       "Gaming Laptop DDR4 8GB 256GB SSD",
       "Gaming Laptop 64GB/2TB SSD",
+      "Gaming Laptop 16GB RAM 1TB SSD",
     ];
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url));
@@ -166,8 +167,8 @@ describe("searchCatalog", () => {
     const result = await searchCatalog("Gaming Laptop RAM title fixture", "Israel", "ram-title-fixture", undefined, undefined, "online");
     const memory = result.facets.find(facet => facet.id === "memory");
     expect(memory?.options.map(({ value }) => value)).toEqual(expect.arrayContaining(["8 GB", "16 GB", "32 GB", "64 GB"]));
-    expect(result.offers.map(offer => offer.attributes.memory)).toEqual(["16 GB", "32 GB", "8 GB", "64 GB"]);
-    expect(result.offers.map(offer => offer.attributes.storage)).toEqual(["512 GB", "1 TB", "256 GB", "2 TB"]);
+    expect(result.offers.map(offer => offer.attributes.memory)).toEqual(["16 GB", "32 GB", "8 GB", "64 GB", "16 GB"]);
+    expect(result.offers.map(offer => offer.attributes.storage)).toEqual(["512 GB", "1 TB", "256 GB", "2 TB", "1 TB"]);
     expect(memory?.options.some(({ value }) => value === "Other")).toBe(false);
     expect(result.facets.some(facet => facet.id === "screenSize")).toBe(false);
   });

@@ -32,7 +32,7 @@ function inferMemory(text) {
     /\b(\d+)\s*(GB|TB)\s*(?:זיכרון|זכרון|ראם)\b/i,
     /\b(\d+)\s*(GB|TB)\s*[+/|]\s*\d+\s*(?:GB|TB)\b/i,
   ];
-  for (const pattern of patterns) { const match = text.match(pattern); if (match) return capacity(match[1], match[2]); }
+  for (const pattern of patterns) { const match = text.match(pattern); if (match && match[2].toUpperCase() === "GB" && Number(match[1]) <= 512) return capacity(match[1], match[2]); }
   const candidates = [...text.matchAll(/\b(\d+)\s*(GB|TB)\b/gi)].map(match => ({ value: Number(match[1]), unit: match[2].toUpperCase() }));
   if (candidates.length >= 2) { const memory = candidates.find(({ value, unit }) => unit === "GB" && value <= 128); if (memory) return capacity(memory.value, memory.unit); }
 }
