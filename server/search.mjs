@@ -167,6 +167,11 @@ function attributesFor(query, text, condition, merchant, meta = {}) {
   if (result.brand) result.brand = Array.isArray(result.brand) ? result.brand.map(value => value.toUpperCase()) : result.brand.toUpperCase();
   return result;
 }
+function fillMissingAttributes(current, additions) {
+  const result = { ...current };
+  for (const [id, value] of Object.entries(additions ?? {})) if (!valuesForFacet({ attributes: result }, id).length) result[id] = value;
+  return result;
+}
 function attributeLabelsFor(query, text, meta = {}) { text = translateTerms(text + " " + (meta.specificationText ?? "")); return { ...proseAttributes(text).labels, ...monitorAttributes(query, text).labels, ...structuredAttributes(meta.specifications).labels }; }
 
 export function matchingShoppingEvidence(item, offer) {
@@ -206,7 +211,7 @@ async function enrichOffer(offer, query, requireProductPage = false) {
   const page = await enrichProductPage(offer.destinationUrl);
   if (page.unavailable || page.isCatalog || (page.title && !isRelevantProduct(page.title, query)) || (requireProductPage && !page.isProduct)) return null;
   const itemPrice = page.price ?? offer.itemPrice ?? null, shippingPrice = offer.shippingPrice;
-  return { ...offer, availability: page.availability || "", title: page.title && isRelevantProduct(page.title, query) ? page.title : offer.title, imageUrl: page.imageUrl || offer.imageUrl || "", imageUrls: [...new Set([...(page.imageUrls ?? []), offer.imageUrl].filter(Boolean))], gtin: page.gtin || offer.gtin, mpn: page.mpn || offer.mpn, productBrand: page.brand || offer.productBrand, itemPrice, ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: offer.importTaxPrice, taxPrice: offer.taxPrice, providerTotal: offer.totalPrice, crossBorder: offer.importTaxUnknown }), currency: page.price != null ? page.currency : offer.currency, priceVerified: page.price != null, attributeLabels: { ...offer.attributeLabels, ...attributeLabelsFor(query, `${offer.title} ${page.specificationText ?? ""}`, page) }, attributes: { ...offer.attributes, ...attributesFor(query, `${offer.title} ${offer.subtitle} ${page.title ?? ""}`, offer.condition, offer.merchant, page) } };
+  return { ...offer, availability: page.availability || "", title: page.title && isRelevantProduct(page.title, query) ? page.title : offer.title, imageUrl: page.imageUrl || offer.imageUrl || "", imageUrls: [...new Set([...(page.imageUrls ?? []), offer.imageUrl].filter(Boolean))], gtin: page.gtin || offer.gtin, mpn: page.mpn || offer.mpn, productBrand: page.brand || offer.productBrand, itemPrice, ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: offer.importTaxPrice, taxPrice: offer.taxPrice, providerTotal: offer.totalPrice, crossBorder: offer.importTaxUnknown }), currency: page.price != null ? page.currency : offer.currency, priceVerified: page.price != null, attributeLabels: { ...offer.attributeLabels, ...attributeLabelsFor(query, `${offer.title} ${page.specificationText ?? ""}`, page) }, attributes: fillMissingAttributes(offer.attributes, attributesFor(query, `${offer.title} ${offer.subtitle} ${page.title ?? ""}`, offer.condition, offer.merchant, page)) };
 }
 
 function mergeLocalProducts(mapOffers, productOffers) {
@@ -380,14 +385,14 @@ export async function recoverModelSpecifications(offers, query, location, key, r
         for (const item of results.slice(0, 8)) {
           const evidence = `${item.title ?? ""} ${item.snippet ?? ""}`;
           if (!matchingTitle(offer, evidence)) continue;
-          attributes = { ...attributes, ...attributesFor(query, evidence, offer.condition, offer.merchant) };
+          attributes = fillMissingAttributes(attributes, attributesFor(query, evidence, offer.condition, offer.merchant));
         }
         const pages = await mapConcurrent(results.filter(item => safeHttpUrl(item.link)).slice(0, 4), 4, async item => {
           try { return await enrichProductPage(item.link); } catch { return null; }
         });
         for (const page of pages) {
           if (!page?.isProduct || page.unavailable || !sameProduct(offer, page)) continue;
-          attributes = { ...attributes, ...attributesFor(query, page.title ?? "", offer.condition, offer.merchant, page) };
+          attributes = fillMissingAttributes(attributes, attributesFor(query, page.title ?? "", offer.condition, offer.merchant, page));
           attributeLabels = { ...attributeLabels, ...attributeLabelsFor(query, page.title ?? "", page) };
         }
       } catch { /* Continue with the next exact specification query. */ }
@@ -471,22 +476,24 @@ async function mapsSearch(query, location, key, coordinates) {
   try { places = localRows(await searchProvider(params, key, 12000)); }
   catch (error) { primaryError = error; }
   if (!places.length) {
-    const alternatives = (storeRules.find(([match]) => match.test(query))?.[1] ?? []).filter(type => type !== storeType).slice(0, 3);
+    const related = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
+    const alternatives = [...new Set([related.find(type => type === "electronics"), ...related].filter(Boolean))].filter(type => type !== storeType).slice(0, 3);
     const attempts = alternatives.map(type => {
       const retry = new URLSearchParams(params);
       retry.set("q", type + " stores" + (place ? " near " + place : " near me"));
       retry.set("start", "0");
-      return { params: retry, request: searchProvider(retry, key, 9000) };
+      return retry;
     });
     const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
-    attempts.push({ params: fallback, request: searchProvider(fallback, key, 9000) });
-    const recovered = await Promise.allSettled(attempts.map(({ request }) => request));
-    for (let index = 0; index < recovered.length; index++) {
-      const result = recovered[index];
-      const found = result.status === "fulfilled" ? localRows(result.value) : [];
-      if (!found.length) continue;
-      places.push(...found);
-      if (pageParams === params && attempts[index].params.get("engine") === "google_maps") pageParams = attempts[index].params;
+    attempts.push(fallback);
+    for (const attempt of attempts) {
+      try {
+        const found = localRows(await searchProvider(attempt, key, 9000));
+        if (!found.length) continue;
+        places = found;
+        if (attempt.get("engine") === "google_maps") pageParams = attempt;
+        break;
+      } catch { /* Try the next independent local source. */ }
     }
     if (!places.length && primaryError) throw primaryError;
   }

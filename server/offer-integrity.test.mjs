@@ -58,6 +58,18 @@ it("runs a specification search when the initial offer leaves a filter value emp
   expect(buildFacets(result, "charging cable").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Lightning", "USB-C"]));
 });
 
+it("fills missing laptop facets without overwriting RAM and storage found in the title", async () => {
+  const offers = [
+    { title: "Maker Gaming Laptop 16GB RAM 512GB SSD", attributes: { memory: "16 GB", storage: "512 GB" }, destinationUrl: "https://shop.example/laptop" },
+    { title: 'Maker Gaming Laptop 32GB RAM 1TB SSD 15.6"', attributes: { memory: "32 GB", storage: "1 TB", screenSize: "15.6 in" }, destinationUrl: "https://shop.example/laptop-2" },
+  ];
+  vi.stubGlobal("fetch", vi.fn(async url => String(url).includes("api.brightdata.com")
+    ? new Response(JSON.stringify({ organic: [{ title: "Maker Gaming Laptop specifications", link: "https://maker.example/laptop" }] }))
+    : new Response('<script type="application/ld+json">{"@type":"Product","name":"Maker Gaming Laptop 16GB RAM 512GB SSD","additionalProperty":[{"name":"Memory","value":"2 TB"},{"name":"Storage","value":"1 TB"},{"name":"Screen size","value":"15.6 in"}]}</script>', { headers: { "Content-Type": "text/html" } })));
+  const result = await recoverModelSpecifications(offers, "Gaming Laptop", "Israel", { apiKey: "preserve-title-fixture", zone: "zone" });
+  expect(result[0].attributes).toMatchObject({ memory: "16 GB", storage: "512 GB", screenSize: ["15.6 in"] });
+});
+
 it("never invents Other when repeated specification searches leave a required filter empty", async () => {
   const offers = [
     { title: "Wireless headphones A", attributes: { connectivity: "Wireless" }, destinationUrl: "https://shop.example/a" },

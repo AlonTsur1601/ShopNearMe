@@ -5,6 +5,10 @@ import { monitorAttributes, specificationPairs, structuredAttributes } from "./s
 
 afterEach(() => vi.unstubAllGlobals());
 describe("specification-driven facets", () => {
+  it("rejects storage-sized values mislabeled as laptop memory", () => {
+    expect(structuredAttributes([{ name: "Memory", value: "2 TB" }]).attributes.memory).toBeUndefined();
+    expect(structuredAttributes([{ name: "Memory", value: "32 GB DDR5" }]).attributes.memory).toEqual(["32 GB"]);
+  });
   it.each([
     ["air purifier", "CADR", "300 m³/h", "450 m³/h"],
     ["camping tent", "Hydrostatic head", "3000 mm", "5000 mm"],

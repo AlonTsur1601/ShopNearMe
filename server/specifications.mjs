@@ -101,7 +101,11 @@ function normalizedValue(id, raw, unit = "") {
   if (id === "ports") value = value.replace(/displayport/gi, "DisplayPort").replace(/hdmi/gi, "HDMI").replace(/usb[- ]c/gi, "USB-C");
   if (["memory", "storage"].includes(id)) {
     const capacity = value.match(/\b(\d+(?:\.\d+)?)\s*(GB|TB)\b/i);
-    if (capacity) return `${Number(capacity[1])} ${capacity[2].toUpperCase()}`;
+    if (capacity) {
+      const amount = Number(capacity[1]), unit = capacity[2].toUpperCase();
+      if (id === "memory" && (unit !== "GB" || amount > 512)) return "";
+      return `${amount} ${unit}`;
+    }
   }
   if (id === "screenSize" && /^\d+(?:\.\d+)?(?:\s*in)?$/i.test(value)) return `${parseFloat(value)} in`;
   if (id === "responseTime") { value = value.replace(/milliseconds?/gi, "ms"); if (/^0\s*ms$/i.test(value)) return ""; }
