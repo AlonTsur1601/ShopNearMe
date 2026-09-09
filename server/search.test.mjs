@@ -183,6 +183,7 @@ describe("searchCatalog", () => {
     }));
     const result = await searchCatalog("headphones required facet fixture", "Israel", "required-facet-fixture", undefined, undefined, "online");
     expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.title)).toEqual(["Wireless headphones Alpha"]);
+    expect(result.offers.filter(offer => offer.category === "order" && offer.potentialStore).map(offer => offer.merchant)).toEqual(["Store 1", "Store 2"]);
     expect(result.facets.find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(["Wireless"]);
   });
 

@@ -346,7 +346,11 @@ export function shareProductSpecs(offers) {
   });
 }
 function completeFacetCohort(offers, required) {
-  return offers.filter(offer => offer.potentialStore || required.every(id => valuesForFacet(offer, id).length));
+  return offers.flatMap(offer => {
+    if (offer.potentialStore || required.every(id => valuesForFacet(offer, id).length)) return [offer];
+    if (offer.category !== "order" || !merchantWebsite(offer.destinationUrl)) return [];
+    return [{ ...offer, id: `${offer.id}-retailer`, potentialStore: true, title: offer.merchant, subtitle: "Online retailer found; full product specifications could not be verified", imageUrl: "", imageUrls: [], itemPrice: null, shippingPrice: null, importTaxPrice: null, taxPrice: null, otherFeesPrice: 0, totalPrice: null, priceVerified: false, availability: "Potential online retailer · confirm product availability", condition: undefined, attributes: { retailer: shortRetailerName(offer.merchant) }, attributeLabels: {}, linkLabel: "View store" }];
+  });
 }
 function makeResult(query, offers, required) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, valid = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)), clean = completeFacetCohort(valid, required ?? requiredFacetIds(valid, query)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
 export async function recoverModelSpecifications(offers, query, location, key, required = undefined) {
