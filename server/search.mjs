@@ -391,14 +391,14 @@ export async function recoverModelSpecifications(offers, query, location, key, r
       try {
         const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
         if (typeof key === "string") params.set("api_key", key);
-        const result = await searchProvider(params, key, 5500);
+        const result = await searchProvider(params, key, 4500);
         const results = result.organic_results ?? [];
         for (const item of results.slice(0, 8)) {
           const evidence = `${item.title ?? ""} ${item.snippet ?? ""}`;
           if (!matchingTitle(offer, evidence)) continue;
           attributes = fillMissingAttributes(attributes, attributesFor(query, evidence, offer.condition, offer.merchant));
         }
-        const pages = await mapConcurrent(results.filter(item => safeHttpUrl(item.link)).slice(0, 4), 4, async item => {
+        const pages = await mapConcurrent(results.filter(item => safeHttpUrl(item.link)).slice(0, 2), 2, async item => {
           try { return await enrichProductPage(item.link); } catch { return null; }
         });
         for (const page of pages) {
@@ -488,7 +488,7 @@ async function mapsSearch(query, location, key, coordinates) {
   catch (error) { primaryError = error; }
   if (!places.length) {
     const related = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
-    const alternatives = [...new Set([related.find(type => type === "electronics"), ...related].filter(Boolean))].filter(type => type !== storeType).slice(0, 3);
+    const alternatives = related.filter(type => type !== storeType).slice(0, 1);
     const attempts = alternatives.map(type => {
       const retry = new URLSearchParams(params);
       retry.set("q", type + " stores" + (place ? " near " + place : " near me"));

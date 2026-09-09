@@ -169,7 +169,7 @@ it("recovers a failed Maps query using a related store type and preserves coordi
     return new Response(JSON.stringify({ organic: [{ title: "USB-C charger", link: "https://recovered.co.il/product/charger" }] }));
   }));
   const result = await searchCatalog("USB-C charger", "Kiryat Ono, Israel", { apiKey: "maps-recovery-fixture", zone: "zone" }, { lat: 32.062, lon: 34.855 });
-  expect(mapQueries.some(query => query.includes("electronics stores") && query.includes("@32.062,34.855"))).toBe(true);
+  expect(mapQueries.some(query => query.includes("mobile phone stores") && query.includes("@32.062,34.855"))).toBe(true);
   expect(result.offers.find(offer => offer.category === "local")).toMatchObject({ destinationUrl: "https://recovered.co.il/product/charger", itemPrice: 49, imageUrl: "https://recovered.co.il/charger.jpg" });
   expect(result.warnings).toEqual([]);
 });
