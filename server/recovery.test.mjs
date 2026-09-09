@@ -118,6 +118,17 @@ describe("bounded source recovery", () => {
     expect(r.offers.some(offer => offer.category === "local" && offer.potentialStore && offer.merchant === "PC Store" && offer.availability === "Potential retailer · confirm location and product stock")).toBe(true);
     expect(r.warnings).toEqual([]);
   });
+  it("uses OpenStreetMap stores when every provider-backed local search fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      const request = new URL(url), params = request.searchParams;
+      if (request.hostname === "overpass-api.de") return { ok: true, json: async () => ({ elements: [{ type: "node", id: 42, lat: 32.06, lon: 34.85, tags: { name: "Independent Audio", shop: "hifi", website: "https://independent-audio.example/" } }] }) };
+      if (params.get("engine") === "google_maps" || /stores near/i.test(params.get("q") ?? "")) return { ok: false, status: 503, json: async () => ({ error: "Temporary provider failure" }) };
+      return { ok: true, json: async () => ({}) };
+    }));
+    const r = await searchCatalog("Wireless Headphones", "Kiryat Ono, Israel", "osm-fallback-fixture", { lat: 32.059, lon: 34.856 }, undefined, "local");
+    expect(r.offers.some(offer => offer.category === "local" && offer.merchant === "Independent Audio" && offer.destinationUrl === "https://independent-audio.example/")).toBe(true);
+    expect(r.warnings).toEqual([]);
+  });
   it("does not return laptop replacement parts as laptop offers", () => {
     expect(isRelevantProduct("GPC70 motherboard for HP Pavilion Gaming Laptop", "Gaming Laptop")).toBe(false);
     expect(isRelevantProduct("HP Victus 16 Gaming Laptop 16GB RAM", "Gaming Laptop")).toBe(true);

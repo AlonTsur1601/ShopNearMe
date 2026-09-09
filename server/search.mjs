@@ -4,7 +4,7 @@ import { monitorAttributes, proseAttributes, specificationPairs, structuredAttri
 import { amountInCurrency, costBreakdown } from "./costs.mjs";
 import { englishLabel, normalizeOfferFacets, translateTerms } from "./facet-language.mjs";
 import { fetchJson, mapConcurrent, searchProvider } from "./providers.mjs";
-const cache = new Map(), inFlight = new Map();
+const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 let ebayToken = null;
 
@@ -508,6 +508,28 @@ async function mapsSearch(query, location, key, coordinates) {
     places = found;
     if (attempt.get("engine") === "google_maps") pageParams = attempt;
     break;
+  }
+  if (!places.length && origin) {
+    const words = (related.length ? related : [storeType]).filter(Boolean).join(" "), types = /computer|gaming|electronics|audio|music|office|mobile phone|cell phone/.test(words) ? ["computer", "electronics", "hifi", "music", "mobile_phone", "department_store"]
+      : /outdoor|camping|sporting goods|shoe/.test(words) ? ["outdoor", "sports", "shoes", "department_store"]
+      : /clothing|fashion/.test(words) ? ["clothes", "shoes", "department_store"]
+      : /furniture|home goods|appliance|kitchen/.test(words) ? ["furniture", "houseware", "appliance", "electronics", "department_store"]
+      : /book|stationery/.test(words) ? ["books", "stationery", "department_store"]
+      : /toy|game|hobby/.test(words) ? ["toys", "games", "hobby", "department_store"]
+      : /camera|photography/.test(words) ? ["photo", "electronics", "department_store"]
+      : /clock|watch|gift|antique/.test(words) ? ["watches", "jewelry", "gift", "antiques", "department_store"] : ["department_store", "general"];
+    const cacheKey = `${origin.lat.toFixed(3)},${origin.lon.toFixed(3)}|${types.join("|")}`, cached = osmStoreCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < 60 * 60 * 1000) places = cached.value;
+    else try {
+      const queryText = `[out:json][timeout:12];(nwr(around:15000,${origin.lat},${origin.lon})["shop"~"^(${types.join("|")})$"];);out center tags 80;`;
+      const response = await fetchJson(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(queryText)}`, { headers: { "User-Agent": "ShopNearMe/0.1 (local retailer lookup)", Accept: "application/json" } }, 5500);
+      const labels = { hifi: "audio", sports: "sporting goods", clothes: "clothing", houseware: "home goods", books: "book", toys: "toy", games: "game", photo: "photography", mobile_phone: "mobile phone", department_store: "department" };
+      places = (response.elements ?? []).filter(element => element.tags?.name).map(element => {
+        const tags = element.tags, lat = number(element.lat ?? element.center?.lat), lon = number(element.lon ?? element.center?.lon), shop = tags.shop ?? "retail", address = [tags["addr:housenumber"], tags["addr:street"], tags["addr:city"]].filter(Boolean).join(" ");
+        return { place_id: `osm-${element.type}-${element.id}`, title: tags.name, type: `${labels[shop] ?? shop.replaceAll("_", " ")} store`, address: address || `Near ${providerLocation(location) || "the selected location"}`, website: merchantWebsite(tags.website || tags["contact:website"]) || `https://www.openstreetmap.org/${element.type}/${element.id}`, gps_coordinates: Number.isFinite(lat) && Number.isFinite(lon) ? { latitude: lat, longitude: lon } : undefined };
+      });
+      osmStoreCache.set(cacheKey, { at: Date.now(), value: places });
+    } catch { /* The primary provider error below remains authoritative. */ }
   }
   if (!places.length && settled[0].status === "rejected") throw settled[0].reason;
   if (places.length >= 20) {
