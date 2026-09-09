@@ -110,6 +110,14 @@ describe("bounded source recovery", () => {
     expect(r.warnings).toEqual([]);
     expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(url).searchParams.get("engine") === "google")).toBe(true);
   });
+  it("returns clearly marked local retailer candidates when Maps and the local pack fail", async () => {
+    vi.stubGlobal("fetch", vi.fn(async url => new URL(url).searchParams.get("engine") === "google_maps"
+      ? { ok: false, status: 503, json: async () => ({ error: "Temporary failure" }) }
+      : { ok: true, json: async () => ({ organic_results: [{ title: "Gaming laptops", source: "PC Store", displayed_link: "https://pc-store.co.il › laptops", link: "https://www.google.com/goto?url=opaque" }] }) }));
+    const r = await searchCatalog("Gaming Laptop", "Tel Aviv, Israel", "organic-local-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
+    expect(r.offers.some(offer => offer.category === "local" && offer.potentialStore && offer.merchant === "PC Store" && offer.availability === "Potential retailer · confirm location and product stock")).toBe(true);
+    expect(r.warnings).toEqual([]);
+  });
   it("does not return laptop replacement parts as laptop offers", () => {
     expect(isRelevantProduct("GPC70 motherboard for HP Pavilion Gaming Laptop", "Gaming Laptop")).toBe(false);
     expect(isRelevantProduct("HP Victus 16 Gaming Laptop 16GB RAM", "Gaming Laptop")).toBe(true);
