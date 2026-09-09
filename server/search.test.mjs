@@ -149,7 +149,7 @@ describe("searchCatalog", () => {
 
   it("extracts real laptop RAM and storage from common title orders without Other", async () => {
     const titles = [
-      "Gaming Laptop RAM 16GB 512GB SSD",
+      'Gaming Laptop 15.6" RAM 16GB 512GB SSD',
       "Gaming Laptop 32GB DDR5 1TB NVMe",
       "Gaming Laptop DDR4 8GB 256GB SSD",
       "Gaming Laptop 64GB/2TB SSD",
@@ -169,6 +169,7 @@ describe("searchCatalog", () => {
     expect(result.offers.map(offer => offer.attributes.memory)).toEqual(["16 GB", "32 GB", "8 GB", "64 GB"]);
     expect(result.offers.map(offer => offer.attributes.storage)).toEqual(["512 GB", "1 TB", "256 GB", "2 TB"]);
     expect(memory?.options.some(({ value }) => value === "Other")).toBe(false);
+    expect(result.facets.some(facet => facet.id === "screenSize")).toBe(false);
   });
 
   it("keeps a Shopping merchant offer carried by Google's tracked outbound link", async () => {

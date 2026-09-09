@@ -22,7 +22,7 @@ const aliases = [
   ["freeSync", "FreeSync support", /^(?:amd )?free ?sync(?: premium| support)?$/i],
   ["ports", "Ports", /^(ports|connections|connectors|connector type|inputs|audio\/video inputs|video inputs|display inputs|חיבורים|כניסות|סוגי החיבורים|סוגי חיבורים|חיבור usb)$/i],
   ["connectivity", "Connectivity", /^(connectivity|wireless technology|קישוריות)$/i],
-  ["memory", "Memory / RAM", /^(?:installed |system )?(?:memory|ram|memory size|memory capacity|זיכרון(?: פנימי)?|ראם)$/i],
+  ["memory", "Memory / RAM", /^(?:installed |system )?(?:memory|ram|memory size|memory capacity|זיכרון(?: פנימי)?|זכרון(?: פנימי)?|ראם)$/i],
   ["storage", "Storage", /^(?:storage|storage capacity|internal storage|ssd|ssd capacity|solid state drive capacity|hard drive capacity|disk capacity|אחסון|נפח אחסון|כונן)$/i],
   ["weight", "Weight", /^(weight|item weight|product weight|net weight|משקל)$/i],
   ["dimensions", "Dimensions", /^(dimensions|product dimensions|item dimensions|מידות)$/i],

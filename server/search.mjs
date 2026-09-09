@@ -28,11 +28,13 @@ function inferMemory(text) {
     /\b(\d+)\s*(GB|TB)\s*(?:of\s+)?(?:RAM|system memory|memory)\b/i,
     /\b(\d+)\s*(GB|TB)\s*(?:DDR[3-5]?|LPDDR[3-5X]*)\b/i,
     /\b(?:DDR[3-5]?|LPDDR[3-5X]*)\s*(\d+)\s*(GB|TB)\b/i,
-    /(?:זיכרון|ראם)\s*[:=-]?\s*(\d+)\s*(GB|TB)\b/i,
-    /\b(\d+)\s*(GB|TB)\s*(?:זיכרון|ראם)\b/i,
+    /(?:זיכרון|זכרון|ראם)\s*[:=-]?\s*(\d+)\s*(GB|TB)\b/i,
+    /\b(\d+)\s*(GB|TB)\s*(?:זיכרון|זכרון|ראם)\b/i,
     /\b(\d+)\s*(GB|TB)\s*[+/|]\s*\d+\s*(?:GB|TB)\b/i,
   ];
   for (const pattern of patterns) { const match = text.match(pattern); if (match) return capacity(match[1], match[2]); }
+  const candidates = [...text.matchAll(/\b(\d+)\s*(GB|TB)\b/gi)].map(match => ({ value: Number(match[1]), unit: match[2].toUpperCase() }));
+  if (candidates.length >= 2) { const memory = candidates.find(({ value, unit }) => unit === "GB" && value <= 128); if (memory) return capacity(memory.value, memory.unit); }
 }
 function inferLaptopStorage(text) {
   const patterns = [
@@ -327,7 +329,22 @@ export function shareProductSpecs(offers) {
     return { ...offer, attributes, attributeLabels };
   });
 }
-function makeResult(query, offers, required) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, valid = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)), clean = requireCompleteFacets(valid, query, required ?? requiredFacetIds(valid, query)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
+function completeFacetCohort(offers, required) {
+  const products = offers.filter(offer => !offer.potentialStore);
+  if (!products.length || !required.length) return offers;
+  const minimum = Math.min(products.length, Math.max(2, Math.ceil(products.length * .2)));
+  const active = required.filter(id => products.some(offer => valuesForFacet(offer, id).length));
+  let complete = products.filter(offer => active.every(id => valuesForFacet(offer, id).length));
+  while (complete.length < minimum && active.length > 1) {
+    const coverage = active.map((id, index) => ({ id, index, count: products.filter(offer => valuesForFacet(offer, id).length).length }));
+    const remove = coverage.sort((a, b) => a.count - b.count || b.index - a.index)[0];
+    active.splice(active.indexOf(remove.id), 1);
+    complete = products.filter(offer => active.every(id => valuesForFacet(offer, id).length));
+  }
+  const selected = new Set(complete);
+  return offers.filter(offer => offer.potentialStore || selected.has(offer));
+}
+function makeResult(query, offers, required) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, valid = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)), clean = completeFacetCohort(valid, required ?? requiredFacetIds(valid, query)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
 export async function recoverModelSpecifications(offers, query, location, key, required = undefined) {
   const shared = shareProductSpecs(offers);
   const requiredIds = required ?? requiredFacetIds(shared, query);
