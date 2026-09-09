@@ -77,10 +77,26 @@ it("never invents Other when repeated specification searches leave a required fi
   ];
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ organic: [] }))));
   const result = await recoverModelSpecifications(offers, "headphones", "Israel", { apiKey: "other-fixture", zone: "zone" });
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(2);
   expect(result[1].attributes.connectivity).toBeUndefined();
   expect(requireCompleteFacets(result, "headphones").map(offer => offer.title)).toEqual(["Wireless headphones A"]);
   expect(buildFacets(requireCompleteFacets(result, "headphones"), "headphones").find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(["Wireless"]);
+});
+
+it("retries a missing filter property and accepts a real value from the second specification search", async () => {
+  const offers = [
+    { title: "Wireless headphones A", attributes: { connectivity: "Wireless" }, destinationUrl: "https://shop.example/a" },
+    { title: "Headphones B", attributes: {}, destinationUrl: "https://shop.example/b" },
+  ];
+  let searches = 0;
+  vi.stubGlobal("fetch", vi.fn(async () => {
+    searches++;
+    return new Response(JSON.stringify(searches === 1 ? { organic: [] } : { organic: [{ title: "Headphones B Bluetooth product specifications", description: "Headphones B connectivity: Bluetooth" }] }));
+  }));
+  const result = await recoverModelSpecifications(offers, "headphones", "Israel", { apiKey: "second-retry-fixture", zone: "zone" });
+  expect(searches).toBe(2);
+  expect(result[1].attributes.connectivity).toBe("Bluetooth");
+  expect(requireCompleteFacets(result, "headphones").map(offer => offer.title)).toEqual(["Wireless headphones A", "Headphones B"]);
 });
 
 it("keeps only complete product offers for every generated filter", () => {

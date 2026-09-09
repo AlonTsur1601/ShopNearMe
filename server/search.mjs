@@ -346,19 +346,7 @@ export function shareProductSpecs(offers) {
   });
 }
 function completeFacetCohort(offers, required) {
-  const products = offers.filter(offer => !offer.potentialStore);
-  if (!products.length || !required.length) return offers;
-  const minimum = Math.min(products.length, Math.max(2, Math.ceil(products.length * .2)));
-  const active = required.filter(id => products.some(offer => valuesForFacet(offer, id).length));
-  let complete = products.filter(offer => active.every(id => valuesForFacet(offer, id).length));
-  while (complete.length < minimum && active.length > 1) {
-    const coverage = active.map((id, index) => ({ id, index, count: products.filter(offer => valuesForFacet(offer, id).length).length }));
-    const remove = coverage.sort((a, b) => a.count - b.count || b.index - a.index)[0];
-    active.splice(active.indexOf(remove.id), 1);
-    complete = products.filter(offer => active.every(id => valuesForFacet(offer, id).length));
-  }
-  const selected = new Set(complete);
-  return offers.filter(offer => offer.potentialStore || selected.has(offer));
+  return offers.filter(offer => offer.potentialStore || required.every(id => valuesForFacet(offer, id).length));
 }
 function makeResult(query, offers, required) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, valid = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)), clean = completeFacetCohort(valid, required ?? requiredFacetIds(valid, query)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
 export async function recoverModelSpecifications(offers, query, location, key, required = undefined) {
@@ -386,7 +374,7 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     if (!lookup) return offer;
     let attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     const requested = missing.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
-    const searches = [`"${lookup}" technical specifications ${requested}`.trim()];
+    const searches = [`"${lookup}" technical specifications ${requested}`.trim(), `"${lookup}" ${requested} product specifications`.trim()];
     for (const search of searches) {
       try {
         const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
@@ -567,8 +555,14 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     const online = [...value(0), ...value(2)], maps = value(1);
     offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
   }
-  const shared = shareProductSpecs(offers), required = requiredFacetIds(shared, query);
-  const enriched = await recoverModelSpecifications(shared, query, location, key, required);
+  const shared = shareProductSpecs(offers);
+  let required = requiredFacetIds(shared, query), enriched = shared;
+  for (let pass = 0; pass < 3; pass++) {
+    enriched = await recoverModelSpecifications(enriched, query, location, key, required);
+    const expanded = requiredFacetIds(enriched, query), additions = expanded.filter(id => !required.includes(id));
+    if (!additions.length) break;
+    required = [...required, ...additions];
+  }
   const result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.potentialStore ? offer.availability : offer.availability === "Out of stock" ? "Out of stock" : "" })), location), required);
   const labels = scope === "online" ? ["Online stores", "Retailer product pages", "Second-hand listings"]
     : scope === "local" ? ["Nearby stores"] : scope === "local-products" ? ["Retailer product pages"]

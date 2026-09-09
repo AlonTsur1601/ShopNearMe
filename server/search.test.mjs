@@ -150,10 +150,10 @@ describe("searchCatalog", () => {
   it("extracts real laptop RAM and storage from common title orders without Other", async () => {
     const titles = [
       'Gaming Laptop 15.6" RAM 16GB 512GB SSD',
-      "Gaming Laptop 32GB DDR5 1TB NVMe",
-      "Gaming Laptop DDR4 8GB 256GB SSD",
-      "Gaming Laptop 64GB/2TB SSD",
-      "Gaming Laptop 16GB RAM 1TB SSD",
+      'Gaming Laptop 16" 32GB DDR5 1TB NVMe',
+      'Gaming Laptop 14" DDR4 8GB 256GB SSD',
+      'Gaming Laptop 17.3" 64GB/2TB SSD',
+      'Gaming Laptop 16" 16GB RAM 1TB SSD',
     ];
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url));
@@ -170,7 +170,41 @@ describe("searchCatalog", () => {
     expect(result.offers.map(offer => offer.attributes.memory)).toEqual(["16 GB", "32 GB", "8 GB", "64 GB", "16 GB"]);
     expect(result.offers.map(offer => offer.attributes.storage)).toEqual(["512 GB", "1 TB", "256 GB", "2 TB", "1 TB"]);
     expect(memory?.options.some(({ value }) => value === "Other")).toBe(false);
-    expect(result.facets.some(facet => facet.id === "screenSize")).toBe(false);
+    expect(result.facets.find(facet => facet.id === "screenSize")?.options.map(({ value }) => value)).toEqual(expect.arrayContaining(["14 in", "15.6 in", "16 in", "17.3 in"]));
+  });
+
+  it("keeps a generated filter and excludes products still missing its value after retries", async () => {
+    const titles = ["Wireless headphones Alpha", "Headphones Beta", "Headphones Gamma"];
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      const request = new URL(String(url));
+      if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: titles.map((title, index) => ({ title, source: `Store ${index}`, extracted_price: 100 + index, product_link: `https://headphones-${index}.example/product` })) }) };
+      if (request.hostname.endsWith(".example")) return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: titles[Number(request.hostname.match(/headphones-(\d+)/)?.[1])], offers: { price: 100 } })}</script>` };
+      return { ok: true, json: async () => ({ organic_results: [] }) };
+    }));
+    const result = await searchCatalog("headphones required facet fixture", "Israel", "required-facet-fixture", undefined, undefined, "online");
+    expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.title)).toEqual(["Wireless headphones Alpha"]);
+    expect(result.facets.find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(["Wireless"]);
+  });
+
+  it("makes a newly discovered product property mandatory for every product", async () => {
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q") ?? "";
+      if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
+        { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://amazon.com/alpha" },
+        { title: "Headphones Beta", source: "Store B", extracted_price: 110, product_link: "https://amazon.com/beta" },
+      ] }) };
+      if (engine === "google" && search.includes('"Headphones Beta"')) return { ok: true, json: async () => ({ organic_results: [{ title: "Headphones Beta Bluetooth specifications", link: "https://maker.example/beta" }] }) };
+      if (engine === "google" && search.includes('"Wireless headphones Alpha"')) return { ok: true, json: async () => ({ organic_results: [{ title: "Wireless headphones Alpha specifications", link: "https://maker.example/alpha" }] }) };
+      if (request.hostname === "maker.example") {
+        const alpha = request.pathname.includes("alpha"), name = alpha ? "Wireless headphones Alpha" : "Headphones Beta Bluetooth", material = alpha ? "Metal" : "Plastic";
+        return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name, offers: { price: 100 }, additionalProperty: [{ name: "Material", value: material }] })}</script>` };
+      }
+      return { ok: true, json: async () => ({ organic_results: [] }) };
+    }));
+    const result = await searchCatalog("headphones expanding facet fixture", "Israel", "expanding-facet-fixture", undefined, undefined, "online");
+    expect(result.offers.filter(offer => !offer.potentialStore)).toHaveLength(2);
+    expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.attributes.material)).toEqual([["Metal"], ["Plastic"]]);
+    expect(result.facets.find(facet => facet.id === "material")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Metal", "Plastic"]));
   });
 
   it("keeps a Shopping merchant offer carried by Google's tracked outbound link", async () => {
