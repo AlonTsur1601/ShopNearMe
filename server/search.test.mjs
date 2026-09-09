@@ -51,8 +51,10 @@ describe("searchCatalog", () => {
     expect(result.offers[0].category).toBe("order");
     expect(result.warnings).toEqual([]);
     const shoppingCalls = vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_shopping");
-    expect(shoppingCalls).toHaveLength(2);
-    expect(new URL(shoppingCalls[1][0]).searchParams.get("gl")).toBe("il");
+    expect(shoppingCalls).toHaveLength(4);
+    expect(shoppingCalls.every(([url]) => new URL(url).searchParams.get("gl") === "il")).toBe(true);
+    expect(shoppingCalls.filter(([url]) => new URL(url).searchParams.has("location"))).toHaveLength(2);
+    expect(new Set(shoppingCalls.map(([url]) => new URL(url).searchParams.get("q"))).size).toBe(2);
   });
 
   it("resolves retailer links, shipping and monitor facets from product groups", async () => {

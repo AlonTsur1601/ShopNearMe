@@ -407,17 +407,25 @@ export async function recoverModelSpecifications(offers, query, location, key, r
   return shareProductSpecs(recovered);
 }
 async function shoppingSearch(query, location, key) {
-  const code = countryCode(location), params = new URLSearchParams({ engine: "google_shopping", q: localQuery(query, code), api_key: key, hl: code === "IL" ? "he" : "en", num: "40" });
-  if (code) params.set("gl", code.toLowerCase());
-  if (location && location !== "Current location") params.set("location", providerLocation(location));
-  let data;
-  try { data = await searchProvider(params, key, 14000); }
-  catch (error) {
-    if (!/unsupported.*location/i.test(error.message) || !params.has("location")) throw error;
-    params.delete("location");
-    data = await searchProvider(params, key, 14000);
-  }
-  const items = [...(data.shopping_results ?? []), ...(data.inline_shopping_results ?? [])].filter(item => isRelevantProduct(item.title, query));
+  const code = countryCode(location), variants = [...new Set([localQuery(query, code), query])];
+  const searches = await Promise.allSettled(variants.map(async variant => {
+    const params = new URLSearchParams({ engine: "google_shopping", q: variant, api_key: key, hl: variant === query ? "en" : code === "IL" ? "he" : "en", num: "40" });
+    if (code) params.set("gl", code.toLowerCase());
+    if (location && location !== "Current location") params.set("location", providerLocation(location));
+    try { return await searchProvider(params, key, 14000); }
+    catch (error) {
+      if (!/unsupported.*location/i.test(error.message) || !params.has("location")) throw error;
+      params.delete("location");
+      return searchProvider(params, key, 14000);
+    }
+  }));
+  if (searches.every(result => result.status === "rejected")) throw searches[0].reason;
+  const seenItems = new Set(), items = searches.flatMap(result => result.status === "fulfilled" ? [...(result.value.shopping_results ?? []), ...(result.value.inline_shopping_results ?? [])] : []).filter(item => {
+    if (!isRelevantProduct(item.title, query)) return false;
+    const identity = safeHttpUrl(item.link || item.product_link) || `${item.source ?? ""}|${item.title ?? ""}`;
+    if (seenItems.has(identity)) return false;
+    seenItems.add(identity); return true;
+  });
   if (typeof key === "object") {
     const rows = await mapConcurrent(items.slice(0, 30), 10, async (item, index) => {
       const url = safeHttpUrl(item.link);
