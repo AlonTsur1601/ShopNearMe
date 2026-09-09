@@ -171,6 +171,17 @@ describe("searchCatalog", () => {
     expect(memory?.options.some(({ value }) => value === "Other")).toBe(false);
   });
 
+  it("keeps a Shopping merchant offer carried by Google's tracked outbound link", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+      const target = new URL(JSON.parse(options.body).url);
+      if (target.searchParams.get("tbm") === "shop") return new Response(JSON.stringify({ shopping: [{ title: "Gaming Laptop RAM 16GB 512GB SSD", shop: "PC Shop", extracted_price: 4999, price: "4,999 ₪", link: "https://www.google.com/goto?url=opaque" }] }));
+      return new Response(JSON.stringify({ organic: [] }));
+    }));
+    const result = await searchCatalog("Gaming Laptop tracked fixture", "Israel", { apiKey: "tracked-fixture", zone: "zone" }, undefined, undefined, "online");
+    expect(result.offers[0]).toMatchObject({ category: "order", merchant: "PC Shop", destinationUrl: "https://www.google.com/goto?url=opaque", attributes: { memory: "16 GB", storage: "512 GB" } });
+    expect(result.warnings).toEqual([]);
+  });
+
   it("merges a nearby store with its actual local product page price, image, distance, and facets", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       const request = new URL(String(url));

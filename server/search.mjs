@@ -394,9 +394,14 @@ async function shoppingSearch(query, location, key) {
   }
   const items = [...(data.shopping_results ?? []), ...(data.inline_shopping_results ?? [])].filter(item => isRelevantProduct(item.title, query));
   if (typeof key === "object") {
-    const rows = await mapConcurrent(items.slice(0, 6), 6, async (item, index) => {
+    const rows = await mapConcurrent(items.slice(0, 30), 10, async (item, index) => {
       const url = safeHttpUrl(item.link);
-      if (url && !/(^|\.)google\./i.test(new URL(url).hostname)) {
+      const parsed = url ? new URL(url) : null;
+      if (parsed && /(^|\.)google\./i.test(parsed.hostname) && parsed.pathname === "/goto" && item.source) {
+        const offer = shoppingOffer(item, index, query);
+        return offer ? [offer] : [];
+      }
+      if (parsed && !/(^|\.)google\./i.test(parsed.hostname)) {
         const offer = shoppingOffer(item, index, query);
         return offer ? [await enrichOffer(offer, query, true)].filter(Boolean) : [];
       }
