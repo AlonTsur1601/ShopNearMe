@@ -105,8 +105,7 @@ describe("bounded source recovery", () => {
       : { ok: true, json: async () => ({ local_results: { places: [{ title: "Fallback Clock Shop", type: "Clock store", website: "https://fallback-clock.example/", gps_coordinates: { latitude: 32.08, longitude: 34.78 } }] } }) }));
     const r = await searchCatalog("clock maps fallback fixture", "Tel Aviv, Israel", "local-fallback-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
     expect(r.offers).toEqual([]);
-    expect(r.warnings).toEqual([]);
-    expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(url).searchParams.get("engine") === "google")).toBe(true);
+    expect(r.warnings).toEqual(["Nearby product availability could not be searched. Please try again."]);
   });
   it("does not return retailer candidates when Maps and the local pack fail", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => new URL(url).searchParams.get("engine") === "google_maps"
@@ -114,7 +113,7 @@ describe("bounded source recovery", () => {
       : { ok: true, json: async () => ({ organic_results: [{ title: "Gaming laptops", source: "PC Store", displayed_link: "https://pc-store.co.il › laptops", link: "https://www.google.com/goto?url=opaque" }] }) }));
     const r = await searchCatalog("Gaming Laptop", "Tel Aviv, Israel", "organic-local-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
     expect(r.offers).toEqual([]);
-    expect(r.warnings).toEqual([]);
+    expect(r.warnings).toEqual(["Nearby product availability could not be searched. Please try again."]);
   });
   it("does not expose OpenStreetMap stores as products", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {

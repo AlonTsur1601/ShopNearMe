@@ -131,6 +131,7 @@ export function isRelevantProduct(title, query) {
 }
 function localQuery(query, code) {
   if (code !== "IL") return query;
+  if (/(?:laptop|notebook)\s+(?:stand|riser|holder|tray)|(?:stand|riser|holder|tray)\s+(?:for\s+)?(?:laptop|notebook)/i.test(query)) return query;
   const translated = translatedCategories.find(([match]) => match.test(query));
   return translated ? query.replace(translated[0], translated[2]).replace(/1440p/ig, "2560x1440") : query;
 }
@@ -442,7 +443,7 @@ async function completeFacetAttributes(offers, query, location, key, deadline = 
   return { offers: enriched, required };
 }
 async function shoppingSearch(query, location, key) {
-  const code = countryCode(location), translated = translatedCategories.find(([match]) => match.test(query)), preciseVariants = [...new Set([localQuery(query, code), query])], variants = [...new Set([...preciseVariants, translated?.[2]].filter(Boolean))];
+  const code = countryCode(location), preciseVariants = [...new Set([localQuery(query, code), query])], variants = preciseVariants;
   const searches = await Promise.allSettled(variants.map(async variant => {
     const params = new URLSearchParams({ engine: "google_shopping", q: variant, api_key: key, hl: variant === query ? "en" : code === "IL" ? "he" : "en", num: "40" });
     if (code) params.set("gl", code.toLowerCase());
@@ -548,12 +549,6 @@ async function mapsSearch(query, location, key, coordinates) {
   if (origin) params.set("ll", "@" + origin.lat + "," + origin.lon + ",14z");
   if (!place && origin) params.set("nearby", "true");
   const localRows = data => Array.isArray(data?.local_results) ? data.local_results : Array.isArray(data?.local_results?.places) ? data.local_results.places : [];
-  const organicRows = data => (data?.organic_results ?? []).map(item => {
-    const displayed = String(item.displayed_link ?? "").split(/\s*›\s*/)[0];
-    const direct = safeHttpUrl(item.link), website = merchantWebsite(displayed) || (direct && !/(^|\.)google\./i.test(new URL(direct).hostname) ? merchantWebsite(direct) : "");
-    if (!website || comparisonHosts.test(new URL(website).hostname)) return null;
-    return { title: shortRetailerName(item.source || new URL(website).hostname.replace(/^www\./, "")), type: `${storeType || "retail"} store`, address: `Near ${place || "the selected location"} · location unverified`, website, favicon: item.favicon, locationUnverified: true };
-  }).filter(Boolean);
   const related = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
   const alternatives = related.filter(type => type !== storeType).slice(0, 1).map(type => {
     const retry = new URLSearchParams(params);
@@ -561,27 +556,19 @@ async function mapsSearch(query, location, key, coordinates) {
     retry.set("start", "0");
     return retry;
   });
-  const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
-  const attempts = [params, ...alternatives, fallback];
+  const attempts = [params, ...alternatives];
   const [settled, openStreetMapPlaces] = await Promise.all([
     Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, attempt === params ? 5000 : 4500))),
     osmStores(query, location, origin).catch(() => []),
   ]);
   let places = [];
-  for (let index = 0; index < attempts.length - 1; index++) {
+  for (let index = 0; index < attempts.length; index++) {
     const result = settled[index];
     if (result.status !== "fulfilled") continue;
     const local = localRows(result.value);
     places.push(...local);
   }
   places.push(...openStreetMapPlaces);
-  if (!places.length) {
-    const organic = settled.at(-1);
-    if (organic?.status === "fulfilled") {
-      const local = localRows(organic.value);
-      places = local.length ? local : organicRows(organic.value);
-    }
-  }
   if (!places.length && settled[0].status === "rejected") throw settled[0].reason;
   const seen = new Set();
   return places.map((place, index) => ({ place, index, score: relevance(place, query, origin) }))
@@ -594,7 +581,7 @@ async function localProductSearch(query, location, key) {
   const terms = code === "IL" ? "מחיר site:" + tld : tld ? "price site:" + tld : hasLocation ? "price near " + location : "price buy";
   const base = localQuery(query, code) + " " + terms + " -inurl:cat -inurl:models -inurl:category";
   const destination = tld ? "site:" + tld : hasLocation ? "near " + location : "online";
-  const queries = [base, `"${query}" buy ${destination} -inurl:category -inurl:search`, `${query} price ${destination} product`];
+  const queries = [base, `"${query}" buy ${destination} product -inurl:category -inurl:search`];
   const pages = await Promise.allSettled(queries.map(q => {
     const params = new URLSearchParams({ engine: "google", q, api_key: key, hl: code === "IL" ? "he" : "en", num: "30" });
     if (code) params.set("gl", code.toLowerCase());

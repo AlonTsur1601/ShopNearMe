@@ -51,10 +51,10 @@ describe("searchCatalog", () => {
     expect(result.offers[0].category).toBe("order");
     expect(result.warnings).toEqual([]);
     const shoppingCalls = vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_shopping");
-    expect(shoppingCalls).toHaveLength(6);
+    expect(shoppingCalls).toHaveLength(4);
     expect(shoppingCalls.every(([url]) => new URL(url).searchParams.get("gl") === "il")).toBe(true);
-    expect(shoppingCalls.filter(([url]) => new URL(url).searchParams.has("location"))).toHaveLength(3);
-    expect(new Set(shoppingCalls.map(([url]) => new URL(url).searchParams.get("q"))).size).toBe(3);
+    expect(shoppingCalls.filter(([url]) => new URL(url).searchParams.has("location"))).toHaveLength(2);
+    expect(new Set(shoppingCalls.map(([url]) => new URL(url).searchParams.get("q"))).size).toBe(2);
   });
 
   it("resolves retailer links, shipping and monitor facets from product groups", async () => {
@@ -80,7 +80,7 @@ describe("searchCatalog", () => {
     const second = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
     expect(first.warnings).toEqual(["Online products could not be searched. Please try again.", "Retailer product pages could not be searched. Please try again."]);
     expect(second.warnings).toEqual(first.warnings);
-    expect(fetch).toHaveBeenCalledTimes(16);
+    expect(fetch).toHaveBeenCalledTimes(12);
   });
 
   it("reads structured specifications but identifies category pages", () => {
@@ -113,7 +113,7 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("order");
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(8);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(5);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
   });
@@ -210,7 +210,7 @@ describe("searchCatalog", () => {
   it("uses the local category query only when precise bilingual Shopping queries are empty", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q");
-      if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: search === "אוזניות" ? [{ title: "אוזניות Wireless ANC Sony", source: "Audio Store", extracted_price: 500, product_link: "https://audio.example/headphones", thumbnail: "https://img.example/audio.jpg" }] : [] }) };
+      if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: search?.includes("אוזניות") ? [{ title: "אוזניות Wireless ANC Sony", source: "Audio Store", extracted_price: 500, product_link: "https://audio.example/headphones", thumbnail: "https://img.example/audio.jpg" }] : [] }) };
       if (request.hostname === "audio.example") return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => '<script type="application/ld+json">{"@type":"Product","name":"Wireless ANC Sony headphones","brand":"Sony","image":"https://img.example/audio.jpg","offers":{"price":500}}</script>' };
       return { ok: true, json: async () => ({ organic_results: [] }) };
     }));
@@ -286,7 +286,7 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", fetchMock);
     const first = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
     const second = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     releases.forEach(release => release());
     const [a, b] = await Promise.all([first, second]);
     expect(a).toBe(b);
