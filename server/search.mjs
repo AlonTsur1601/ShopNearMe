@@ -196,8 +196,8 @@ function shippingFor(item, itemPrice) { const text = `${item.delivery ?? ""} ${(
 function countryCode(location) { const text = String(location ?? "").toLowerCase(); for (const [name, code] of countries) if (text.includes(name)) return code; return null; }
 function isLocalResult(url, item, location) { const code = countryCode(location); if (!code || code === "US") return true; const tld = countryTlds.get(code), text = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${item.displayed_link ?? ""}`; if (tld && url.hostname.endsWith(tld)) return true; if (code === "IL") return /[\u0590-\u05ff]|₪|\bILS\b|\bIsrael\b/i.test(text); return String(location).toLowerCase().split(/[,\s]+/).filter((part) => part.length > 3).some((part) => text.toLowerCase().includes(part)); }
 
-async function ebayAccess(credentials) { if (!credentials?.clientId || !credentials?.clientSecret) return null; if (ebayToken?.expiresAt > Date.now() + 60000) return ebayToken.value; const basic = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64"); const data = await fetchJson("https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "https://api.ebay.com/oauth/api_scope" }) }); ebayToken = { value: data.access_token, expiresAt: Date.now() + (number(data.expires_in) ?? 7200) * 1000 }; return data.access_token; }
-async function ebaySearch(query, location, credentials) { const token = await ebayAccess(credentials); if (!token) return []; const country = countryCode(location), filters = ["conditions:{USED}"]; if (country) filters.push(`deliveryCountry:${country}`); const params = new URLSearchParams({ q: query, limit: "15", filter: filters.join(",") }), headers = { Authorization: `Bearer ${token}`, "X-EBAY-C-MARKETPLACE-ID": "EBAY_US" }; if (country) headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=country=${country}`; const data = await fetchJson(`https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`, { headers }, 8000); const items = data.itemSummaries ?? []; await Promise.all(items.slice(0, 4).map(async item => { if (!item.itemId) return; try { const detail = await fetchJson(`https://api.ebay.com/buy/browse/v1/item/${encodeURIComponent(item.itemId)}`, { headers }, 5000); item.specifications = specificationPairs(detail.localizedAspects); item.shippingOptions = detail.shippingOptions ?? item.shippingOptions; item.importCharges = detail.importCharges ?? item.importCharges; if (detail.brand) item.specifications.push({ name: "Manufacturer", value: detail.brand }); } catch { /* Basic offers remain available when detail enrichment fails. */ } })); return items.filter((item) => isRelevantProduct(item.title, query)).map((item, index) => { const price = item.price, shipping = item.shippingOptions?.[0]?.shippingCost, itemPrice = number(price?.convertedFromCurrency === "USD" ? price.convertedFromValue : price?.value), shippingPrice = number(shipping?.convertedFromCurrency === "USD" ? shipping.convertedFromValue : shipping?.value), totalPrice = itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice, condition = item.condition || "Used", merchant = "eBay"; return { id: `ebay-${item.itemId ?? index}`, category: "secondHand", merchant, merchantLogoUrl: "/ebay.svg", title: item.title || "Pre-owned eBay listing", subtitle: [condition, item.itemLocation?.country].filter(Boolean).join(" · "), imageUrl: safeHttpUrl(item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl), rating: number(item.seller?.feedbackPercentage) ? Math.min(5, number(item.seller.feedbackPercentage) / 20) : 0, reviewCount: number(item.seller?.feedbackScore) ?? 0, itemPrice, shippingPrice, totalPrice, currency: price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD", ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: amountInCurrency(item.shippingOptions?.[0]?.importCharges ?? item.importCharges, price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD"), crossBorder: !!country && !!item.itemLocation?.country && item.itemLocation.country !== country }), priceVerified: totalPrice !== null, availability: "Available on eBay", condition, attributes: attributesFor(query, item.title || "", condition, "eBay", item), attributeLabels: attributeLabelsFor(query, item.title || "", item), destinationUrl: safeHttpUrl(item.itemWebUrl), linkLabel: "View product" }; }).filter((offer) => offer.destinationUrl); }
+async function ebayAccess(credentials) { if (!credentials?.clientId || !credentials?.clientSecret) return null; if (ebayToken?.expiresAt > Date.now() + 60000) return ebayToken.value; const basic = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64"); const data = await fetchJson("https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "https://api.ebay.com/oauth/api_scope" }) }, 2500); ebayToken = { value: data.access_token, expiresAt: Date.now() + (number(data.expires_in) ?? 7200) * 1000 }; return data.access_token; }
+async function ebaySearch(query, location, credentials) { const token = await ebayAccess(credentials); if (!token) return []; const country = countryCode(location), filters = ["conditions:{USED}"]; if (country) filters.push(`deliveryCountry:${country}`); const params = new URLSearchParams({ q: query, limit: "15", filter: filters.join(",") }), headers = { Authorization: `Bearer ${token}`, "X-EBAY-C-MARKETPLACE-ID": "EBAY_US" }; if (country) headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=country=${country}`; const data = await fetchJson(`https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`, { headers }, 3500); const items = data.itemSummaries ?? []; await Promise.all(items.slice(0, 4).map(async item => { if (!item.itemId) return; try { const detail = await fetchJson(`https://api.ebay.com/buy/browse/v1/item/${encodeURIComponent(item.itemId)}`, { headers }, 1500); item.specifications = specificationPairs(detail.localizedAspects); item.shippingOptions = detail.shippingOptions ?? item.shippingOptions; item.importCharges = detail.importCharges ?? item.importCharges; if (detail.brand) item.specifications.push({ name: "Manufacturer", value: detail.brand }); } catch { /* Basic offers remain available when detail enrichment fails. */ } })); return items.filter((item) => isRelevantProduct(item.title, query)).map((item, index) => { const price = item.price, shipping = item.shippingOptions?.[0]?.shippingCost, itemPrice = number(price?.convertedFromCurrency === "USD" ? price.convertedFromValue : price?.value), shippingPrice = number(shipping?.convertedFromCurrency === "USD" ? shipping.convertedFromValue : shipping?.value), totalPrice = itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice, condition = item.condition || "Used", merchant = "eBay"; return { id: `ebay-${item.itemId ?? index}`, category: "secondHand", merchant, merchantLogoUrl: "/ebay.svg", title: item.title || "Pre-owned eBay listing", subtitle: [condition, item.itemLocation?.country].filter(Boolean).join(" · "), imageUrl: safeHttpUrl(item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl), rating: number(item.seller?.feedbackPercentage) ? Math.min(5, number(item.seller.feedbackPercentage) / 20) : 0, reviewCount: number(item.seller?.feedbackScore) ?? 0, itemPrice, shippingPrice, totalPrice, currency: price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD", ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: amountInCurrency(item.shippingOptions?.[0]?.importCharges ?? item.importCharges, price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD"), crossBorder: !!country && !!item.itemLocation?.country && item.itemLocation.country !== country }), priceVerified: totalPrice !== null, availability: "Available on eBay", condition, attributes: attributesFor(query, item.title || "", condition, "eBay", item), attributeLabels: attributeLabelsFor(query, item.title || "", item), destinationUrl: safeHttpUrl(item.itemWebUrl), linkLabel: "View product" }; }).filter((offer) => offer.destinationUrl); }
 function shoppingOffer(item, index, query) { if (!isRelevantProduct(item.title, query) || !safeHttpUrl(item.link || item.product_link)) return null; const itemPrice = number(item.extracted_price ?? item.price), shipping = shippingFor(item, itemPrice), isUsed = used(item), isLocal = !isUsed && local(item), merchant = shortRetailerName(item.source || item.merchant || item.seller || "Retailer"), text = `${item.title ?? ""} ${(item.extensions ?? []).join(" ")}`, condition = isUsed ? (item.condition || (/refurb|renewed/i.test(text) ? "Refurbished" : "Used")) : "New", shippingPrice = isLocal ? null : shipping.shippingPrice; return { id: `serp-${item.product_id ?? item.position ?? index}`, category: isUsed ? "secondHand" : isLocal ? "local" : "order", merchant, merchantLogoUrl: safeHttpUrl(item.source_icon || item.favicon), title: item.title || "Product offer", subtitle: (item.extensions ?? []).slice(0, 3).join(" · ") || item.delivery || "See retailer for product details", imageUrl: productImageUrl(item.thumbnail || item.image), rating: number(item.rating) ?? 0, reviewCount: number(item.reviews) ?? 0, itemPrice, shippingPrice, totalPrice: itemPrice === null ? null : shippingPrice === null ? itemPrice : shipping.totalPrice, currency: /₪|NIS|ILS/i.test(`${item.price ?? ""} ${text}`) ? "ILS" : /€|EUR/i.test(`${item.price ?? ""} ${text}`) ? "EUR" : /£|GBP/i.test(`${item.price ?? ""} ${text}`) ? "GBP" : "USD", shippingEstimated: shipping.shippingEstimated, priceVerified: itemPrice !== null, availability: isLocal ? "Check local stock" : "Available online", arrival: isLocal ? undefined : item.delivery, condition, attributes: attributesFor(query, text, condition, merchant), destinationUrl: safeHttpUrl(item.link || item.product_link), linkLabel: "View product" }; }
 function mapOffer(place, index, query, origin) { const merchant = place.title || place.name || "Local store", itemPrice = number(place.extracted_price ?? place.product_price), point = place.gps_coordinates ? { lat: place.gps_coordinates.latitude, lon: place.gps_coordinates.longitude } : null, placeId = place.place_id ?? place.data_id, mapsUrl = placeId ? `https://www.google.com/maps/search/?api=1&query_place_id=${encodeURIComponent(placeId)}` : ""; return { id: `local-${placeId ?? index}`, category: "local", merchant, merchantLogoUrl: safeHttpUrl(place.favicon), title: merchant, subtitle: [place.type, place.address].filter(Boolean).join(" · ") || "Nearby store", imageUrl: "", rating: number(place.rating) ?? 0, reviewCount: number(place.reviews) ?? 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency: "USD", priceVerified: itemPrice !== null, potentialStore: true, availability: place.locationUnverified ? "Potential retailer · confirm location and product stock" : "Potential retailer · confirm product stock", distanceMiles: distanceMiles(origin, point), attributes: { retailer: shortRetailerName(merchant) }, destinationUrl: safeHttpUrl(place.website || place.links?.directions || place.google_maps_url || mapsUrl), linkLabel: "View store" }; }
 function onlineStoreOffer(item, index, query) {
@@ -361,7 +361,7 @@ function completeFacetCohort(offers, required) {
   });
 }
 function makeResult(query, offers, required) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, valid = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && (offer.potentialStore || (merchantWebsite(offer.destinationUrl) && !/^out of stock$/i.test(String(offer.availability).trim()))) && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)), clean = completeFacetCohort(valid, required ?? requiredFacetIds(valid, query)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
-export async function recoverModelSpecifications(offers, query, location, key, required = undefined, round = 0) {
+export async function recoverModelSpecifications(offers, query, location, key, required = undefined) {
   const shared = shareProductSpecs(offers);
   const requiredIds = required ?? requiredFacetIds(shared, query);
   const propertyIds = [...new Set([...recoveryFacetIds(shared, query), ...requiredIds])];
@@ -380,20 +380,17 @@ export async function recoverModelSpecifications(offers, query, location, key, r
   };
   const recovered = await mapConcurrent(shared, 20, async offer => {
     if (offer.potentialStore) return offer;
-    let missing = propertyIds.filter(id => !valuesForFacet(offer, id).length);
+    const missing = propertyIds.filter(id => !valuesForFacet(offer, id).length);
     if (!missing.length) return offer;
     const lookup = /^\d{8,14}$/.test(offer.gtin ?? "") ? offer.gtin : offer.productBrand && /[a-z]/i.test(offer.mpn ?? "") ? `${offer.productBrand} ${offer.mpn}` : offer.title;
     if (!lookup) return offer;
     let attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     const requested = missing.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
-    const searches = round === 0
-      ? [`"${lookup}" technical specifications ${requested}`.trim(), `"${lookup}" ${requested} product specifications`.trim()]
-      : round === 1 ? [`"${lookup}" datasheet ${requested}`.trim()]
-        : [`"${lookup}" manual specifications ${requested}`.trim()];
+    const searches = [`"${lookup}" technical specifications ${requested}`.trim(), `"${lookup}" datasheet ${requested}`.trim()];
     const attempts = await Promise.allSettled(searches.map(async search => {
         const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
         if (typeof key === "string") params.set("api_key", key);
-        return searchProvider(params, key, 4500);
+        return searchProvider(params, key, 2000);
     }));
     const seenLinks = new Set(), results = attempts.flatMap(attempt => attempt.status === "fulfilled" ? attempt.value.organic_results ?? [] : []).filter(item => {
       const link = safeHttpUrl(item.link), identity = link || `${item.title ?? ""}|${item.snippet ?? ""}`;
@@ -420,13 +417,9 @@ export async function recoverModelSpecifications(offers, query, location, key, r
 
 async function completeFacetAttributes(offers, query, location, key) {
   let enriched = shareProductSpecs(offers), required = requiredFacetIds(enriched, query);
-  for (let round = 0; round < 2; round++) {
-    enriched = await recoverModelSpecifications(enriched, query, location, key, required, round);
-    const expanded = requiredFacetIds(enriched, query), additions = expanded.filter(id => !required.includes(id));
-    required = [...required, ...additions];
-    const incomplete = enriched.some(offer => !offer.potentialStore && required.some(id => !valuesForFacet(offer, id).length));
-    if (!additions.length && !incomplete) break;
-  }
+  enriched = await recoverModelSpecifications(enriched, query, location, key, required);
+  const expanded = requiredFacetIds(enriched, query);
+  required = [...required, ...expanded.filter(id => !required.includes(id))];
   return { offers: enriched, required };
 }
 async function shoppingSearch(query, location, key) {
@@ -435,11 +428,11 @@ async function shoppingSearch(query, location, key) {
     const params = new URLSearchParams({ engine: "google_shopping", q: variant, api_key: key, hl: variant === query ? "en" : code === "IL" ? "he" : "en", num: "40" });
     if (code) params.set("gl", code.toLowerCase());
     if (location && location !== "Current location") params.set("location", providerLocation(location));
-    try { return await searchProvider(params, key, 14000); }
+    try { return await searchProvider(params, key, 4500); }
     catch (error) {
       if (!/unsupported.*location/i.test(error.message) || !params.has("location")) throw error;
       params.delete("location");
-      return searchProvider(params, key, 14000);
+      return searchProvider(params, key, 4500);
     }
   }));
   if (searches.every(result => result.status === "rejected")) throw searches[0].reason;
@@ -468,7 +461,7 @@ async function shoppingSearch(query, location, key) {
       const restriction = /^[a-z\d.-]+\.[a-z]{2,}$/i.test(shop) ? "site:" + shop : shop;
       try {
         const params = new URLSearchParams({ engine: "google", q: item.title + " " + restriction + " buy", gl: code?.toLowerCase() || "", hl: "en" });
-        const found = await searchProvider(params, key, 10000);
+        const found = await searchProvider(params, key, 2000);
         return (await Promise.all((found.organic_results ?? []).filter(result => isRelevantProduct(result.title, query)).slice(0, 2)
           .map((result, n) => localProduct(result, index * 2 + n, query, location)))).filter(Boolean).map(offer => matchingShoppingEvidence(item, offer));
       } catch { return []; }
@@ -482,7 +475,7 @@ async function shoppingSearch(query, location, key) {
   const grouped = items.filter(item => item.immersive_product_page_token).slice(0, 8);
   const resolved = await Promise.allSettled(grouped.map(async (item) => {
     const params = new URLSearchParams({ engine: "google_immersive_product", page_token: item.immersive_product_page_token, api_key: key });
-    const detail = (await searchProvider(params, key, 10000)).product_results ?? {};
+    const detail = (await searchProvider(params, key, 2500)).product_results ?? {};
     return (detail.stores ?? []).filter(store => !store.monthly_payment_duration && !store.installments_description).map((store, index) => ({ ...store, product_id: `${item.product_id}-${index}`, title: store.title || detail.title || item.title, source: store.name, source_icon: store.logo, thumbnail: item.thumbnail || detail.thumbnails?.[0], extensions: (store.details_and_offers ?? []).filter(text => !/משלוח|shipping|delivery/i.test(text)), specificationText: detail.about_the_product?.description, specifications: specificationPairs(detail.about_the_product?.features), brand: detail.brand }));
   }));
   if (grouped.length && resolved.every(result => result.status === "rejected") && !direct.length) throw new Error("Product links unavailable");
@@ -515,7 +508,7 @@ async function osmStores(query, location, origin) {
   const types = osmShopTypes(query), cacheKey = `${origin.lat.toFixed(3)},${origin.lon.toFixed(3)}|${types.join("|")}`, cached = osmStoreCache.get(cacheKey);
   if (cached && Date.now() - cached.at < 60 * 60 * 1000) return cached.value;
   const queryText = `[out:json][timeout:12];(nwr(around:15000,${origin.lat},${origin.lon})["shop"~"^(${types.join("|")})$"];);out center tags 80;`;
-  const response = await fetchJson(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(queryText)}`, { headers: { "User-Agent": "ShopNearMe/0.1 (local retailer lookup)", Accept: "application/json" } }, 5500);
+  const response = await fetchJson(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(queryText)}`, { headers: { "User-Agent": "ShopNearMe/0.1 (local retailer lookup)", Accept: "application/json" } }, 4000);
   const labels = { hifi: "audio", sports: "sporting goods", clothes: "clothing", houseware: "home goods", books: "book", toys: "toy", games: "game", photo: "photography", mobile_phone: "mobile phone", department_store: "department" };
   const places = (response.elements ?? []).filter(element => element.tags?.name).map(element => {
     const tags = element.tags, lat = number(element.lat ?? element.center?.lat), lon = number(element.lon ?? element.center?.lon), shop = tags.shop ?? "retail", address = [tags["addr:housenumber"], tags["addr:street"], tags["addr:city"]].filter(Boolean).join(" ");
@@ -551,20 +544,15 @@ async function mapsSearch(query, location, key, coordinates) {
   const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
   const attempts = [params, ...alternatives, fallback];
   const [settled, openStreetMapPlaces] = await Promise.all([
-    Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, attempt === params ? 12000 : 9000))),
+    Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, attempt === params ? 5000 : 4500))),
     osmStores(query, location, origin).catch(() => []),
   ]);
-  let places = [], pageParams;
+  let places = [];
   for (let index = 0; index < attempts.length - 1; index++) {
     const result = settled[index];
     if (result.status !== "fulfilled") continue;
     const local = localRows(result.value);
     places.push(...local);
-    if (!pageParams && local.length >= 20) pageParams = attempts[index];
-  }
-  if (pageParams) {
-    const next = new URLSearchParams(pageParams); next.set("start", "20");
-    try { const page = await searchProvider(next, key, 6000); places = [...places, ...localRows(page)]; } catch { /* retain first page */ }
   }
   places.push(...openStreetMapPlaces);
   if (!places.length) {
@@ -590,7 +578,7 @@ async function localProductSearch(query, location, key) {
   const pages = await Promise.allSettled(queries.map(q => {
     const params = new URLSearchParams({ engine: "google", q, api_key: key, hl: code === "IL" ? "he" : "en", num: "30" });
     if (code) params.set("gl", code.toLowerCase());
-    return searchProvider(params, key, 10000);
+    return searchProvider(params, key, 4500);
   }));
   if (pages.every(p => p.status === "rejected")) throw pages[0].reason;
   const seen = new Set(), domains = new Map();

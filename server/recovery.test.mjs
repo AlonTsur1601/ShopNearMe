@@ -78,16 +78,16 @@ describe("bounded source recovery", () => {
     expect(maximum).toBe(5);
     expect(result).toHaveLength(30);
   });
-  it("returns relevant map listings as clearly marked possible local stores", async () => {
+  it("keeps the first map pages within the search latency budget", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const params = new URL(url).searchParams;
       const start = Number(params.get("start") ?? 0);
       return { ok: true, json: async () => params.get("engine") === "google_maps" ? { local_results: Array.from({ length: start ? 10 : 20 }, (_, i) => ({ place_id: "clock-" + (start + i), title: "Clock Store " + (start + i), type: "Clock store", website: "https://clocks-" + (start + i) + ".example/product", gps_coordinates: { latitude: 32.08, longitude: 34.78 } })) } : {} };
     }));
     const r = await searchCatalog("clock coverage fixture", "Tel Aviv, Israel", "coverage-fixture-key", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(r.offers).toHaveLength(30);
+    expect(r.offers).toHaveLength(20);
     expect(r.offers.every(offer => offer.category === "local" && offer.potentialStore && offer.linkLabel === "View store")).toBe(true);
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(3);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(2);
   });
   it("uses organic new-product retailers if the shopping engine fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {

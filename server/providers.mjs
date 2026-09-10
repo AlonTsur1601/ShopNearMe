@@ -7,7 +7,7 @@ export async function fetchJson(url, options = {}, timeoutMs = 10000) {
   if (key && pending.has(key)) return pending.get(key);
   const request = (async () => {
     for (let attempt = 0; ; attempt++) {
-      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), attempt ? Math.min(timeoutMs, 6000) : timeoutMs);
+      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), attempt ? Math.min(timeoutMs, 2000) : timeoutMs);
       try {
         const response = await fetch(url, { ...options, signal: controller.signal });
         const data = await response.json();

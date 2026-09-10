@@ -10,7 +10,7 @@ async function rate(from, to) {
   if (from === to) return { rate: 1, date: new Date().toISOString().slice(0, 10) };
   const key = from + "-" + to, cached = cache.get(key);
   if (cached && Date.now() - cached.at < 6 * 60 * 60 * 1000) return cached.value;
-  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 3500);
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 1000);
   try {
     const response = await fetch("https://api.frankfurter.dev/v2/rate/" + encodeURIComponent(from) + "/" + encodeURIComponent(to) + "?providers=ECB", { signal: controller.signal });
     if (!response.ok) return null;

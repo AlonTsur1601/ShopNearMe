@@ -222,7 +222,7 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q") ?? "";
       if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
-        { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://amazon.com/alpha" },
+        { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://amazon.com/alpha", specifications: [{ name: "Material", value: "Metal" }] },
         { title: "Headphones Beta", source: "Store B", extracted_price: 110, product_link: "https://amazon.com/beta" },
         { title: "Headphones Gamma", source: "Store C", extracted_price: 120, product_link: "https://amazon.com/gamma" },
       ] }) };

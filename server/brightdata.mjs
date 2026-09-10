@@ -42,7 +42,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
           method: "POST",
           headers: { Authorization: "Bearer " + config.apiKey, "Content-Type": "application/json" },
           body: JSON.stringify({ zone: config.zone, url, format: "json" }),
-          signal: AbortSignal.timeout(attempt ? Math.min(timeoutMs, 6000) : timeoutMs),
+          signal: AbortSignal.timeout(attempt ? Math.min(timeoutMs, 1500) : timeoutMs),
         });
         // Never expose upstream error text: it may echo request credentials.
         if (!response.ok) {

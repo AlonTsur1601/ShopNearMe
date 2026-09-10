@@ -191,7 +191,7 @@ export async function enrichProductPage(value) {
       return best.isProduct ? best : gone ? { unavailable: true } : best;
     } catch { return {}; }
   })();
-  const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({}); }, 5500); });
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({}); }, 2000); });
   const pending = Promise.race([request, timeout]).finally(() => { clearTimeout(timer); pageRequests.delete(url); });
   pageRequests.set(url, pending);
   return pending;
