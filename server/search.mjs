@@ -537,11 +537,11 @@ async function shoppingSearch(query, location, key) {
     const params = new URLSearchParams({ engine: "google_shopping", q: variant, api_key: key, hl: variant === query ? "en" : code === "IL" ? "he" : "en", num: "40" });
     if (code) params.set("gl", code.toLowerCase());
     if (location && location !== "Current location") params.set("location", providerLocation(location));
-    try { return await searchProvider(params, key, 9000); }
+    try { return await searchProvider(params, key, 7000); }
     catch (error) {
       if (!/unsupported.*location/i.test(error.message) || !params.has("location")) throw error;
       params.delete("location");
-      return searchProvider(params, key, 9000);
+      return searchProvider(params, key, 7000);
     }
   };
   const searches = [await Promise.resolve(searchVariant(query)).then(value => ({ status: "fulfilled", value }), reason => ({ status: "rejected", reason }))];
@@ -577,7 +577,7 @@ async function shoppingSearch(query, location, key) {
       const restriction = /^[a-z\d.-]+\.[a-z]{2,}$/i.test(shop) ? "site:" + shop : shop;
       try {
         const params = new URLSearchParams({ engine: "google", q: item.title + " " + restriction + " buy", gl: code?.toLowerCase() || "", hl: "en" });
-        const found = await searchProvider(params, key, 6000);
+        const found = await searchProvider(params, key, 4500);
         const candidates = await Promise.all((found.organic_results ?? []).filter(result => isRelevantProduct(result.title, query)).slice(0, 5)
           .map((result, n) => shoppingMerchantOffer(item, result, index * 5 + n, query)));
         return candidates.filter(Boolean).slice(0, 1);
@@ -658,7 +658,7 @@ async function mapsSearch(query, location, key, coordinates) {
     attempts.push(nextPage);
   }
   const [settled, openStreetMapPlaces] = await Promise.all([
-    Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, 7000))),
+    Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, 5500))),
     osmStores(query, location, origin).catch(() => []),
   ]);
   let places = [];
@@ -684,7 +684,7 @@ async function localProductSearch(query, location, key) {
   const pages = await Promise.allSettled(queries.map(q => {
     const params = new URLSearchParams({ engine: "google", q, api_key: key, hl: code === "IL" ? "he" : "en", num: "30" });
     if (code) params.set("gl", code.toLowerCase());
-    return searchProvider(params, key, 7000);
+    return searchProvider(params, key, 5500);
   }));
   if (pages.every(p => p.status === "rejected")) throw pages[0].reason;
   const seen = new Set(), domains = new Map();
@@ -698,7 +698,7 @@ async function localProductSearch(query, location, key) {
   return products;
 }
 async function runScope(scope, query, location, key, coordinates, credentials) {
-  const facetDeadline = Date.now() + 16500;
+  const facetDeadline = Date.now() + 14500;
   const productLocation = searchLocation(location, coordinates);
   if (scope === "local") {
     // Local-only searches need the same product discovery as combined searches.
