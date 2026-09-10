@@ -130,6 +130,16 @@ describe("bounded source recovery", () => {
     expect(r.offers.some(offer => offer.category === "order" && offer.potentialStore && offer.availability === "Potential online retailer · confirm online ordering and product availability")).toBe(true);
     expect(r.warnings).toEqual([]);
   });
+  it("combines OpenStreetMap stores with provider-backed map results", async () => {
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      const request = new URL(url), params = request.searchParams;
+      if (request.hostname === "overpass-api.de") return { ok: true, json: async () => ({ elements: [{ type: "node", id: 84, lat: 32.07, lon: 34.86, tags: { name: "OSM Audio", shop: "hifi", website: "https://osm-audio.example/" } }] }) };
+      if (params.get("engine") === "google_maps") return { ok: true, json: async () => ({ local_results: [{ place_id: "map-audio", title: "Map Audio", type: "Audio store", website: "https://map-audio.example/", gps_coordinates: { latitude: 32.061, longitude: 34.857 } }] }) };
+      return { ok: true, json: async () => ({}) };
+    }));
+    const r = await searchCatalog("Wireless Headphones combined local fixture", "Kiryat Ono, Israel", "combined-local-fixture", { lat: 32.061, lon: 34.857 }, undefined, "local");
+    expect(r.offers.map(offer => offer.merchant)).toEqual(expect.arrayContaining(["Map Audio", "OSM Audio"]));
+  });
   it("does not return laptop replacement parts as laptop offers", () => {
     expect(isRelevantProduct("GPC70 motherboard for HP Pavilion Gaming Laptop", "Gaming Laptop")).toBe(false);
     expect(isRelevantProduct("HP Victus 16 Gaming Laptop 16GB RAM", "Gaming Laptop")).toBe(true);

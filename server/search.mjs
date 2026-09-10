@@ -361,7 +361,7 @@ function completeFacetCohort(offers, required) {
   });
 }
 function makeResult(query, offers, required) { const seen = new Set(), order = { local: 0, order: 1, secondHand: 2 }, valid = offers.map(normalizeOfferFacets).filter((offer) => offer?.title && offer.destinationUrl && (offer.potentialStore || (merchantWebsite(offer.destinationUrl) && !/^out of stock$/i.test(String(offer.availability).trim()))) && !seen.has(`${offer.category}|${offer.destinationUrl}`) && seen.add(`${offer.category}|${offer.destinationUrl}`)), clean = completeFacetCohort(valid, required ?? requiredFacetIds(valid, query)).sort((a, b) => order[a.category] - order[b.category]); return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" }; }
-export async function recoverModelSpecifications(offers, query, location, key, required = undefined) {
+export async function recoverModelSpecifications(offers, query, location, key, required = undefined, round = 0) {
   const shared = shareProductSpecs(offers);
   const requiredIds = required ?? requiredFacetIds(shared, query);
   const propertyIds = [...new Set([...recoveryFacetIds(shared, query), ...requiredIds])];
@@ -386,7 +386,10 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     if (!lookup) return offer;
     let attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     const requested = missing.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
-    const searches = [`"${lookup}" technical specifications ${requested}`.trim(), `"${lookup}" ${requested} product specifications`.trim()];
+    const searches = round === 0
+      ? [`"${lookup}" technical specifications ${requested}`.trim(), `"${lookup}" ${requested} product specifications`.trim()]
+      : round === 1 ? [`"${lookup}" datasheet ${requested}`.trim()]
+        : [`"${lookup}" manual specifications ${requested}`.trim()];
     const attempts = await Promise.allSettled(searches.map(async search => {
         const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
         if (typeof key === "string") params.set("api_key", key);
@@ -413,6 +416,18 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     return { ...offer, attributes, attributeLabels };
   });
   return shareProductSpecs(recovered);
+}
+
+async function completeFacetAttributes(offers, query, location, key) {
+  let enriched = shareProductSpecs(offers), required = requiredFacetIds(enriched, query);
+  for (let round = 0; round < 3; round++) {
+    enriched = await recoverModelSpecifications(enriched, query, location, key, required, round);
+    const expanded = requiredFacetIds(enriched, query), additions = expanded.filter(id => !required.includes(id));
+    required = [...required, ...additions];
+    const incomplete = enriched.some(offer => !offer.potentialStore && required.some(id => !valuesForFacet(offer, id).length));
+    if (!additions.length && !incomplete) break;
+  }
+  return { offers: enriched, required };
 }
 async function shoppingSearch(query, location, key) {
   const code = countryCode(location), translated = translatedCategories.find(([match]) => match.test(query)), preciseVariants = [...new Set([localQuery(query, code), query])], variants = [...new Set([...preciseVariants, translated?.[2]].filter(Boolean))];
@@ -482,6 +497,34 @@ async function shoppingSearch(query, location, key) {
   }).filter(Boolean);
   return (await mapConcurrent(offers, 20, (offer, index) => index < 50 ? enrichOffer(offer, query) : offer)).filter(Boolean);
 }
+function osmShopTypes(query) {
+  const related = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
+  const words = related.join(" ");
+  return /computer|gaming|electronics|audio|music|office|mobile phone|cell phone/.test(words) ? ["computer", "electronics", "hifi", "music", "mobile_phone", "department_store"]
+    : /outdoor|camping|sporting goods|shoe/.test(words) ? ["outdoor", "sports", "shoes", "department_store"]
+    : /clothing|fashion/.test(words) ? ["clothes", "shoes", "department_store"]
+    : /furniture|home goods|appliance|kitchen/.test(words) ? ["furniture", "houseware", "appliance", "electronics", "department_store"]
+    : /book|stationery/.test(words) ? ["books", "stationery", "department_store"]
+    : /toy|game|hobby/.test(words) ? ["toys", "games", "hobby", "department_store"]
+    : /camera|photography/.test(words) ? ["photo", "electronics", "department_store"]
+    : /clock|watch|gift|antique/.test(words) ? ["watches", "jewelry", "gift", "antiques", "department_store"] : ["department_store", "general"];
+}
+
+async function osmStores(query, location, origin) {
+  if (!origin) return [];
+  const types = osmShopTypes(query), cacheKey = `${origin.lat.toFixed(3)},${origin.lon.toFixed(3)}|${types.join("|")}`, cached = osmStoreCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < 60 * 60 * 1000) return cached.value;
+  const queryText = `[out:json][timeout:12];(nwr(around:15000,${origin.lat},${origin.lon})["shop"~"^(${types.join("|")})$"];);out center tags 80;`;
+  const response = await fetchJson(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(queryText)}`, { headers: { "User-Agent": "ShopNearMe/0.1 (local retailer lookup)", Accept: "application/json" } }, 5500);
+  const labels = { hifi: "audio", sports: "sporting goods", clothes: "clothing", houseware: "home goods", books: "book", toys: "toy", games: "game", photo: "photography", mobile_phone: "mobile phone", department_store: "department" };
+  const places = (response.elements ?? []).filter(element => element.tags?.name).map(element => {
+    const tags = element.tags, lat = number(element.lat ?? element.center?.lat), lon = number(element.lon ?? element.center?.lon), shop = tags.shop ?? "retail", address = [tags["addr:housenumber"], tags["addr:street"], tags["addr:city"]].filter(Boolean).join(" ");
+    return { place_id: `osm-${element.type}-${element.id}`, title: tags.name, type: `${labels[shop] ?? shop.replaceAll("_", " ")} store`, address: address || `Near ${providerLocation(location) || "the selected location"}`, website: merchantWebsite(tags.website || tags["contact:website"]) || `https://www.openstreetmap.org/${element.type}/${element.id}`, gps_coordinates: Number.isFinite(lat) && Number.isFinite(lon) ? { latitude: lat, longitude: lon } : undefined };
+  });
+  osmStoreCache.set(cacheKey, { at: Date.now(), value: places });
+  return places;
+}
+
 async function mapsSearch(query, location, key, coordinates) {
   const origin = validCoordinates(coordinates);
   if (!origin && (!location || location === "Current location")) return [];
@@ -506,47 +549,35 @@ async function mapsSearch(query, location, key, coordinates) {
     return retry;
   });
   const fallback = new URLSearchParams({ engine: "google", q: params.get("q"), api_key: key, hl: "en" });
-  const attempts = [params, ...alternatives, fallback], settled = await Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, attempt === params ? 12000 : 9000)));
-  let places = [], pageParams = params;
-  for (let index = 0; index < attempts.length; index++) {
+  const attempts = [params, ...alternatives, fallback];
+  const [settled, openStreetMapPlaces] = await Promise.all([
+    Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, attempt === params ? 12000 : 9000))),
+    osmStores(query, location, origin).catch(() => []),
+  ]);
+  let places = [], pageParams;
+  for (let index = 0; index < attempts.length - 1; index++) {
     const result = settled[index];
     if (result.status !== "fulfilled") continue;
-    const attempt = attempts[index], local = localRows(result.value), found = local.length ? local : attempt.get("engine") === "google" ? organicRows(result.value) : [];
-    if (!found.length) continue;
-    places = found;
-    if (attempt.get("engine") === "google_maps") pageParams = attempt;
-    break;
+    const local = localRows(result.value);
+    places.push(...local);
+    if (!pageParams && local.length >= 20) pageParams = attempts[index];
   }
-  if (!places.length && origin) {
-    const words = (related.length ? related : [storeType]).filter(Boolean).join(" "), types = /computer|gaming|electronics|audio|music|office|mobile phone|cell phone/.test(words) ? ["computer", "electronics", "hifi", "music", "mobile_phone", "department_store"]
-      : /outdoor|camping|sporting goods|shoe/.test(words) ? ["outdoor", "sports", "shoes", "department_store"]
-      : /clothing|fashion/.test(words) ? ["clothes", "shoes", "department_store"]
-      : /furniture|home goods|appliance|kitchen/.test(words) ? ["furniture", "houseware", "appliance", "electronics", "department_store"]
-      : /book|stationery/.test(words) ? ["books", "stationery", "department_store"]
-      : /toy|game|hobby/.test(words) ? ["toys", "games", "hobby", "department_store"]
-      : /camera|photography/.test(words) ? ["photo", "electronics", "department_store"]
-      : /clock|watch|gift|antique/.test(words) ? ["watches", "jewelry", "gift", "antiques", "department_store"] : ["department_store", "general"];
-    const cacheKey = `${origin.lat.toFixed(3)},${origin.lon.toFixed(3)}|${types.join("|")}`, cached = osmStoreCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < 60 * 60 * 1000) places = cached.value;
-    else try {
-      const queryText = `[out:json][timeout:12];(nwr(around:15000,${origin.lat},${origin.lon})["shop"~"^(${types.join("|")})$"];);out center tags 80;`;
-      const response = await fetchJson(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(queryText)}`, { headers: { "User-Agent": "ShopNearMe/0.1 (local retailer lookup)", Accept: "application/json" } }, 5500);
-      const labels = { hifi: "audio", sports: "sporting goods", clothes: "clothing", houseware: "home goods", books: "book", toys: "toy", games: "game", photo: "photography", mobile_phone: "mobile phone", department_store: "department" };
-      places = (response.elements ?? []).filter(element => element.tags?.name).map(element => {
-        const tags = element.tags, lat = number(element.lat ?? element.center?.lat), lon = number(element.lon ?? element.center?.lon), shop = tags.shop ?? "retail", address = [tags["addr:housenumber"], tags["addr:street"], tags["addr:city"]].filter(Boolean).join(" ");
-        return { place_id: `osm-${element.type}-${element.id}`, title: tags.name, type: `${labels[shop] ?? shop.replaceAll("_", " ")} store`, address: address || `Near ${providerLocation(location) || "the selected location"}`, website: merchantWebsite(tags.website || tags["contact:website"]) || `https://www.openstreetmap.org/${element.type}/${element.id}`, gps_coordinates: Number.isFinite(lat) && Number.isFinite(lon) ? { latitude: lat, longitude: lon } : undefined };
-      });
-      osmStoreCache.set(cacheKey, { at: Date.now(), value: places });
-    } catch { /* The primary provider error below remains authoritative. */ }
-  }
-  if (!places.length && settled[0].status === "rejected") throw settled[0].reason;
-  if (places.length >= 20) {
+  if (pageParams) {
     const next = new URLSearchParams(pageParams); next.set("start", "20");
     try { const page = await searchProvider(next, key, 6000); places = [...places, ...localRows(page)]; } catch { /* retain first page */ }
   }
+  places.push(...openStreetMapPlaces);
+  if (!places.length) {
+    const organic = settled.at(-1);
+    if (organic?.status === "fulfilled") {
+      const local = localRows(organic.value);
+      places = local.length ? local : organicRows(organic.value);
+    }
+  }
+  if (!places.length && settled[0].status === "rejected") throw settled[0].reason;
   const seen = new Set();
   return places.map((place, index) => ({ place, index, score: relevance(place, query, origin) }))
-    .filter(({ place, score }) => { const id = place.place_id || place.data_id || (place.title + "|" + place.address); const destination = merchantWebsite(place.website) || place.links?.directions || place.google_maps_url || place.place_id || place.data_id; if (!destination || !Number.isFinite(score) || score < 2 || seen.has(id)) return false; seen.add(id); return true; })
+    .filter(({ place, score }) => { const destination = merchantWebsite(place.website) || place.links?.directions || place.google_maps_url || place.place_id || place.data_id; const titleKey = `title:${String(place.title ?? "").trim().toLowerCase()}`, destinationKey = merchantWebsite(place.website) ? `host:${new URL(merchantWebsite(place.website)).hostname.replace(/^www\./, "")}` : ""; if (!destination || !Number.isFinite(score) || score < 2 || seen.has(titleKey) || (destinationKey && seen.has(destinationKey))) return false; seen.add(titleKey); if (destinationKey) seen.add(destinationKey); return true; })
     .sort((a, b) => b.score - a.score).slice(0, 50).map(({ place, index }) => mapOffer(place, index, query, origin));
 }
 async function localProductSearch(query, location, key) {
@@ -592,14 +623,7 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     const online = [...value(0), ...value(2)], maps = value(1);
     offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
   }
-  const shared = shareProductSpecs(offers);
-  let required = requiredFacetIds(shared, query), enriched = shared;
-  for (let pass = 0; pass < 2; pass++) {
-    enriched = await recoverModelSpecifications(enriched, query, location, key, required);
-    const expanded = requiredFacetIds(enriched, query), additions = expanded.filter(id => !required.includes(id));
-    if (!additions.length) break;
-    required = [...required, ...additions];
-  }
+  const completed = await completeFacetAttributes(offers, query, location, key), enriched = completed.offers, required = completed.required;
   let result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.potentialStore ? offer.availability : offer.availability === "Out of stock" ? "Out of stock" : "" })), location), required);
   if (scope === "all" && !result.offers.some(offer => offer.category === "order")) {
     result = makeResult(query, [...result.offers, ...onlineCandidatesFromMaps(result.offers.filter(offer => offer.category === "local"))], required);

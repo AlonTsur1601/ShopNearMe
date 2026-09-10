@@ -189,6 +189,24 @@ describe("searchCatalog", () => {
     expect(result.facets.find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(["Wireless"]);
   });
 
+  it("uses a different specification search when a required facet is still missing", async () => {
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q") ?? "";
+      if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
+        { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://retry-alpha.example/product" },
+        { title: "Headphones Beta", source: "Store B", extracted_price: 110, product_link: "https://retry-beta.example/product" },
+      ] }) };
+      if (engine === "google" && search.includes("datasheet") && search.includes("Headphones Beta")) return { ok: true, json: async () => ({ organic_results: [{ title: "Headphones Beta Bluetooth datasheet", link: "https://retry-maker.example/beta" }] }) };
+      if (engine === "google") return { ok: true, json: async () => ({ organic_results: [] }) };
+      if (request.hostname.endsWith(".example")) return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: request.hostname.includes("alpha") ? "Wireless headphones Alpha" : "Headphones Beta", offers: { price: 100 } })}</script>` };
+      return { ok: true, json: async () => ({}) };
+    }));
+    const result = await searchCatalog("headphones repeated recovery fixture", "Israel", "repeated-recovery-fixture", undefined, undefined, "online");
+    expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.attributes.connectivity)).toEqual(["Wireless", "Bluetooth"]);
+    expect(result.facets.find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Wireless", "Bluetooth"]));
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(String(url)).searchParams.get("q")?.includes("datasheet"))).toBe(true);
+  });
+
   it("uses the local category query only when precise bilingual Shopping queries are empty", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q");
