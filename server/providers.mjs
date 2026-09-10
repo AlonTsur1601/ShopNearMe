@@ -54,7 +54,7 @@ export async function searchProvider(params, config, timeoutMs = 15000) {
     query: params.get("q"), kind: engine === "google_maps" ? "maps" : engine === "google_shopping" ? "shopping" : "web",
     country: params.get("gl"), location: params.get("location"), start: Number(params.get("start") || 0),
     coordinates: match ? { lat: Number(match[1]), lon: Number(match[2]) } : undefined,
-  }, config, engine === "google_maps" && !params.has("start") ? Math.max(timeoutMs, 20000) : timeoutMs);
+  }, config, timeoutMs);
   const local = engine === "google_maps" ? rows(data.organic, data.local, data.places) : rows(data.local, data.places);
   return {
     organic_results: rows(data.organic).map(item => ({ ...item, link: item.link ?? item.url, snippet: item.description ?? item.snippet, displayed_link: item.display_link, favicon: item.icon })),

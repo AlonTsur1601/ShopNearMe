@@ -420,7 +420,7 @@ export async function recoverModelSpecifications(offers, query, location, key, r
 
 async function completeFacetAttributes(offers, query, location, key) {
   let enriched = shareProductSpecs(offers), required = requiredFacetIds(enriched, query);
-  for (let round = 0; round < 3; round++) {
+  for (let round = 0; round < 2; round++) {
     enriched = await recoverModelSpecifications(enriched, query, location, key, required, round);
     const expanded = requiredFacetIds(enriched, query), additions = expanded.filter(id => !required.includes(id));
     required = [...required, ...additions];
