@@ -709,12 +709,12 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   if (scope === "all") {
     const [shopping, maps, secondHand] = await Promise.allSettled([shoppingSearch(query, productLocation, key), mapsSearch(query, location, key, coordinates), ebaySearch(query, productLocation, credentials)]);
     const shoppingHasProducts = shopping.status === "fulfilled" && shopping.value.length > 0;
-    const [retailerPages] = await Promise.allSettled([shoppingHasProducts ? Promise.resolve([]) : localProductSearch(query, productLocation, key)]);
+    const [retailerPages] = await Promise.allSettled([shoppingHasProducts ? Promise.resolve([]) : finishBefore(localProductSearch(query, productLocation, key), facetDeadline, [])]);
     settled = [shopping, maps, retailerPages, secondHand];
   } else if (scope === "online") {
     const [shopping, secondHand] = await Promise.allSettled([shoppingSearch(query, productLocation, key), ebaySearch(query, productLocation, credentials)]);
     const [retailerPages] = await Promise.allSettled([
-      shopping.status === "fulfilled" && shopping.value.length > 0 ? Promise.resolve([]) : localProductSearch(query, productLocation, key),
+      shopping.status === "fulfilled" && shopping.value.length > 0 ? Promise.resolve([]) : finishBefore(localProductSearch(query, productLocation, key), facetDeadline, []),
     ]);
     settled = [shopping, retailerPages, secondHand];
   } else {
