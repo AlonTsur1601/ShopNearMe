@@ -417,13 +417,21 @@ export async function recoverModelSpecifications(offers, query, location, key, r
   return shareProductSpecs(recovered);
 }
 
-async function completeFacetAttributes(offers, query, location, key) {
+async function finishBefore(promise, deadline, fallback) {
+  const remaining = Math.max(0, deadline - Date.now());
+  if (!remaining) return fallback;
+  let timer;
+  try { return await Promise.race([promise, new Promise(resolve => { timer = setTimeout(() => resolve(fallback), remaining); })]); }
+  finally { clearTimeout(timer); }
+}
+
+async function completeFacetAttributes(offers, query, location, key, deadline = Number.POSITIVE_INFINITY) {
   let enriched = shareProductSpecs(offers), required = requiredFacetIds(enriched, query);
-  enriched = await recoverModelSpecifications(enriched, query, location, key, required);
+  enriched = await finishBefore(recoverModelSpecifications(enriched, query, location, key, required), deadline, enriched);
   const expanded = requiredFacetIds(enriched, query);
   required = [...required, ...expanded.filter(id => !required.includes(id))];
   if (enriched.some(offer => !offer.potentialStore && required.some(id => !valuesForFacet(offer, id).length))) {
-    enriched = await recoverModelSpecifications(enriched, query, location, key, required, true);
+    enriched = await finishBefore(recoverModelSpecifications(enriched, query, location, key, required, true), deadline, enriched);
   }
   return { offers: enriched, required };
 }
@@ -599,6 +607,7 @@ async function localProductSearch(query, location, key) {
   return candidates.map((item, index) => onlineStoreOffer(item, index, query)).filter(offer => offer && !merchants.has(offer.merchant.toLowerCase()) && merchants.add(offer.merchant.toLowerCase())).slice(0, 12);
 }
 async function runScope(scope, query, location, key, coordinates, credentials) {
+  const facetDeadline = Date.now() + 16500;
   if (scope === "local") {
     // Local-only searches need the same product discovery as combined searches.
     const result = await runScope("all", query, location, key, coordinates, undefined);
@@ -616,7 +625,7 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     const online = [...value(0), ...value(2)], maps = value(1);
     offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
   }
-  const completed = await completeFacetAttributes(offers, query, location, key), enriched = completed.offers, required = completed.required;
+  const completed = await completeFacetAttributes(offers, query, location, key, facetDeadline), enriched = completed.offers, required = completed.required;
   let result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.potentialStore ? offer.availability : offer.availability === "Out of stock" ? "Out of stock" : "" })), location), required);
   if (scope === "all" && !result.offers.some(offer => offer.category === "order")) {
     result = makeResult(query, [...result.offers, ...onlineCandidatesFromMaps(result.offers.filter(offer => offer.category === "local"))], required);
