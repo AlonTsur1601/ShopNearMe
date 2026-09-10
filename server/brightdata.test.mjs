@@ -47,6 +47,12 @@ it("never echoes credentials in an upstream error or retries invalid credentials
   await expect(brightDataSearch({ query: "auth" }, { apiKey: "fixture-key", zone: "zone" })).rejects.toThrow("Bright Data search failed (HTTP 401)");
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+it("identifies exhausted provider credits and preserves an advertised reset time", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("Monthly credit quota exhausted", { status: 402, headers: { "Retry-After": "3600" } })));
+  const error = await brightDataSearch({ query: "quota boundary" }, { apiKey: "test", zone: "zone" }).catch(value => value);
+  expect(error).toMatchObject({ code: "quota_exhausted", status: 402 });
+  expect(Number.isNaN(Date.parse(error.resetAt))).toBe(false);
+});
 it("does not mistake an HTML response for parsed data", async () => {
   const fetcher = vi.fn(async () => new Response("<html>not JSON</html>")); vi.stubGlobal("fetch", fetcher);
   await expect(brightDataSearch({ query: "html" }, { apiKey: "test", zone: "zone" })).rejects.toThrow("did not return parsed");

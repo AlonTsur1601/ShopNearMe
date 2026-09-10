@@ -51,10 +51,10 @@ describe("searchCatalog", () => {
     expect(result.offers[0].category).toBe("order");
     expect(result.warnings).toEqual([]);
     const shoppingCalls = vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_shopping");
-    expect(shoppingCalls).toHaveLength(4);
+    expect(shoppingCalls).toHaveLength(2);
     expect(shoppingCalls.every(([url]) => new URL(url).searchParams.get("gl") === "il")).toBe(true);
-    expect(shoppingCalls.filter(([url]) => new URL(url).searchParams.has("location"))).toHaveLength(2);
-    expect(new Set(shoppingCalls.map(([url]) => new URL(url).searchParams.get("q"))).size).toBe(2);
+    expect(shoppingCalls.filter(([url]) => new URL(url).searchParams.has("location"))).toHaveLength(1);
+    expect(new Set(shoppingCalls.map(([url]) => new URL(url).searchParams.get("q"))).size).toBe(1);
   });
 
   it("resolves retailer links, shipping and monitor facets from product groups", async () => {
@@ -80,7 +80,7 @@ describe("searchCatalog", () => {
     const second = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
     expect(first.warnings).toEqual(["Online products could not be searched. Please try again.", "Retailer product pages could not be searched. Please try again."]);
     expect(second.warnings).toEqual(first.warnings);
-    expect(fetch).toHaveBeenCalledTimes(12);
+    expect(fetch).toHaveBeenCalledTimes(8);
   });
 
   it("reads structured specifications but identifies category pages", () => {
@@ -113,7 +113,7 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("order");
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(5);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(3);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
   });
@@ -281,15 +281,18 @@ describe("searchCatalog", () => {
   });
 
   it("coalesces identical in-flight scoped searches", async () => {
-    const releases = [];
-    const fetchMock = vi.fn(() => new Promise((resolve) => { releases.push(() => resolve({ ok: true, json: async () => ({ shopping_results: [] }) })); }));
+    let releaseFirst;
+    const fetchMock = vi.fn(() => fetchMock.mock.calls.length === 1
+      ? new Promise((resolve) => { releaseFirst = () => resolve({ ok: true, json: async () => ({ shopping_results: [] }) }); })
+      : Promise.resolve({ ok: true, json: async () => ({ shopping_results: [] }) }));
     vi.stubGlobal("fetch", fetchMock);
     const first = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
     const second = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    releases.forEach(release => release());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    releaseFirst();
     const [a, b] = await Promise.all([first, second]);
     expect(a).toBe(b);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("adds eBay item details, specifications, shipping and import charges to the total", async () => {

@@ -46,8 +46,14 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         });
         // Never expose upstream error text: it may echo request credentials.
         if (!response.ok) {
+          const body = await response.text().catch(() => "");
           const error = new Error("Bright Data search failed (HTTP " + response.status + ")");
           error.status = response.status;
+          if (response.status === 402 || /(?:quota|credit|balance|limit).{0,30}(?:exhaust|exceed|insufficient|deplet|used)/i.test(body)) {
+            error.code = "quota_exhausted";
+            const reset = response.headers.get("x-ratelimit-reset") || response.headers.get("ratelimit-reset") || response.headers.get("retry-after");
+            if (reset && /^\d+$/.test(reset)) error.resetAt = new Date((Number(reset) > 1e9 ? Number(reset) * 1000 : Date.now() + Number(reset) * 1000)).toISOString();
+          }
           throw error;
         }
         let data;
@@ -55,7 +61,9 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         catch { throw new Error("Bright Data did not return parsed search data"); }
         if (data?.status_code && data.status_code !== 200) {
           const error = new Error("Bright Data upstream search failed (HTTP " + data.status_code + ")");
-          error.status = data.status_code; throw error;
+          error.status = data.status_code;
+          if (data.status_code === 402 || /(?:quota|credit|balance|limit).{0,30}(?:exhaust|exceed|insufficient|deplet|used)/i.test(String(data.message ?? data.error ?? ""))) error.code = "quota_exhausted";
+          throw error;
         }
         if (typeof data?.body === "string") {
           try { data = JSON.parse(data.body); }
