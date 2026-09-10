@@ -83,6 +83,8 @@ export function App() {
       return result;
     } finally { if (!controller.signal.aborted) { setLoading(false); setLocating(false); } }
   }, [location, locationPlace]);
+  const webMcpState = useRef({ location, performSearch, searchResult });
+  webMcpState.current = { location, performSearch, searchResult };
   const search = () => { void performSearch(query); };
   const goHome = () => { setActiveQuery(null); setQuery(""); setSelected({}); setSearchResult(null); };
   const toggleFilter = (facet: string, value: string) => setSelected((current) => { const values = current[facet] ?? []; return { ...current, [facet]: values.includes(value) ? values.filter((item) => item !== value) : [...values, value] }; });
@@ -92,12 +94,12 @@ export function App() {
   const filterProps = { facets: showcase.facets, selected, distance, distanceUnit, priceMin, priceMax, currency: showcase.offers.find((offer) => offer.currency)?.currency ?? "USD", onToggle: toggleFilter, onDistance: setDistance, onPriceMin: setPriceMin, onPriceMax: setPriceMax, onClear: clearFilters };
 
   useEffect(() => registerShopNearMeTools({
-    search: async (value, nextLocation) => { if (nextLocation) { setLocation(nextLocation); setLocationPlace(undefined); } return performSearch(value, nextLocation ?? location); },
+    search: async (value, nextLocation) => { if (nextLocation) { setLocation(nextLocation); setLocationPlace(undefined); } return webMcpState.current.performSearch(value, nextLocation ?? webMcpState.current.location); },
     setLocation: (value) => { setLocation(value); setLocationPlace(undefined); },
-    getResults: () => searchResult,
+    getResults: () => webMcpState.current.searchResult,
     setFilters: (filters) => { setSelected(filters); },
     setSort,
-  }), [location, performSearch, searchResult]);
+  }), []);
 
   return <div className="app">
     <Header onHome={goHome} />
