@@ -78,7 +78,7 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ error: "Temporarily unavailable" }) })));
     const first = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
     const second = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
-    expect(first.warnings).toEqual(["Online stores could not be searched. Please try again.", "Retailer product pages could not be searched. Please try again."]);
+    expect(first.warnings).toEqual(["Online products could not be searched. Please try again.", "Retailer product pages could not be searched. Please try again."]);
     expect(second.warnings).toEqual(first.warnings);
     expect(fetch).toHaveBeenCalledTimes(16);
   });
@@ -107,12 +107,12 @@ describe("searchCatalog", () => {
       return { ok: true, json: async () => ({ shopping_results: [{ position: 1, title: "Silent wall clock", source: "Online Shop", extracted_price: 29.99, delivery: "Free shipping", product_link: "https://online.example/clock", thumbnail: "https://images.example/clock.jpg" }] }) };
     }));
     const result = await searchCatalog("clock test local merge", "Tel Aviv", "test-key", { lat: 32.08, lon: 34.78 });
-    expect(result.offers.some((offer) => offer.category === "local" && offer.merchant === "Clock Corner" && offer.potentialStore)).toBe(true);
+    expect(result.offers.some((offer) => offer.potentialStore || offer.linkLabel === "View store")).toBe(false);
     expect(result.offers.some((offer) => offer.merchant === "PC Doctor")).toBe(false);
     expect(result.offers.some((offer) => offer.merchant === "Remote Clock Shop")).toBe(false);
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
-    expect(result.offers[0].category).toBe("local");
+    expect(result.offers[0].category).toBe("order");
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(8);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
@@ -122,9 +122,9 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", vi.fn(async (url) => {
       const request = new URL(String(url));
       if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
-        { position: 1, title: "72 inch rectangular solid wood extendable dining table with 8 chairs for 8 people", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 800, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-8" },
-        { position: 2, title: "Round glass fixed dining table with 4 chairs for 4 people", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 650, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-4" },
-        { position: 3, title: "60 inch rectangular wood fixed dining table for 6 people, table only", source: "Home Store - Official Site", extracted_price: 500, delivery: "Free shipping", product_link: "https://home.example/products/table" },
+        { position: 1, title: "72 inch rectangular solid wood extendable dining table with 8 chairs for 8 people", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 800, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-8", thumbnail: "https://img.example/table-8.jpg" },
+        { position: 2, title: "Round glass fixed dining table with 4 chairs for 4 people", source: "SIHOO ישראל אתר היבואן הרשמי", extracted_price: 650, delivery: "Free shipping", product_link: "https://sihoo.example/products/table-4", thumbnail: "https://img.example/table-4.jpg" },
+        { position: 3, title: "60 inch rectangular wood fixed dining table for 6 people, table only", source: "Home Store - Official Site", extracted_price: 500, delivery: "Free shipping", product_link: "https://home.example/products/table", thumbnail: "https://img.example/table.jpg" },
       ] }) };
       return { ok: true, json: async () => ({}) };
     }));
@@ -159,7 +159,7 @@ describe("searchCatalog", () => {
     ];
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url));
-      if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: titles.map((title, index) => ({ title, source: `Store ${index}`, extracted_price: 1000 + index, product_link: `https://laptop-${index}.example/product` })) }) };
+      if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: titles.map((title, index) => ({ title, source: `Store ${index}`, extracted_price: 1000 + index, product_link: `https://laptop-${index}.example/product`, thumbnail: `https://img.example/laptop-${index}.jpg` })) }) };
       if (request.hostname.endsWith(".example")) {
         const index = Number(request.hostname.match(/laptop-(\d+)/)?.[1]);
         return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: titles[index], offers: { price: 1000 + index } })}</script>` };
@@ -179,13 +179,13 @@ describe("searchCatalog", () => {
     const titles = ["Wireless headphones Alpha", "Headphones Beta", "Headphones Gamma"];
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url));
-      if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: titles.map((title, index) => ({ title, source: `Store ${index}`, extracted_price: 100 + index, product_link: `https://headphones-${index}.example/product` })) }) };
+      if (request.searchParams.get("engine") === "google_shopping") return { ok: true, json: async () => ({ shopping_results: titles.map((title, index) => ({ title, source: `Store ${index}`, extracted_price: 100 + index, product_link: `https://headphones-${index}.example/product`, thumbnail: `https://img.example/headphones-${index}.jpg` })) }) };
       if (request.hostname.endsWith(".example")) return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: titles[Number(request.hostname.match(/headphones-(\d+)/)?.[1])], offers: { price: 100 } })}</script>` };
       return { ok: true, json: async () => ({ organic_results: [] }) };
     }));
     const result = await searchCatalog("headphones required facet fixture", "Israel", "required-facet-fixture", undefined, undefined, "online");
     expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.title)).toEqual(["Wireless headphones Alpha"]);
-    expect(result.offers.filter(offer => offer.category === "order" && offer.potentialStore).map(offer => offer.merchant)).toEqual(["Store 1", "Store 2"]);
+    expect(result.offers.some(offer => offer.potentialStore || offer.linkLabel === "View store")).toBe(false);
     expect(result.facets.find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(["Wireless"]);
   });
 
@@ -193,8 +193,8 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q") ?? "";
       if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
-        { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://retry-alpha.example/product" },
-        { title: "Headphones Beta", source: "Store B", extracted_price: 110, product_link: "https://retry-beta.example/product" },
+        { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://retry-alpha.example/product", thumbnail: "https://img.example/retry-alpha.jpg" },
+        { title: "Headphones Beta", source: "Store B", extracted_price: 110, product_link: "https://retry-beta.example/product", thumbnail: "https://img.example/retry-beta.jpg" },
       ] }) };
       if (engine === "google" && search.includes("manufacturer specifications") && search.includes("Headphones Beta")) return { ok: true, json: async () => ({ organic_results: [{ title: "Headphones Beta Bluetooth manufacturer specifications", link: "https://retry-maker.example/beta" }] }) };
       if (engine === "google") return { ok: true, json: async () => ({ organic_results: [] }) };
@@ -210,8 +210,8 @@ describe("searchCatalog", () => {
   it("uses the local category query only when precise bilingual Shopping queries are empty", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q");
-      if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: search === "אוזניות" ? [{ title: "אוזניות Wireless ANC Sony", source: "Audio Store", extracted_price: 500, product_link: "https://audio.example/headphones" }] : [] }) };
-      if (request.hostname === "audio.example") return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => '<script type="application/ld+json">{"@type":"Product","name":"Wireless ANC Sony headphones","brand":"Sony","offers":{"price":500}}</script>' };
+      if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: search === "אוזניות" ? [{ title: "אוזניות Wireless ANC Sony", source: "Audio Store", extracted_price: 500, product_link: "https://audio.example/headphones", thumbnail: "https://img.example/audio.jpg" }] : [] }) };
+      if (request.hostname === "audio.example") return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => '<script type="application/ld+json">{"@type":"Product","name":"Wireless ANC Sony headphones","brand":"Sony","image":"https://img.example/audio.jpg","offers":{"price":500}}</script>' };
       return { ok: true, json: async () => ({ organic_results: [] }) };
     }));
     const result = await searchCatalog("Wireless Headphones ANC", "Israel", "local-category-fallback-fixture", undefined, undefined, "online");
@@ -222,9 +222,9 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q") ?? "";
       if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: [
-        { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://amazon.com/alpha", specifications: [{ name: "Material", value: "Metal" }] },
-        { title: "Headphones Beta", source: "Store B", extracted_price: 110, product_link: "https://amazon.com/beta" },
-        { title: "Headphones Gamma", source: "Store C", extracted_price: 120, product_link: "https://amazon.com/gamma" },
+        { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://amazon.com/alpha", thumbnail: "https://img.example/alpha.jpg", specifications: [{ name: "Material", value: "Metal" }] },
+        { title: "Headphones Beta", source: "Store B", extracted_price: 110, product_link: "https://amazon.com/beta", thumbnail: "https://img.example/beta.jpg" },
+        { title: "Headphones Gamma", source: "Store C", extracted_price: 120, product_link: "https://amazon.com/gamma", thumbnail: "https://img.example/gamma.jpg" },
       ] }) };
       if (engine === "google" && search.includes('"Headphones Beta"')) return { ok: true, json: async () => ({ organic_results: [{ title: "Headphones Beta Bluetooth specifications", link: "https://maker.example/beta" }] }) };
       if (engine === "google" && search.includes('"Headphones Gamma"')) return { ok: true, json: async () => ({ organic_results: [{ title: "Headphones Gamma Wired specifications", link: "https://maker.example/gamma" }] }) };
@@ -241,14 +241,18 @@ describe("searchCatalog", () => {
     expect(result.facets.find(facet => facet.id === "material")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Metal", "Plastic", "Wood"]));
   });
 
-  it("downgrades a tracked Google Shopping link to an honest retailer candidate", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+  it("resolves a tracked Google Shopping link to a verified product page", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url, options) => {
+      const request = new URL(String(url));
+      if (request.hostname === "www.google.com" && request.pathname === "/goto") return new Response(null, { status: 302, headers: { Location: "https://pc-shop.example/products/gaming-laptop" } });
+      if (request.hostname === "pc-shop.example") return new Response('<script type="application/ld+json">{"@type":"Product","name":"Gaming Laptop RAM 16GB 512GB SSD","image":"/laptop.jpg","offers":{"price":4999,"priceCurrency":"ILS"}}</script>', { headers: { "Content-Type": "text/html" } });
       const target = new URL(JSON.parse(options.body).url);
       if (target.searchParams.get("tbm") === "shop") return new Response(JSON.stringify({ shopping: [{ title: "Gaming Laptop RAM 16GB 512GB SSD", shop: "PC Shop", displayed_link: "https://pc-shop.example › laptops", extracted_price: 4999, price: "4,999 ₪", link: "https://www.google.com/goto?url=opaque" }] }));
       return new Response(JSON.stringify({ organic: [] }));
     }));
     const result = await searchCatalog("Gaming Laptop tracked fixture", "Israel", { apiKey: "tracked-fixture", zone: "zone" }, undefined, undefined, "online");
-    expect(result.offers[0]).toMatchObject({ category: "order", merchant: "PC Shop", destinationUrl: "https://pc-shop.example/", potentialStore: true, itemPrice: null, availability: "" });
+    expect(result.offers[0]).toMatchObject({ category: "order", merchant: "PC Shop", destinationUrl: "https://pc-shop.example/products/gaming-laptop", itemPrice: 4999, imageUrl: "https://pc-shop.example/laptop.jpg", availability: "" });
+    expect(result.offers[0].potentialStore).toBeUndefined();
     expect(result.warnings).toEqual([]);
   });
 
@@ -271,9 +275,9 @@ describe("searchCatalog", () => {
     expect(offer.attributes["spec:protection_circuits"]).toEqual(["Overvoltage", "Overcurrent"]);
     expect(result.facets.find(facet => facet.id === "spec:protection_circuits")?.options).toEqual([{ value: "Overvoltage", count: 2 }, { value: "Overcurrent", count: 2 }]);
     const localOnly = await searchCatalog("MSI MAG PSU", "Tel Aviv, Israel", "local-product-key", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(localOnly.offers).toHaveLength(2);
+    expect(localOnly.offers).toHaveLength(1);
     expect(localOnly.offers[0]).toMatchObject({ category: "local", destinationUrl: "https://local-pc.co.il/products/a750gl", itemPrice: 529, imageUrl: "https://local-pc.co.il/psu.jpg" });
-    expect(localOnly.offers[1]).toMatchObject({ category: "local", merchant: "Neighborhood Computers", potentialStore: true, linkLabel: "View store", destinationUrl: "https://www.google.com/maps/search/?api=1&query_place_id=nearby-place" });
+    expect(localOnly.offers.some(offer => offer.potentialStore || offer.linkLabel === "View store")).toBe(false);
   });
 
   it("coalesces identical in-flight scoped searches", async () => {

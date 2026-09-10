@@ -85,8 +85,7 @@ describe("bounded source recovery", () => {
       return { ok: true, json: async () => params.get("engine") === "google_maps" ? { local_results: Array.from({ length: start ? 10 : 20 }, (_, i) => ({ place_id: "clock-" + (start + i), title: "Clock Store " + (start + i), type: "Clock store", website: "https://clocks-" + (start + i) + ".example/product", gps_coordinates: { latitude: 32.08, longitude: 34.78 } })) } : {} };
     }));
     const r = await searchCatalog("clock coverage fixture", "Tel Aviv, Israel", "coverage-fixture-key", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(r.offers).toHaveLength(20);
-    expect(r.offers.every(offer => offer.category === "local" && offer.potentialStore && offer.linkLabel === "View store")).toBe(true);
+    expect(r.offers).toEqual([]);
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(2);
   });
   it("uses organic new-product retailers if the shopping engine fails", async () => {
@@ -105,20 +104,19 @@ describe("bounded source recovery", () => {
       ? { ok: false, status: 503, json: async () => ({ error: "Temporary failure" }) }
       : { ok: true, json: async () => ({ local_results: { places: [{ title: "Fallback Clock Shop", type: "Clock store", website: "https://fallback-clock.example/", gps_coordinates: { latitude: 32.08, longitude: 34.78 } }] } }) }));
     const r = await searchCatalog("clock maps fallback fixture", "Tel Aviv, Israel", "local-fallback-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(r.offers).toHaveLength(1);
-    expect(r.offers[0]).toMatchObject({ category: "local", merchant: "Fallback Clock Shop", potentialStore: true, linkLabel: "View store" });
+    expect(r.offers).toEqual([]);
     expect(r.warnings).toEqual([]);
     expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(url).searchParams.get("engine") === "google")).toBe(true);
   });
-  it("returns clearly marked local retailer candidates when Maps and the local pack fail", async () => {
+  it("does not return retailer candidates when Maps and the local pack fail", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => new URL(url).searchParams.get("engine") === "google_maps"
       ? { ok: false, status: 503, json: async () => ({ error: "Temporary failure" }) }
       : { ok: true, json: async () => ({ organic_results: [{ title: "Gaming laptops", source: "PC Store", displayed_link: "https://pc-store.co.il › laptops", link: "https://www.google.com/goto?url=opaque" }] }) }));
     const r = await searchCatalog("Gaming Laptop", "Tel Aviv, Israel", "organic-local-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(r.offers.some(offer => offer.category === "local" && offer.potentialStore && offer.merchant === "PC Store" && offer.availability === "")).toBe(true);
+    expect(r.offers).toEqual([]);
     expect(r.warnings).toEqual([]);
   });
-  it("uses OpenStreetMap stores when every provider-backed local search fails", async () => {
+  it("does not expose OpenStreetMap stores as products", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(url), params = request.searchParams;
       if (request.hostname === "overpass-api.de") return { ok: true, json: async () => ({ elements: [{ type: "node", id: 42, lat: 32.06, lon: 34.85, tags: { name: "Independent Audio", shop: "hifi", website: "https://independent-audio.example/" } }] }) };
@@ -126,11 +124,10 @@ describe("bounded source recovery", () => {
       return { ok: true, json: async () => ({}) };
     }));
     const r = await searchCatalog("Wireless Headphones", "Kiryat Ono, Israel", "osm-fallback-fixture", { lat: 32.059, lon: 34.856 }, undefined, "all");
-    expect(r.offers.some(offer => offer.category === "local" && offer.merchant === "Independent Audio" && offer.destinationUrl === "https://independent-audio.example/")).toBe(true);
-    expect(r.offers.some(offer => offer.category === "order" && offer.potentialStore && offer.availability === "")).toBe(true);
+    expect(r.offers).toEqual([]);
     expect(r.warnings).toEqual([]);
   });
-  it("combines OpenStreetMap stores with provider-backed map results", async () => {
+  it("keeps map-only and OpenStreetMap-only rows out of product results", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(url), params = request.searchParams;
       if (request.hostname === "overpass-api.de") return { ok: true, json: async () => ({ elements: [{ type: "node", id: 84, lat: 32.07, lon: 34.86, tags: { name: "OSM Audio", shop: "hifi", website: "https://osm-audio.example/" } }] }) };
@@ -138,7 +135,7 @@ describe("bounded source recovery", () => {
       return { ok: true, json: async () => ({}) };
     }));
     const r = await searchCatalog("Wireless Headphones combined local fixture", "Kiryat Ono, Israel", "combined-local-fixture", { lat: 32.061, lon: 34.857 }, undefined, "local");
-    expect(r.offers.map(offer => offer.merchant)).toEqual(expect.arrayContaining(["Map Audio", "OSM Audio"]));
+    expect(r.offers).toEqual([]);
   });
   it("does not return laptop replacement parts as laptop offers", () => {
     expect(isRelevantProduct("GPC70 motherboard for HP Pavilion Gaming Laptop", "Gaming Laptop")).toBe(false);
@@ -151,8 +148,7 @@ describe("bounded source recovery", () => {
       return { ok: true, json: async () => ({ local_results: params.get("q")?.startsWith("watch stores") ? [{ place_id: "watch-shop", title: "Watch and Clock Shop", type: "Watch store", gps_coordinates: { latitude: 32.08, longitude: 34.78 } }] : [] }) };
     }));
     const r = await searchCatalog("clock empty maps fixture", "Tel Aviv, Israel", "empty-maps-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(r.offers).toHaveLength(1);
-    expect(r.offers[0]).toMatchObject({ merchant: "Watch and Clock Shop", potentialStore: true, destinationUrl: "https://www.google.com/maps/search/?api=1&query_place_id=watch-shop" });
+    expect(r.offers).toEqual([]);
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps").length).toBeGreaterThanOrEqual(2);
   });
 });
