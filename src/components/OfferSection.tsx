@@ -7,7 +7,6 @@ const labels: Record<OfferCategory, string> = { order: "Order online", local: "B
 function Stars({ rating }: { rating: number }) { const full = Math.round(rating); return <span className="stars" aria-label={`${rating} out of 5 stars`}>{"★".repeat(full)}{"☆".repeat(Math.max(0, 5 - full))}</span>; }
 function money(value: number, currency = "USD") { try { return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: currency === "ILS" ? 0 : 2 }).format(value); } catch { return `${value.toFixed(2)} ${currency}`; } }
 function Price({ offer, category }: { offer: Offer; category: OfferCategory }) {
-  if (offer.potentialStore) return <small className="potential-store-label">No product listing confirmed</small>;
   if (offer.itemPrice === null) return <span className="unverified-price">Price unavailable</span>;
   return <div className="offer-price"><strong>{money(offer.totalPrice ?? offer.itemPrice, offer.currency)}</strong>{category !== "local" && <>
     {offer.totalEstimated && <small>Estimated total</small>}
@@ -19,13 +18,23 @@ function Price({ offer, category }: { offer: Offer; category: OfferCategory }) {
     {!!offer.otherFeesPrice && <small>Other charges: {money(offer.otherFeesPrice, offer.currency)}</small>}
   </>}</div>;
 }
+function websiteFavicon(offer: Offer) {
+  if (!offer.potentialStore) return "";
+  try {
+    const url = new URL(offer.destinationUrl);
+    if (/(^|\.)(?:google\.[a-z.]+|openstreetmap\.org)$/i.test(url.hostname)) return "";
+    return `${url.origin}/favicon.ico`;
+  } catch { return ""; }
+}
 function ProductImage({ offer }: { offer: Offer }) {
   const [index, setIndex] = useState(0);
-  const candidates = [...new Set([offer.imageUrl, ...(offer.imageUrls ?? [])].filter(Boolean))];
+  const candidates = [...new Set([offer.imageUrl, ...(offer.imageUrls ?? []), offer.potentialStore ? offer.merchantLogoUrl : "", websiteFavicon(offer)].filter(Boolean))];
   return candidates[index] ? <img className="product-image" src={candidates[index]} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setIndex(value => value + 1)} />
-    : <div className="product-image product-image--empty" aria-label="No product image available"><ImageOff size={22} /></div>;
+    : offer.potentialStore
+      ? <div className="product-image store-image" aria-label={`${offer.merchant} store`}><Store size={24} /><span>{offer.merchant.trim().charAt(0).toUpperCase()}</span></div>
+      : <div className="product-image product-image--empty" aria-label="No product image available"><ImageOff size={22} /></div>;
 }
 export function OfferSection({ category, offers, distanceUnit }: { category: OfferCategory; offers: Offer[]; distanceUnit: DistanceUnit }) {
   if (!offers.length) return null; const Icon = category === "order" ? ShoppingCart : category === "local" ? Store : RefreshCcw;
-  return <section className="offer-section" aria-labelledby={`category-${category}`}><h2 id={`category-${category}`}><Icon size={21} />{labels[category]} <span>({offers.length})</span></h2><div className="offer-table-heading" aria-hidden="true"><span>Offer</span><span>Retailer</span><span>Variant / Specs</span><span>Availability</span><span>Total price</span><span>Details</span></div><div className="offer-list">{offers.map((offer) => <article className="offer-row" key={offer.id}><ProductImage key={offer.imageUrl} offer={offer} /><div className="offer-merchant"><div className="merchant-identity">{offer.merchantLogoUrl && <img src={offer.merchantLogoUrl} alt="" />}<a href={offer.destinationUrl} target="_blank" rel="noreferrer">{offer.merchant}</a></div>{offer.reviewCount > 0 && <span><Stars rating={offer.rating} /> <small>({offer.reviewCount.toLocaleString()})</small></span>}</div><div className="offer-specs"><strong>{offer.title}</strong><span>{offer.subtitle}</span>{offer.condition && <small>{offer.condition}</small>}</div><div className="offer-availability"><strong className={/^out of stock$/i.test(offer.availability) ? "stock-unavailable" : undefined}>{offer.availability}</strong>{category === "local" && <span className="pickup-label">Local pickup</span>}{offer.arrival && <small>{offer.arrival}</small>}{offer.distanceMiles !== undefined && <small>{displayDistance(offer.distanceMiles, distanceUnit)}</small>}</div><Price offer={offer} category={category} /><a className="secondary-button offer-link" href={offer.destinationUrl} target="_blank" rel="noreferrer">{offer.linkLabel ?? "View product"}</a></article>)}</div></section>;
+  return <section className="offer-section" aria-labelledby={`category-${category}`}><h2 id={`category-${category}`}><Icon size={21} />{labels[category]} <span>({offers.length})</span></h2><div className="offer-table-heading" aria-hidden="true"><span>Offer</span><span>Retailer</span><span>Variant / Specs</span><span>Availability</span><span>Total price</span><span>Details</span></div><div className="offer-list">{offers.map((offer) => <article className="offer-row" key={offer.id}><ProductImage key={offer.imageUrl} offer={offer} /><div className="offer-merchant"><div className="merchant-identity">{offer.merchantLogoUrl && <img src={offer.merchantLogoUrl} alt="" />}<a href={offer.destinationUrl} target="_blank" rel="noreferrer">{offer.merchant}</a></div>{offer.reviewCount > 0 && <span><Stars rating={offer.rating} /> <small>({offer.reviewCount.toLocaleString()})</small></span>}</div><div className="offer-specs"><strong>{offer.title}</strong><span>{offer.subtitle}</span>{offer.condition && <small>{offer.condition}</small>}</div><div className="offer-availability">{offer.availability && <strong className={/^out of stock$/i.test(offer.availability) ? "stock-unavailable" : undefined}>{offer.availability}</strong>}{category === "local" && <span className="pickup-label">Local pickup</span>}{offer.arrival && <small>{offer.arrival}</small>}{offer.distanceMiles !== undefined && <small>{displayDistance(offer.distanceMiles, distanceUnit)}</small>}</div><Price offer={offer} category={category} /><a className="secondary-button offer-link" href={offer.destinationUrl} target="_blank" rel="noreferrer">{offer.linkLabel ?? "View product"}</a></article>)}</div></section>;
 }

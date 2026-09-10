@@ -196,7 +196,7 @@ describe("searchCatalog", () => {
         { title: "Wireless headphones Alpha", source: "Store A", extracted_price: 100, product_link: "https://retry-alpha.example/product" },
         { title: "Headphones Beta", source: "Store B", extracted_price: 110, product_link: "https://retry-beta.example/product" },
       ] }) };
-      if (engine === "google" && search.includes("datasheet") && search.includes("Headphones Beta")) return { ok: true, json: async () => ({ organic_results: [{ title: "Headphones Beta Bluetooth datasheet", link: "https://retry-maker.example/beta" }] }) };
+      if (engine === "google" && search.includes("manufacturer specifications") && search.includes("Headphones Beta")) return { ok: true, json: async () => ({ organic_results: [{ title: "Headphones Beta Bluetooth manufacturer specifications", link: "https://retry-maker.example/beta" }] }) };
       if (engine === "google") return { ok: true, json: async () => ({ organic_results: [] }) };
       if (request.hostname.endsWith(".example")) return { ok: true, url: request.href, headers: { get: () => "text/html" }, text: async () => `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: request.hostname.includes("alpha") ? "Wireless headphones Alpha" : "Headphones Beta", offers: { price: 100 } })}</script>` };
       return { ok: true, json: async () => ({}) };
@@ -204,7 +204,7 @@ describe("searchCatalog", () => {
     const result = await searchCatalog("headphones repeated recovery fixture", "Israel", "repeated-recovery-fixture", undefined, undefined, "online");
     expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.attributes.connectivity)).toEqual(["Wireless", "Bluetooth"]);
     expect(result.facets.find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(expect.arrayContaining(["Wireless", "Bluetooth"]));
-    expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(String(url)).searchParams.get("q")?.includes("datasheet"))).toBe(true);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(String(url)).searchParams.get("q")?.includes("manufacturer specifications"))).toBe(true);
   });
 
   it("uses the local category query only when precise bilingual Shopping queries are empty", async () => {
@@ -248,7 +248,7 @@ describe("searchCatalog", () => {
       return new Response(JSON.stringify({ organic: [] }));
     }));
     const result = await searchCatalog("Gaming Laptop tracked fixture", "Israel", { apiKey: "tracked-fixture", zone: "zone" }, undefined, undefined, "online");
-    expect(result.offers[0]).toMatchObject({ category: "order", merchant: "PC Shop", destinationUrl: "https://pc-shop.example/", potentialStore: true, itemPrice: null, availability: "Potential online retailer · confirm product availability" });
+    expect(result.offers[0]).toMatchObject({ category: "order", merchant: "PC Shop", destinationUrl: "https://pc-shop.example/", potentialStore: true, itemPrice: null, availability: "" });
     expect(result.warnings).toEqual([]);
   });
 

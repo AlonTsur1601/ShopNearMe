@@ -115,7 +115,7 @@ describe("bounded source recovery", () => {
       ? { ok: false, status: 503, json: async () => ({ error: "Temporary failure" }) }
       : { ok: true, json: async () => ({ organic_results: [{ title: "Gaming laptops", source: "PC Store", displayed_link: "https://pc-store.co.il › laptops", link: "https://www.google.com/goto?url=opaque" }] }) }));
     const r = await searchCatalog("Gaming Laptop", "Tel Aviv, Israel", "organic-local-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
-    expect(r.offers.some(offer => offer.category === "local" && offer.potentialStore && offer.merchant === "PC Store" && offer.availability === "Potential retailer · confirm location and product stock")).toBe(true);
+    expect(r.offers.some(offer => offer.category === "local" && offer.potentialStore && offer.merchant === "PC Store" && offer.availability === "")).toBe(true);
     expect(r.warnings).toEqual([]);
   });
   it("uses OpenStreetMap stores when every provider-backed local search fails", async () => {
@@ -127,7 +127,7 @@ describe("bounded source recovery", () => {
     }));
     const r = await searchCatalog("Wireless Headphones", "Kiryat Ono, Israel", "osm-fallback-fixture", { lat: 32.059, lon: 34.856 }, undefined, "all");
     expect(r.offers.some(offer => offer.category === "local" && offer.merchant === "Independent Audio" && offer.destinationUrl === "https://independent-audio.example/")).toBe(true);
-    expect(r.offers.some(offer => offer.category === "order" && offer.potentialStore && offer.availability === "Potential online retailer · confirm online ordering and product availability")).toBe(true);
+    expect(r.offers.some(offer => offer.category === "order" && offer.potentialStore && offer.availability === "")).toBe(true);
     expect(r.warnings).toEqual([]);
   });
   it("combines OpenStreetMap stores with provider-backed map results", async () => {

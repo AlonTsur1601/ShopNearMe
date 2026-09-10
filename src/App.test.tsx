@@ -55,6 +55,21 @@ describe("App", () => {
     expect(screen.getByLabelText("No product image available")).toBeVisible();
   });
 
+  it("shows a store image and an explicit unavailable price without a potential-retailer notice", () => {
+    const offer = { ...clockShowcase.offers[0], id: "store", category: "local" as const, merchant: "Clock Shop", potentialStore: true, imageUrl: "", imageUrls: [], merchantLogoUrl: "https://clock-shop.example/logo.png", itemPrice: null, totalPrice: null, availability: "" };
+    const view = render(<OfferSection category="local" offers={[offer]} distanceUnit="km" />);
+    expect(view.container.querySelector(".product-image")).toHaveAttribute("src", offer.merchantLogoUrl);
+    expect(screen.getByText("Price unavailable")).toBeVisible();
+    expect(screen.queryByText(/potential retailer|product listing confirmed/i)).not.toBeInTheDocument();
+  });
+
+  it("uses an identifiable store tile after every remote store image fails", () => {
+    const offer = { ...clockShowcase.offers[0], id: "store-tile", category: "local" as const, merchant: "Clock Shop", potentialStore: true, imageUrl: "", imageUrls: [], merchantLogoUrl: "", itemPrice: null, totalPrice: null, availability: "", destinationUrl: "https://www.google.com/maps/search/?api=1&query_place_id=clock-shop" };
+    const view = render(<OfferSection category="local" offers={[offer]} distanceUnit="km" />);
+    expect(view.container.querySelector(".store-image")).toBeVisible();
+    expect(screen.getByLabelText("Clock Shop store")).toHaveTextContent("C");
+  });
+
   it("automatically uses default current-location coordinates without manually choosing a place", async () => {
     const get = vi.fn(success => success({ coords: { latitude: 32.084, longitude: 34.887 } }));
     vi.stubGlobal("navigator", Object.create(navigator, { geolocation: { value: { getCurrentPosition: get } } }));
