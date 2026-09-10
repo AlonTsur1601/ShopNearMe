@@ -437,13 +437,13 @@ function coherentFacetCohort(offers, query, requested) {
   const pool = retailerProducts.length ? [...retailerProducts, ...secondHand] : secondHand.length ? secondHand : offers;
   const applicable = requiredFacetIds(pool, query);
   const candidates = (requested ?? applicable).filter(id => applicable.includes(id));
+  const target = Math.min(pool.length, Math.max(1, Math.min(4, Math.ceil(pool.length * .25))));
   const exact = completeFacetCohort(pool, candidates);
-  if (exact.length) return exact;
+  if (exact.length >= target) return exact;
   if (retailerProducts.length) {
     const shared = candidates.filter(id => retailerProducts.every(offer => valuesForFacet(offer, id).length));
     return pool.filter(offer => shared.every(id => valuesForFacet(offer, id).length));
   }
-  const target = Math.min(pool.length, Math.max(1, Math.min(4, Math.ceil(pool.length * .25))));
   let cohort = pool;
   for (const id of [...candidates].sort((a, b) => Number(specific.has(b)) - Number(specific.has(a)) || pool.filter(offer => valuesForFacet(offer, b).length).length - pool.filter(offer => valuesForFacet(offer, a).length).length)) {
     const complete = cohort.filter(offer => valuesForFacet(offer, id).length);
