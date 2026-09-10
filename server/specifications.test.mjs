@@ -8,6 +8,7 @@ describe("specification-driven facets", () => {
   it("rejects storage-sized values mislabeled as laptop memory", () => {
     expect(structuredAttributes([{ name: "Memory", value: "2 TB" }]).attributes.memory).toBeUndefined();
     expect(structuredAttributes([{ name: "Memory", value: "32 GB DDR5" }]).attributes.memory).toEqual(["32 GB"]);
+    expect(structuredAttributes([{ name: "RAM Size", value: "16 GB" }]).attributes.memory).toEqual(["16 GB"]);
   });
   it.each([
     ["air purifier", "CADR", "300 m³/h", "450 m³/h"],

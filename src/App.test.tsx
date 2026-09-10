@@ -70,6 +70,15 @@ describe("App", () => {
     expect(screen.getByLabelText("Clock Shop store")).toHaveTextContent("C");
   });
 
+  it("separates product and store totals so product-filter counts have the same denominator", async () => {
+    const store = { ...clockShowcase.offers[0], id: "store-total", category: "local" as const, potentialStore: true, imageUrl: "", itemPrice: null, totalPrice: null, availability: "", attributes: { retailer: "Clock Shop" } };
+    vi.mocked(searchProducts).mockResolvedValueOnce({ ...clockShowcase, offers: [clockShowcase.offers[0], store], resultCount: 2 });
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("1 product · 1 store")).toBeVisible();
+  });
+
   it("automatically uses default current-location coordinates without manually choosing a place", async () => {
     const get = vi.fn(success => success({ coords: { latitude: 32.084, longitude: 34.887 } }));
     vi.stubGlobal("navigator", Object.create(navigator, { geolocation: { value: { getCurrentPosition: get } } }));

@@ -55,6 +55,11 @@ export function App() {
       return sort === "price-asc" ? a.totalPrice - b.totalPrice : b.totalPrice - a.totalPrice;
     });
   }, [distance, priceMax, priceMin, selected, showcase.offers, showcase.facets, sort]);
+  const visibleProductCount = visibleOffers.filter((offer) => !offer.potentialStore).length;
+  const visibleStoreCount = visibleOffers.length - visibleProductCount;
+  const visibleResultLabel = visibleStoreCount
+    ? `${visibleProductCount} ${visibleProductCount === 1 ? "product" : "products"} · ${visibleStoreCount} ${visibleStoreCount === 1 ? "store" : "stores"}`
+    : `${visibleOffers.length} results`;
 
   const chips = Object.entries(selected).flatMap(([facet, values]) => values.map((value) => ({ facet, value })));
   const performSearch = useCallback(async (nextQuery: string, nextLocation = location) => {
@@ -118,7 +123,7 @@ export function App() {
           </div>
           <div className={chips.length ? "result-controls" : "result-controls result-controls--empty"}>
             {chips.length > 0 && <div className="filter-chips">{chips.map(({ facet, value }) => <button key={`${facet}-${value}`} onClick={() => toggleFilter(facet, value)}>{value}<X size={14} /></button>)}<button className="clear-chip" onClick={clearFilters}>Clear all</button></div>}
-            <div className="results-meta"><span>{loading ? "Searching…" : `${visibleOffers.length} results`}</span><div className="sort-control"><span>Sort by</span><SortMenu value={sort} onChange={setSort} /></div></div>
+            <div className="results-meta"><span>{loading ? "Searching…" : visibleResultLabel}</span><div className="sort-control"><span>Sort by</span><SortMenu value={sort} onChange={setSort} /></div></div>
           </div>
           <div className="offers-scroll">
             {!loading && showcase.warnings?.map((warning) => <p className="search-warning" role="status" key={warning}>{warning}</p>)}

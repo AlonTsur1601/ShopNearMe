@@ -161,7 +161,7 @@ a {
 .pickup-label { width: max-content; padding: 2px 5px; border-radius: 3px; background: #dff4fb; color: #047497; font-size: 11px; }
 .offer-price strong { font-size: 16px; }
 .free-shipping { color: var(--green); }
-.unverified-price { width: max-content; max-width: 150px; padding: 5px 8px; border: 1px solid #f0a4a8; border-radius: 4px; background: var(--red-soft); color: var(--red); font-size: 12px; font-weight: 720; }
+.unverified-price { width: max-content; max-width: 100%; box-sizing: border-box; padding: 5px 6px; border: 1px solid #f0a4a8; border-radius: 4px; background: var(--red-soft); color: var(--red); font-size: 11px; font-weight: 720; white-space: nowrap; }
 .offer-link { min-height: 38px; padding: 0 13px; border-color: var(--teal); background: var(--teal); color: #fff; font-size: 13px; box-shadow: 0 3px 9px rgb(0 118 123 / .12); }
 .offer-link:hover { background: var(--teal-dark); color: #fff; }
 .empty-results { padding: 72px 20px; text-align: center; }
