@@ -71,13 +71,13 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         }
         if (!data || typeof data !== "object" || Array.isArray(data) || data.error) throw new Error("Bright Data returned an invalid search response");
         // Unknown schemas/empty results are deliberately not cached as successes.
-        if ([data.organic, data.shopping, data.local, data.places].some(items => Array.isArray(items) && items.length)) {
+        if ([data.organic, data.shopping, data.local, data.places, data.snack_pack].some(items => (Array.isArray(items) ? items : items?.places ?? items?.results)?.length)) {
           if (cache.size >= 200) cache.delete(cache.keys().next().value);
           cache.set(key, { data, expires: Date.now() + TTL });
         }
         return data;
       } catch (error) {
-        const temporary = [408, 429, 500, 502, 503, 504].includes(error.status) || ["TimeoutError", "AbortError"].includes(error.name) || /fetch failed|network|did not return parsed/i.test(error.message);
+        const temporary = [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|did not return parsed/i.test(error.message);
         if (attempt || !temporary) throw error;
       }
     }

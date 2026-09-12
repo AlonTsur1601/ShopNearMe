@@ -10,7 +10,7 @@ let ebayToken = null;
 
 const colors = ["Black", "White", "Blue", "Red", "Green", "Silver", "Gold", "Gray", "Pink", "Brown", "Natural wood"];
 const materials = ["Solid wood", "Engineered wood", "Wood", "Glass", "Marble", "Stone", "Ceramic", "Metal", "Plastic", "Leather", "Steel", "Aluminum", "Cotton"];
-const features = ["Wireless", "Bluetooth", "Wi-Fi", "Waterproof", "Water resistant", "Rechargeable", "Smart", "Portable", "Noise cancelling", "Foldable", "Adjustable", "Energy efficient", "Dishwasher safe", "Machine washable", "Silent", "Fast charging", "Remote control", "Touchscreen"];
+const features = ["Wireless", "Wired", "Bluetooth", "Wi-Fi", "Waterproof", "Water resistant", "Rechargeable", "Smart", "Portable", "Noise cancelling", "Foldable", "Adjustable", "Energy efficient", "Dishwasher safe", "Machine washable", "Silent", "Fast charging", "Remote control", "Touchscreen"];
 
 function number(value) { if (typeof value === "number" && Number.isFinite(value)) return value; const parsed = Number.parseFloat(String(value ?? "").replace(/[^0-9.]/g, "")); return Number.isFinite(parsed) ? parsed : null; }
 function includesPhrase(text, value) { return new RegExp(`(?:^|[^a-z0-9])${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[- ]/g, "[- ]")}(?:$|[^a-z0-9])`, "i").test(text); }
@@ -294,14 +294,23 @@ async function enrichOffer(offer, query, requireProductPage = false) {
   return { ...offer, availability: page.availability || "", title: page.title && isRelevantProduct(page.title, query) ? page.title : offer.title, imageUrl: page.imageUrl || offer.imageUrl || "", imageUrls: [...new Set([...(page.imageUrls ?? []), offer.imageUrl].filter(Boolean))], gtin: page.gtin || offer.gtin, mpn: page.mpn || offer.mpn, productBrand: page.brand || offer.productBrand, itemPrice, ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: offer.importTaxPrice, taxPrice: offer.taxPrice, providerTotal: offer.totalPrice, crossBorder: offer.importTaxUnknown }), currency: page.price != null ? page.currency : offer.currency, priceVerified: page.price != null, attributeLabels: { ...offer.attributeLabels, ...attributeLabelsFor(query, `${offer.title} ${page.specificationText ?? ""}`, page) }, attributes: fillMissingAttributes(offer.attributes, attributesFor(query, `${offer.title} ${offer.subtitle} ${page.title ?? ""}`, offer.condition, offer.merchant, page)) };
 }
 
+function storeMatchesProduct(store, product) {
+  const site = merchantWebsite(store.destinationUrl), destination = merchantWebsite(product.destinationUrl);
+  if (!destination) return false;
+  if (site) return new URL(site).hostname.replace(/^www\./, "") === new URL(destination).hostname.replace(/^www\./, "");
+  // Local packs often supply a business name and address without a website.
+  // Match a complete merchant identity, never a substring such as PC / PC Store.
+  const identity = value => shortRetailerName(value).toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const left = identity(store.merchant), right = identity(product.merchant);
+  if (left.length >= 3 && left === right) return true;
+  const domainName = new URL(destination).hostname.replace(/^www\./, "").split(".")[0];
+  return left.length >= 3 && left === identity(domainName);
+}
+
 function mergeLocalProducts(mapOffers, productOffers) {
   const enriched = productOffers.map((product) => {
-    const productHost = safeHttpUrl(product.destinationUrl) ? new URL(product.destinationUrl).hostname.replace(/^www\./, "") : "";
-    const match = mapOffers.find((store) => {
-      const storeHost = safeHttpUrl(store.destinationUrl) ? new URL(store.destinationUrl).hostname.replace(/^www\./, "") : "";
-      const left = shortRetailerName(store.merchant).toLowerCase(), right = shortRetailerName(product.merchant).toLowerCase();
-      return (productHost && storeHost && productHost === storeHost) || (left.length > 2 && right.length > 2 && (left.includes(right) || right.includes(left)));
-    });
+    const match = mapOffers.filter(store => storeMatchesProduct(store, product))
+      .sort((a, b) => (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity))[0];
     if (!match) return product;
     return { ...product, rating: match.rating || product.rating, reviewCount: match.reviewCount || product.reviewCount, distanceMiles: match.distanceMiles, subtitle: product.potentialStore ? match.subtitle || product.subtitle : product.subtitle || match.subtitle, availability: product.potentialStore ? match.availability || product.availability : product.availability };
   });
@@ -312,13 +321,12 @@ export function merchantWebsite(value) {
   const link = safeHttpUrl(value);
   if (!link) return "";
   const host = new URL(link).hostname.toLowerCase();
-  return /(^|\.)(?:google\.[a-z.]+|goo\.gl|maps\.app\.goo\.gl|facebook\.com|instagram\.com|waze\.com|yelp\.com|g\.page)$/.test(host) ? "" : link;
+  return /(^|\.)(?:google\.[a-z.]+|goo\.gl|maps\.app\.goo\.gl|maps\.apple\.com|openstreetmap\.org|mapcarta\.com|atly\.com|easy\.co\.il|infobel\.com|facebook\.com|instagram\.com|waze\.com|yelp\.com|g\.page)$/.test(host) ? "" : link;
 }
 
 function nearbyProductOffers(maps, offers) {
-  return offers.filter(offer => offer.category === "order" && maps.some(store => {
-    try { return new URL(store.destinationUrl).hostname.replace(/^www\./, "") === new URL(offer.destinationUrl).hostname.replace(/^www\./, ""); } catch { return false; }
-  })).map(offer => ({ ...offer, id: `${offer.id}-pickup`, category: "local", totalPrice: offer.itemPrice, shippingPrice: null, importTaxPrice: null, taxPrice: null, otherFeesPrice: 0, importTaxUnknown: false, totalEstimated: false, availability: offer.availability || "" }));
+  return offers.filter(offer => offer.category === "order" && maps.some(store => storeMatchesProduct(store, offer)))
+    .map(offer => ({ ...offer, id: `${offer.id}-pickup`, category: "local", totalPrice: offer.itemPrice, shippingPrice: null, importTaxPrice: null, taxPrice: null, otherFeesPrice: 0, importTaxUnknown: false, totalEstimated: false, availability: offer.availability || "" }));
 }
 
 export function isCategoryPage(title, link) {
@@ -433,7 +441,7 @@ function coalesceOffers(offers) {
 function coherentFacetCohort(offers, query, requested) {
   const specific = new Set((productRules.find(group => group.match.test(query))?.rules ?? []).map(rule => rule.id));
   const secondHand = offers.filter(offer => offer.category === "secondHand");
-  const retailerProducts = offers.filter(offer => offer.category !== "secondHand" && [...specific].filter(id => valuesForFacet(offer, id).length).length >= 2);
+  const retailerProducts = offers.filter(offer => offer.category !== "secondHand" && [...specific].filter(id => valuesForFacet(offer, id).length).length >= Math.min(2, specific.size));
   const pool = retailerProducts.length ? [...retailerProducts, ...secondHand] : secondHand.length ? secondHand : offers;
   const applicable = requiredFacetIds(pool, query);
   const candidates = (requested ?? applicable).filter(id => applicable.includes(id));
@@ -457,7 +465,7 @@ function makeResult(query, offers, required) {
   const clean = coherentFacetCohort(valid, query, required).sort((a, b) => order[a.category] - order[b.category]);
   return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" };
 }
-export async function recoverModelSpecifications(offers, query, location, key, required = undefined, repeated = false) {
+export async function recoverModelSpecifications(offers, query, location, key, required = undefined, repeated = false, budget = { deadline: Infinity, remaining: 4 }) {
   const shared = shareProductSpecs(offers);
   const requiredIds = required ?? requiredFacetIds(shared, query);
   const propertyIds = [...new Set([...recoveryFacetIds(shared, query), ...requiredIds])];
@@ -474,21 +482,22 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     if (offer.mpn && /[a-z]/i.test(offer.mpn)) return page.mpn?.toLowerCase() === offer.mpn.toLowerCase() && (!offer.productBrand || String(page.brand ?? "").toLowerCase() === String(offer.productBrand).toLowerCase());
     return matchingTitle(offer, page.title);
   };
-  const recovered = await mapConcurrent(shared, 20, async offer => {
-    if (offer.potentialStore) return offer;
+  const recovered = await mapConcurrent(shared, 4, async offer => {
+    if (offer.potentialStore || budget.deadline - Date.now() < 1000 || budget.remaining <= 0) return offer;
     const missing = propertyIds.filter(id => !valuesForFacet(offer, id).length);
     if (!missing.length) return offer;
     const lookup = /^\d{8,14}$/.test(offer.gtin ?? "") ? offer.gtin : offer.productBrand && /[a-z]/i.test(offer.mpn ?? "") ? `${offer.productBrand} ${offer.mpn}` : offer.title;
     if (!lookup) return offer;
+    budget.remaining--;
     let attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     const requested = missing.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
     const searches = repeated
       ? [`"${lookup}" manufacturer specifications ${requested}`.trim()]
-      : [`"${lookup}" technical specifications ${requested}`.trim(), `"${lookup}" datasheet ${requested}`.trim()];
+      : [`"${lookup}" technical specifications ${requested}`.trim()];
     const attempts = await Promise.allSettled(searches.map(async search => {
         const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
         if (typeof key === "string") params.set("api_key", key);
-        return searchProvider(params, key, 2000);
+        return searchProvider(params, key, Math.min(4000, budget.deadline - Date.now()));
     }));
     const seenLinks = new Set(), results = attempts.flatMap(attempt => attempt.status === "fulfilled" ? attempt.value.organic_results ?? [] : []).filter(item => {
       const link = safeHttpUrl(item.link), identity = link || `${item.title ?? ""}|${item.snippet ?? ""}`;
@@ -501,6 +510,7 @@ export async function recoverModelSpecifications(offers, query, location, key, r
       attributes = fillMissingAttributes(attributes, attributesFor(query, evidence, offer.condition, offer.merchant));
     }
     const pages = await mapConcurrent(results.filter(item => safeHttpUrl(item.link)).slice(0, 2), 2, async item => {
+      if (budget.deadline - Date.now() < 500 || propertyIds.every(id => valuesForFacet({ attributes }, id).length)) return null;
       try { return await enrichProductPage(item.link); } catch { return null; }
     });
     for (const page of pages) {
@@ -510,24 +520,29 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     }
     return { ...offer, attributes, attributeLabels };
   });
-  return shareProductSpecs(recovered);
+  const result = shareProductSpecs(recovered);
+  if (!repeated && budget.remaining > 0 && budget.deadline - Date.now() >= 1000 && result.some(offer => propertyIds.some(id => !valuesForFacet(offer, id).length))) {
+    return recoverModelSpecifications(result, query, location, key, requiredIds, true, budget);
+  }
+  return result;
 }
 
-async function finishBefore(promise, deadline, fallback) {
+async function finishBefore(operation, deadline, fallback) {
   const remaining = Math.max(0, deadline - Date.now());
   if (!remaining) return fallback;
   let timer;
-  try { return await Promise.race([promise, new Promise(resolve => { timer = setTimeout(() => resolve(fallback), remaining); })]); }
+  try { return await Promise.race([operation(), new Promise(resolve => { timer = setTimeout(() => resolve(fallback), remaining); })]); }
   finally { clearTimeout(timer); }
 }
 
 async function completeFacetAttributes(offers, query, location, key, deadline = Number.POSITIVE_INFINITY) {
   let enriched = shareProductSpecs(coalesceOffers(offers)), required = requiredFacetIds(enriched, query);
-  enriched = await finishBefore(recoverModelSpecifications(enriched, query, location, key, required), deadline, enriched);
+  const budget = { deadline, remaining: 4 };
+  enriched = await finishBefore(() => recoverModelSpecifications(enriched, query, location, key, required, false, budget), deadline, enriched);
   const expanded = requiredFacetIds(enriched, query);
   required = [...required, ...expanded.filter(id => !required.includes(id))];
   if (enriched.some(offer => !offer.potentialStore && required.some(id => !valuesForFacet(offer, id).length))) {
-    enriched = await finishBefore(recoverModelSpecifications(enriched, query, location, key, required, true), deadline, enriched);
+    enriched = await finishBefore(() => recoverModelSpecifications(enriched, query, location, key, required, true, budget), deadline, enriched);
   }
   return { offers: enriched, required };
 }
@@ -547,7 +562,7 @@ async function shoppingSearch(query, location, key) {
   const searches = [await Promise.resolve(searchVariant(query)).then(value => ({ status: "fulfilled", value }), reason => ({ status: "rejected", reason }))];
   const firstRows = searches[0].status === "fulfilled" ? [...(searches[0].value.shopping_results ?? []), ...(searches[0].value.inline_shopping_results ?? [])] : [];
   const translated = localQuery(query, code);
-  if (!firstRows.some(item => isRelevantProduct(item.title, query)) && translated !== query) {
+  if (searches[0].status === "fulfilled" && !firstRows.some(item => isRelevantProduct(item.title, query)) && translated !== query) {
     searches.push(await Promise.resolve(searchVariant(translated)).then(value => ({ status: "fulfilled", value }), reason => ({ status: "rejected", reason })));
   }
   if (searches.every(result => result.status === "rejected")) throw searches[0].reason;
@@ -629,7 +644,7 @@ async function osmStores(query, location, origin) {
   const labels = { hifi: "audio", sports: "sporting goods", clothes: "clothing", houseware: "home goods", books: "book", toys: "toy", games: "game", photo: "photography", mobile_phone: "mobile phone", department_store: "department" };
   const places = (response.elements ?? []).filter(element => element.tags?.name).map(element => {
     const tags = element.tags, lat = number(element.lat ?? element.center?.lat), lon = number(element.lon ?? element.center?.lon), shop = tags.shop ?? "retail", address = [tags["addr:housenumber"], tags["addr:street"], tags["addr:city"]].filter(Boolean).join(" ");
-    return { place_id: `osm-${element.type}-${element.id}`, title: tags.name, type: `${labels[shop] ?? shop.replaceAll("_", " ")} store`, address: address || `Near ${providerLocation(location) || "the selected location"}`, website: merchantWebsite(tags.website || tags["contact:website"]) || `https://www.openstreetmap.org/${element.type}/${element.id}`, gps_coordinates: Number.isFinite(lat) && Number.isFinite(lon) ? { latitude: lat, longitude: lon } : undefined };
+    return { place_id: `osm-${element.type}-${element.id}`, title: tags["name:en"] || tags.name, type: `${labels[shop] ?? shop.replaceAll("_", " ")} store`, address: address || `Near ${providerLocation(location) || "the selected location"}`, website: merchantWebsite(tags.website || tags["contact:website"]) || `https://www.openstreetmap.org/${element.type}/${element.id}`, gps_coordinates: Number.isFinite(lat) && Number.isFinite(lon) ? { latitude: lat, longitude: lon } : undefined };
   });
   osmStoreCache.set(cacheKey, { at: Date.now(), value: places });
   return places;
@@ -646,19 +661,17 @@ async function mapsSearch(query, location, key, coordinates) {
   if (origin) params.set("ll", "@" + origin.lat + "," + origin.lon + ",14z");
   if (!place && origin) params.set("nearby", "true");
   const localRows = data => Array.isArray(data?.local_results) ? data.local_results : Array.isArray(data?.local_results?.places) ? data.local_results.places : [];
-  const attempts = [params];
+  // A normal Google local pack remains usable when the Maps endpoint times out.
+  // Run different sources concurrently instead of paying for two Maps requests.
+  const packParams = new URLSearchParams({ engine: "google", q: target + " near " + (place.replace(/,\s*/g, " ") || `${origin.lat},${origin.lon}`), hl: "en" });
+  const code = countryCode(searchLocation(location, coordinates));
+  if (code) packParams.set("gl", code.toLowerCase());
+  if (typeof key === "string") packParams.set("api_key", key);
   const relatedType = storeTypes.find(type => type !== storeType);
-  if (relatedType) {
-    const related = new URLSearchParams(params);
-    related.set("q", relatedType + " stores" + (place ? " near " + place : " near me"));
-    attempts.push(related);
-  } else {
-    const nextPage = new URLSearchParams(params);
-    nextPage.set("start", "20");
-    attempts.push(nextPage);
-  }
+  if (relatedType) params.set("q", relatedType + " stores" + (place ? " near " + place : " near me"));
+  const attempts = [packParams, params];
   const [settled, openStreetMapPlaces] = await Promise.all([
-    Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, 5500))),
+    Promise.allSettled(attempts.map((attempt, index) => searchProvider(attempt, key, index === 0 ? 8000 : 4000))),
     osmStores(query, location, origin).catch(() => []),
   ]);
   let places = [];
@@ -669,22 +682,27 @@ async function mapsSearch(query, location, key, coordinates) {
     places.push(...local);
   }
   places.push(...openStreetMapPlaces);
-  if (!places.length && settled[0].status === "rejected") throw settled[0].reason;
+  if (!places.length && settled.every(result => result.status === "rejected")) throw settled[0].reason;
   const seen = new Set();
   return places.map((place, index) => ({ place, index, score: relevance(place, query, origin) }))
+    .sort((a, b) => (distanceMiles(origin, a.place.gps_coordinates && { lat: a.place.gps_coordinates.latitude, lon: a.place.gps_coordinates.longitude }) ?? Infinity) - (distanceMiles(origin, b.place.gps_coordinates && { lat: b.place.gps_coordinates.latitude, lon: b.place.gps_coordinates.longitude }) ?? Infinity) || b.score - a.score)
     .filter(({ place, score }) => { const destination = merchantWebsite(place.website) || place.links?.directions || place.google_maps_url || place.place_id || place.data_id; const titleKey = `title:${String(place.title ?? "").trim().toLowerCase()}`, destinationKey = merchantWebsite(place.website) ? `host:${new URL(merchantWebsite(place.website)).hostname.replace(/^www\./, "")}` : ""; if (!destination || !Number.isFinite(score) || score < 2 || seen.has(titleKey) || (destinationKey && seen.has(destinationKey))) return false; seen.add(titleKey); if (destinationKey) seen.add(destinationKey); return true; })
     .sort((a, b) => b.score - a.score).slice(0, 50).map(({ place, index }) => mapOffer(place, index, query, origin));
 }
-async function localProductSearch(query, location, key) {
+async function localProductSearch(query, location, key, stores = [], deadline = Infinity) {
   const code = countryCode(location), tld = code ? countryTlds.get(code) : undefined;
   const hasLocation = location && location !== "Current location";
   const terms = code === "IL" ? "מחיר site:" + tld : tld ? "price site:" + tld : hasLocation ? "price near " + location : "price buy";
-  const base = query + " " + terms + " -inurl:cat -inurl:models -inurl:category";
+  const merchants = [...new Set(stores.map(store => {
+    const site = merchantWebsite(store.destinationUrl);
+    return site ? "site:" + new URL(site).hostname : '"' + shortRetailerName(store.merchant).replaceAll('"', '') + '"';
+  }))].slice(0, 6);
+  const base = localQuery(query, code) + " " + (merchants.length ? "(" + merchants.join(" OR ") + ")" : terms) + " -inurl:cat -inurl:models -inurl:category";
   const queries = [base];
   const pages = await Promise.allSettled(queries.map(q => {
     const params = new URLSearchParams({ engine: "google", q, api_key: key, hl: code === "IL" ? "he" : "en", num: "30" });
     if (code) params.set("gl", code.toLowerCase());
-    return searchProvider(params, key, 5500);
+    return searchProvider(params, key, Math.min(5500, Math.max(1, deadline - Date.now())));
   }));
   if (pages.every(p => p.status === "rejected")) throw pages[0].reason;
   const seen = new Set(), domains = new Map();
@@ -694,11 +712,11 @@ async function localProductSearch(query, location, key) {
     seen.add(link); return true;
   }).map(item => { const domain = new URL(item.link).hostname; const rank = domains.get(domain) ?? 0; domains.set(domain, rank + 1); return { item, rank }; })
     .sort((a, b) => a.rank - b.rank).slice(0, 24).map(({ item }) => item);
-  const products = (await mapConcurrent(candidates, 24, (item, index) => localProduct(item, index, query, location))).filter(Boolean);
+  const products = (await mapConcurrent(candidates, 24, (item, index) => Date.now() < deadline ? localProduct(item, index, query, location) : null)).filter(Boolean);
   return products;
 }
 async function runScope(scope, query, location, key, coordinates, credentials) {
-  const facetDeadline = Date.now() + 14500;
+  const facetDeadline = Date.now() + 17000;
   const productLocation = searchLocation(location, coordinates);
   if (scope === "local") {
     // Local-only searches need the same product discovery as combined searches.
@@ -707,14 +725,24 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   }
   let settled;
   if (scope === "all") {
-    const [shopping, maps, secondHand] = await Promise.allSettled([shoppingSearch(query, productLocation, key), mapsSearch(query, location, key, coordinates), ebaySearch(query, productLocation, credentials)]);
-    const shoppingHasProducts = shopping.status === "fulfilled" && shopping.value.length > 0;
-    const [retailerPages] = await Promise.allSettled([shoppingHasProducts ? Promise.resolve([]) : finishBefore(localProductSearch(query, productLocation, key), facetDeadline, [])]);
-    settled = [shopping, maps, retailerPages, secondHand];
+    const shoppingJob = finishBefore(() => shoppingSearch(query, productLocation, key), facetDeadline, []);
+    const mapsJob = mapsSearch(query, location, key, coordinates);
+    const pagesJob = localProductSearch(query, productLocation, key, [], facetDeadline);
+    const localJob = (async () => {
+      const [maps, pages] = await Promise.allSettled([mapsJob, pagesJob]);
+      if (maps.status !== "fulfilled" || !maps.value.length) return [];
+      const found = pages.status === "fulfilled" ? pages.value : [];
+      if (nearbyProductOffers(maps.value, found).length) return [];
+      return finishBefore(() => localProductSearch(query, productLocation, key, maps.value, facetDeadline), facetDeadline, []);
+    })();
+    const [shopping, maps, retailerPages, secondHand, targeted] = await Promise.allSettled([shoppingJob, mapsJob, pagesJob, ebaySearch(query, productLocation, credentials), localJob]);
+    if (targeted.status === "fulfilled" && targeted.value.length) {
+      settled = [shopping, maps, { status: "fulfilled", value: [...(retailerPages.status === "fulfilled" ? retailerPages.value : []), ...targeted.value] }, secondHand];
+    } else settled = [shopping, maps, retailerPages, secondHand];
   } else if (scope === "online") {
     const [shopping, secondHand] = await Promise.allSettled([shoppingSearch(query, productLocation, key), ebaySearch(query, productLocation, credentials)]);
     const [retailerPages] = await Promise.allSettled([
-      shopping.status === "fulfilled" && shopping.value.length > 0 ? Promise.resolve([]) : finishBefore(localProductSearch(query, productLocation, key), facetDeadline, []),
+      shopping.status === "fulfilled" && shopping.value.length > 0 ? Promise.resolve([]) : finishBefore(() => localProductSearch(query, productLocation, key, [], facetDeadline), facetDeadline, []),
     ]);
     settled = [shopping, retailerPages, secondHand];
   } else {
@@ -729,7 +757,7 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     offers = [...mergeLocalProducts(maps, nearbyProductOffers(maps, online)), ...online, ...value(3)];
   }
   const completed = await completeFacetAttributes(offers, query, location, key, facetDeadline), enriched = completed.offers, required = completed.required;
-  const result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.availability === "Out of stock" ? "Out of stock" : "" })), location), required);
+  const result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.availability === "Out of stock" ? "Out of stock" : "" })), productLocation), required);
   const labels = scope === "online" ? ["Online products", "Retailer product pages", "Second-hand products"]
     : scope === "local" ? ["Nearby products"] : scope === "local-products" ? ["Retailer product pages"]
     : ["Online products", "Nearby product availability", "Retailer product pages", "Second-hand products"];

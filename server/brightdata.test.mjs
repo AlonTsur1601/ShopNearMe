@@ -2,6 +2,21 @@ import { afterEach, expect, it, vi } from "vitest";
 import { brightDataSearch, brightDataSearchUrl } from "./brightdata.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
+it("reads and caches the native local pack even without organic results or website links", async () => {
+  const { searchProvider } = await import("./providers.mjs");
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ snack_pack: [{ cid: "pack-1", name: "Nearby PC - Central", type: "Computer store", address: "1 Main St", reviews_cnt: 12 }] })));
+  vi.stubGlobal("fetch", fetcher);
+  const run = () => searchProvider(new URLSearchParams({ engine: "google", q: "pack-only cache fixture" }), { apiKey: "test", zone: "zone" });
+  const result = await run(); await run();
+  expect(result.local_results[0]).toMatchObject({ place_id: "pack-1", title: "Nearby PC - Central", type: "Computer store", reviews: 12 });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it("does not pay for a second identical request after its deadline expired", async () => {
+  const fetcher = vi.fn(async () => { throw new DOMException("Source timed out", "TimeoutError"); });
+  vi.stubGlobal("fetch", fetcher);
+  await expect(brightDataSearch({ query: "expired source fixture" }, { apiKey: "test", zone: "zone" })).rejects.toThrow();
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
 it("rejects editorial and category URLs rather than borrowing a recommendation price", async () => {
   const { isCategoryPage } = await import("./search.mjs");
   expect(isCategoryPage("Tent guide", "https://shop.example/blogs/news/tents-tips")).toBe(true);

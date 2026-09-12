@@ -113,8 +113,8 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("order");
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(3);
-    expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+stores+near+Tel+Aviv");
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(5);
+    expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=watch+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
   });
 

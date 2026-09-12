@@ -14,7 +14,7 @@ const phrases = {
   "עם סטנד":"With stand", "ללא סטנד":"Without stand", "זכוכית מחוסמת":"Tempered glass", "פלדת אל חלד":"Stainless steel",
   "מסך מחשב":"Computer monitor", "גובה מתכוונן":"Height adjustable", "אלחוטי":"Wireless", "חוטי":"Wired",
   "כניסת אוזניות":"Headphone jack", "יציאת אוזניות":"Headphone jack", "כיסאות כלולים":"Includes chairs", "תיק נשיאה":"Carry bag",
-  "sans fil":"Wireless", "acier inoxydable":"Stainless steel", "bois massif":"Solid wood",
+  "sans fil":"Wireless", "acier inoxydable":"Stainless steel", "bois massif":"Solid wood", "מתקפל ונייד":"Foldable Portable",
 };
 const words = {
   "שחור":"Black", "לבן":"White", "כחול":"Blue", "אדום":"Red", "ירוק":"Green", "אפור":"Gray", "צהוב":"Yellow", "חום":"Brown",
@@ -24,7 +24,7 @@ const words = {
   "שטוח":"Flat", "קעור":"Curved", "מבריק":"Glossy", "מט":"Matte", "חיצוני":"External", "פנימי":"Internal", "פיבוט":"Pivot",
   "סיבוב":"Swivel", "הטייה":"Tilt", "הטיה":"Tilt", "גובה":"Height", "רוחב":"Width", "עומק":"Depth", "אורך":"Length",
   "משקל":"Weight", "מעלות":"degrees", "עונות":"seasons", "אנשים":"people", "אדם":"person", "ליטר":"L", "סנטימטר":"cm",
-  "מילימטר":"mm", "מטר":"m", "דלתות":"doors", "חדרים":"rooms", "קמפינג":"Camping", "מתקפל":"Foldable", "עגול":"Round",
+  "מילימטר":"mm", "מטר":"m", "דלתות":"doors", "חדרים":"rooms", "קמפינג":"Camping", "מתקפל":"Foldable", "מתכוונן":"Adjustable", "עגול":"Round",
   "מרובע":"Square", "מלבני":"Rectangular", "אליפטי":"Oval", "rouge":"Red", "noir":"Black", "noire":"Black", "blanc":"White",
   "blanche":"White", "bleu":"Blue", "bleue":"Blue", "vert":"Green", "verte":"Green", "gris":"Gray", "jaune":"Yellow",
   "oui":"Yes", "non":"No", "bois":"Wood", "verre":"Glass", "acier":"Steel", "plastique":"Plastic", "coton":"Cotton", "cuir":"Leather",
@@ -36,9 +36,14 @@ export function englishLabel(value) {
   if (!/[\p{L}]/u.test(label)) return "";
   return labels[label.toLowerCase()] ?? englishText(label);
 }
+for (const word of "features platform aspect printer sided device layout drive".split(" ")) vocabulary.add(word);
 for (const word of "wattage source settings dpi sensor focus focal zoom stabilizer stabilization stabilisation megapixels fps aperture pixel pixels mode thread fire retardant ventilation bag included poles stakes jack stove skirt snow seams taped double single layer layers pu pvc pe tpu polyester polycotton oxford ripstop ultralight lightweight freestanding pop instant dome tunnel geodesic footprint flysheet rainfly fiberglass fibreglass dac denier index resistance windproof breathable fabric inner outer number rooms seasons oz person sleeping headroom vestibule entrances head space carry bag hood sleeves doors door printed plain mesh net insect protection coated construction ultraviolet".split(" ")) vocabulary.add(word);
 export function englishText(value, properName = false) {
   let text = String(value ?? "").replace(/[\u200e\u200f\u202a-\u202e]/g, "").trim();
+  if (properName && /[\u0590-\u05ff]/.test(text)) {
+    const latin = text.split(/\s+[-–—|]\s+/).filter(part => /^[\x20-\x7e]+$/.test(part) && /[a-z]/i.test(part));
+    if (latin.length === 1) text = latin[0];
+  }
   if (!text || /\uFFFD|Ã|Â|Ð|×[\u0080-\u00ff]|&(?:#\w+|\w+);/.test(text)) return "";
   for (const [source, target] of Object.entries(phrases)) text = text.replaceAll(source, target);
   text = text.replace(/[\p{L}]+/gu, word => words[word.toLowerCase()] ?? word);
@@ -49,7 +54,15 @@ export function englishText(value, properName = false) {
 export function translateTerms(value) {
   let text = String(value ?? "");
   for (const [source, target] of Object.entries(phrases)) text = text.replaceAll(source, target);
-  return text.replace(/[\p{L}]+/gu, word => words[word.toLowerCase()] ?? word);
+  return text.replace(/[\p{L}]+/gu, word => {
+    if (words[word.toLowerCase()]) return words[word.toLowerCase()];
+    // Hebrew joins prepositions/conjunctions to the property word (e.g. מאלומיניום).
+    // Only strip a short prefix when the complete remainder is in the dictionary.
+    for (let prefix = 1; prefix <= 2; prefix++) {
+      if (/^[ובכלמשה]+$/.test(word.slice(0, prefix)) && words[word.slice(prefix)]) return words[word.slice(prefix)];
+    }
+    return word;
+  }).replace(/\baluminium\b/gi, "Aluminum");
 }
 export function normalizeOfferFacets(offer) {
   const attributes = {}, attributeLabels = {};
@@ -58,6 +71,7 @@ export function normalizeOfferFacets(offer) {
     if (name) { const label = englishLabel(name); if (!label) continue; attributeLabels[id] = label; }
     let values = [raw].flat().map(value => englishText(value, id === "retailer" || id === "brand")).filter(Boolean);
     if (id === "color") values = values.map(value => value.toLowerCase().replace(/\bgrey\b/g, "gray").replace(/\b[a-z]/g, char => char.toUpperCase()));
+    if (id === "material") values = values.map(value => value.replace(/\baluminium\b/gi, "Aluminum"));
     if (id === "retailer" && !values.length) {
       try { values = [new URL(offer.destinationUrl).hostname.replace(/^www\./, "")]; } catch { /* no safe merchant label */ }
     }

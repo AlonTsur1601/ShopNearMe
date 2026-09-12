@@ -83,8 +83,9 @@ export function App() {
       return result;
     } finally { if (!controller.signal.aborted) { setLoading(false); setLocating(false); } }
   }, [location, locationPlace]);
-  const webMcpState = useRef({ location, performSearch, searchResult });
-  webMcpState.current = { location, performSearch, searchResult };
+  const visibleResult = searchResult ? { ...searchResult, offers: visibleOffers, resultCount: visibleOffers.length } : null;
+  const webMcpState = useRef({ location, performSearch, searchResult: visibleResult });
+  webMcpState.current = { location, performSearch, searchResult: visibleResult };
   const search = () => { void performSearch(query); };
   const goHome = () => { setActiveQuery(null); setQuery(""); setSelected({}); setSearchResult(null); };
   const toggleFilter = (facet: string, value: string) => setSelected((current) => { const values = current[facet] ?? []; return { ...current, [facet]: values.includes(value) ? values.filter((item) => item !== value) : [...values, value] }; });

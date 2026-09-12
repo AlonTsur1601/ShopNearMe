@@ -86,7 +86,7 @@ describe("bounded source recovery", () => {
     }));
     const r = await searchCatalog("clock coverage fixture", "Tel Aviv, Israel", "coverage-fixture-key", { lat: 32.08, lon: 34.78 }, undefined, "local");
     expect(r.offers).toEqual([]);
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(2);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(1);
   });
   it("uses organic new-product retailers if the shopping engine fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
@@ -99,16 +99,16 @@ describe("bounded source recovery", () => {
     expect(r.offers).toHaveLength(1);
     expect(r.offers[0]).toMatchObject({ category: "order", itemPrice: 200, attributes: { capacity: ["6 people"] } });
   });
-  it("recovers local-pack results from Google when Maps fails", async () => {
+  it("does not expose a recovered local-pack store without its product page", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => new URL(url).searchParams.get("engine") === "google_maps"
       ? { ok: false, status: 503, json: async () => ({ error: "Temporary failure" }) }
       : { ok: true, json: async () => ({ local_results: { places: [{ title: "Fallback Clock Shop", type: "Clock store", website: "https://fallback-clock.example/", gps_coordinates: { latitude: 32.08, longitude: 34.78 } }] } }) }));
     const r = await searchCatalog("clock maps fallback fixture", "Tel Aviv, Israel", "local-fallback-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
     expect(r.offers).toEqual([]);
-    expect(r.warnings).toEqual(["Nearby product availability could not be searched. Please try again."]);
+    expect(r.warnings).toEqual([]);
   });
   it("does not return retailer candidates when Maps and the local pack fail", async () => {
-    vi.stubGlobal("fetch", vi.fn(async url => new URL(url).searchParams.get("engine") === "google_maps"
+    vi.stubGlobal("fetch", vi.fn(async url => new URL(url).searchParams.get("engine") === "google_maps" || /stores near/.test(new URL(url).searchParams.get("q") ?? "")
       ? { ok: false, status: 503, json: async () => ({ error: "Temporary failure" }) }
       : { ok: true, json: async () => ({ organic_results: [{ title: "Gaming laptops", source: "PC Store", displayed_link: "https://pc-store.co.il › laptops", link: "https://www.google.com/goto?url=opaque" }] }) }));
     const r = await searchCatalog("Gaming Laptop", "Tel Aviv, Israel", "organic-local-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
@@ -148,6 +148,7 @@ describe("bounded source recovery", () => {
     }));
     const r = await searchCatalog("clock empty maps fixture", "Tel Aviv, Israel", "empty-maps-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
     expect(r.offers).toEqual([]);
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps").length).toBeGreaterThanOrEqual(2);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(1);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(url).searchParams.get("q")?.startsWith("watch stores"))).toBe(true);
   });
 });

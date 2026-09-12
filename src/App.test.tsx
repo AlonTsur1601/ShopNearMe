@@ -159,6 +159,27 @@ describe("App", () => {
     Reflect.deleteProperty(document, "modelContext");
   });
 
+  it("returns the displayed filtered and sorted offers through WebMCP", async () => {
+    const registerTool = vi.fn();
+    Object.defineProperty(document, "modelContext", { configurable: true, value: { registerTool } });
+    const view = render(<App />);
+    const tool = (name: string) => registerTool.mock.calls.find(([definition]) => definition.name === name)![0];
+    await act(async () => { await tool("search_products").execute({ query: "clock", location: "Tel Aviv, Israel" }); });
+    const total = tool("get_visible_results").execute({}).offers.length;
+    await act(async () => { await tool("filter_results").execute({ filters: { type: ["Wall clock"] } }); });
+    await act(async () => { await tool("sort_results").execute({ direction: "price-desc" }); });
+    const result = tool("get_visible_results").execute({});
+    expect(result.resultCount).toBeGreaterThan(0);
+    expect(result.resultCount).toBeLessThan(total);
+    expect(result.offers.every((offer: { attributes: Record<string, string | string[]> }) => [offer.attributes.type].flat().includes("Wall clock"))).toBe(true);
+    const prices = result.offers.map((offer: { totalPrice: number }) => offer.totalPrice);
+    expect(prices).toEqual([...prices].sort((a, b) => b - a));
+    expect(screen.getByText(`${result.resultCount} results`)).toBeVisible();
+    expect(registerTool).toHaveBeenCalledTimes(5);
+    view.unmount();
+    Reflect.deleteProperty(document, "modelContext");
+  });
+
   it("opens and closes the scrollable mobile filter drawer", async () => {
     render(<App />);
     fireEvent.change(screen.getByPlaceholderText("Search any product"), { target: { value: "clock" } });
