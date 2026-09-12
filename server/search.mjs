@@ -4,7 +4,7 @@ import { monitorAttributes, proseAttributes, specificationPairs, structuredAttri
 import { amountInCurrency, costBreakdown } from "./costs.mjs";
 import { englishLabel, normalizeOfferFacets, translateTerms } from "./facet-language.mjs";
 import { fetchJson, mapConcurrent, searchProvider } from "./providers.mjs";
-const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map();
+const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 let ebayToken = null;
 
@@ -650,8 +650,28 @@ async function osmStores(query, location, origin) {
   return places;
 }
 
+async function namedLocationCoordinates(location) {
+  const name = providerLocation(location).trim(), cacheKey = name.toLowerCase();
+  if (!name || name === "Current location" || countries.has(cacheKey)) return null;
+  const cached = geocodeCache.get(cacheKey);
+  if (cached?.expires > Date.now()) return cached.point;
+  if (geocodePending.has(cacheKey)) return geocodePending.get(cacheKey);
+  const job = (async () => {
+    try {
+      const data = await fetchJson("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=" + encodeURIComponent(name), { headers: { "Accept-Language": "en", "User-Agent": "ShopNearMe/0.1 (local product search)" } }, 1800);
+      const item = data?.[0];
+      if (!item || ["country", "state"].includes(item.addresstype)) return null;
+      const point = validCoordinates({ lat: item.lat, lon: item.lon });
+      if (point) { if (geocodeCache.size >= 100) geocodeCache.delete(geocodeCache.keys().next().value); geocodeCache.set(cacheKey, { point, expires: Date.now() + 3600000 }); }
+      return point;
+    } catch { return null; }
+  })();
+  geocodePending.set(cacheKey, job);
+  try { return await job; } finally { geocodePending.delete(cacheKey); }
+}
+
 async function mapsSearch(query, location, key, coordinates) {
-  const origin = validCoordinates(coordinates);
+  let origin = validCoordinates(coordinates);
   if (!origin && (!location || location === "Current location")) return [];
   const storeTypes = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
   const storeType = storeTypes[0];
@@ -672,7 +692,7 @@ async function mapsSearch(query, location, key, coordinates) {
   const attempts = [packParams, params];
   const [settled, openStreetMapPlaces] = await Promise.all([
     Promise.allSettled(attempts.map((attempt, index) => searchProvider(attempt, key, index === 0 ? 8000 : 4000))),
-    osmStores(query, location, origin).catch(() => []),
+    (async () => { origin ??= await namedLocationCoordinates(location); return osmStores(query, location, origin); })().catch(() => []),
   ]);
   let places = [];
   for (let index = 0; index < attempts.length; index++) {

@@ -7,13 +7,15 @@ import { matchesFacets } from "../src/services/facetValues.ts";
 afterEach(() => vi.unstubAllGlobals());
 const html = (name, description, price = 90) => '<script type="application/ld+json">' + JSON.stringify({ "@type": "Product", name, brand: "מותג - ACME", description, image: "/product.jpg", offers: { price, priceCurrency: "ILS" } }) + '</script>';
 
-it.each(["local pack", "OSM"])("returns actual nearby products via %s when Maps fails and Shopping already succeeds", async source => {
+it.each(["local pack", "OSM", "typed location"])("returns actual nearby products via %s when Maps fails and Shopping already succeeds", async source => {
   const queries = [];
-  const coordinates = { lat: source === "OSM" ? 32.064 : 32.059, lon: 34.856 };
+  const coordinates = source === "typed location" ? undefined : { lat: source === "OSM" ? 32.064 : 32.059, lon: 34.856 };
+  const location = source === "typed location" ? "Givatayim, Israel" : source === "OSM" ? "Ramat Gan, Israel" : "Kiryat Ono, Israel";
   vi.stubGlobal("fetch", vi.fn(async (url, options) => {
     const host = new URL(url).hostname;
     if (host.endsWith(".co.il")) return new Response(html("Fixture laptop stand", "עשוי מאלומיניום כסוף ומתקפל", host === "nearby.co.il" ? 90 : 120), { headers: { "content-type": "text/html" } });
-    if (host === "overpass-api.de") return Response.json({ elements: source === "OSM" ? [{ type: "node", id: 444, lat: 32.06, lon: 34.856, tags: { name: "חנות", "name:en": "Nearby", shop: "computer" } }] : [] });
+    if (host === "nominatim.openstreetmap.org") return Response.json([{ lat: "32.069", lon: "34.856", addresstype: "city" }]);
+    if (host === "overpass-api.de") return Response.json({ elements: source !== "local pack" ? [{ type: "node", id: 444, lat: 32.06, lon: 34.856, tags: { name: "חנות", "name:en": "Nearby", shop: "computer" } }] : [] });
     const target = new URL(JSON.parse(options.body).url), q = target.searchParams.get("q") || "";
     queries.push(q);
     if (target.pathname.startsWith("/maps/")) throw new DOMException("Fixture Maps timeout", "TimeoutError");
@@ -22,7 +24,7 @@ it.each(["local pack", "OSM"])("returns actual nearby products via %s when Maps 
     if (q.includes('"Nearby')) return Response.json({ organic: [{ title: "Fixture laptop stand", link: "https://nearby.co.il/product/stand" }] });
     return Response.json({});
   }));
-  const result = await searchCatalog("Fixture laptop stand", source === "OSM" ? "Ramat Gan, Israel" : "Kiryat Ono, Israel", { apiKey: source, zone: "test" }, coordinates);
+  const result = await searchCatalog("Fixture laptop stand", location, { apiKey: source, zone: "test" }, coordinates);
   expect(queries.some(q => q.includes('"Nearby'))).toBe(true);
   expect(result.offers.find(offer => offer.category === "local")).toMatchObject({ itemPrice: 90, destinationUrl: "https://nearby.co.il/product/stand", imageUrl: "https://nearby.co.il/product.jpg", attributes: { material: "Aluminum", color: "Silver", features: "Foldable", brand: ["ACME"] } });
   expect(result.offers.some(offer => offer.merchant === "Online")).toBe(true);
@@ -34,7 +36,7 @@ it.each(["local pack", "OSM"])("returns actual nearby products via %s when Maps 
     for (const option of facet.options) expect(result.offers.filter(offer => matchesFacets(offer.attributes, { [facet.id]: [option.value] }))).toHaveLength(option.count);
   }
   const calls = vi.mocked(fetch).mock.calls.length;
-  await searchCatalog("Fixture laptop stand", source === "OSM" ? "Ramat Gan, Israel" : "Kiryat Ono, Israel", { apiKey: source, zone: "test" }, coordinates);
+  await searchCatalog("Fixture laptop stand", location, { apiKey: source, zone: "test" }, coordinates);
   expect(vi.mocked(fetch)).toHaveBeenCalledTimes(calls);
 });
 
