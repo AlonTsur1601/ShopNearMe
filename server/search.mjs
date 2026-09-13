@@ -103,6 +103,7 @@ const countryTlds = new Map([["IL", ".il"], ["GB", ".uk"], ["CA", ".ca"], ["DE",
 export function safeHttpUrl(value, fallback = "") { try { const decoded = String(value ?? "").replace(/\\u([0-9a-f]{4})/gi, (_match, code) => String.fromCharCode(Number.parseInt(code, 16))).replace(/\\\//g, "/"); const parsed = new URL(decoded); return ["https:", "http:"].includes(parsed.protocol) ? parsed.href : fallback; } catch { return fallback; } }
 function searchTokens(value) { const stop = new Set(["a", "an", "and", "at", "best", "buy", "cheap", "deals", "for", "in", "near", "of", "on", "price", "sale", "the", "to", "with"]); return [...new Set(String(value).toLowerCase().replace(/[^a-z0-9\u0590-\u05ff]+/g, " ").split(/\s+/).filter((token) => token.length > 1 && !stop.has(token)).map((token) => token.replace(/(?:ies|es|s)$/i, (ending) => ending === "ies" ? "y" : "")))]; }
 const translatedCategories = [
+  [/\bdock(?:ing station)?s?\b/i, /תחנ(?:ת|ות) עגינה/, "תחנת עגינה"],
   [/camping tent|tent/i, /אוהל/, "אוהל"],
   [/monitor|television|\btv\b/i, /מס[ךכ]/, "מסך"], [/headphones?|earbuds?/i, /אוזני[וה]ת/, "אוזניות"],
   [/dining\s+(?:table|set)/i, /שולח[ןנות]|פינת אוכל/, "שולחן אוכל"], [/clock/i, /שעו[ןנים]/, "שעון"],
@@ -203,22 +204,6 @@ function searchLocation(location, coordinates) {
   if (point && point.lat >= 29.3 && point.lat <= 33.4 && point.lon >= 34.2 && point.lon <= 35.9) return "Israel";
   return location;
 }
-function matchingProductTitle(wanted, actual) {
-  const normalized = value => String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-  const models = value => (String(value).match(/\b[a-z\d][a-z\d-]{3,}\b/gi) || []).filter(token => /[a-z]/i.test(token) && /\d/.test(token)).map(normalized);
-  const identifiers = models(wanted);
-  if (identifiers.length) return identifiers.some(model => models(actual).includes(model));
-  const expected = searchTokens(wanted), found = searchTokens(actual);
-  return expected.filter(token => found.includes(token)).length >= Math.min(3, expected.length);
-}
-function retailerMatchesDestination(retailer, destination) {
-  const host = new URL(destination).hostname.replace(/^www\./, "").toLowerCase();
-  const compact = value => String(value || "").toLowerCase().replace(/[^a-z\d\u0590-\u05ff]/g, "");
-  const aliases = new Map([["קיי.אס.פי", "ksp"], ["קייאספי", "ksp"], ["וואלהשופס", "wallashops"], ["פיסימסטר", "pcmaster"], ["קינגגיימס", "kinggames"]]);
-  const name = compact(shortRetailerName(retailer)), expected = aliases.get(name) || name;
-  const ascii = expected.replace(/[^a-z\d]/g, "");
-  return ascii.length >= 3 && host.replace(/[^a-z\d]/g, "").includes(ascii);
-}
 function isLocalResult(url, item, location) { const code = countryCode(location); if (!code || code === "US") return true; const tld = countryTlds.get(code), text = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${item.displayed_link ?? ""}`; if (tld && url.hostname.endsWith(tld)) return true; if (code === "IL") return /[\u0590-\u05ff]|₪|\bILS\b|\bIsrael\b/i.test(text); return String(location).toLowerCase().split(/[,\s]+/).filter((part) => part.length > 3).some((part) => text.toLowerCase().includes(part)); }
 
 async function ebayAccess(credentials) { if (!credentials?.clientId || !credentials?.clientSecret) return null; if (ebayToken?.expiresAt > Date.now() + 60000) return ebayToken.value; const basic = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64"); const data = await fetchJson("https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "https://api.ebay.com/oauth/api_scope" }) }, 2500); ebayToken = { value: data.access_token, expiresAt: Date.now() + (number(data.expires_in) ?? 7200) * 1000 }; return data.access_token; }
@@ -261,27 +246,33 @@ async function resolveGoogleGoto(value) {
   try {
     const response = await fetch(link, { redirect: "manual", signal: AbortSignal.timeout(1200), headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
     const destination = safeHttpUrl(response.headers?.get?.("location"));
+    if (!destination) console.info("merchant_redirect_failed", { status: response.status });
     try { await response.body?.cancel?.(); } catch { /* The redirect target is all that is needed. */ }
     if (!destination) return "";
     const target = new URL(destination);
     return /(^|\.)google\./i.test(target.hostname) ? "" : destination;
-  } catch { return ""; }
+  } catch (error) { console.info("merchant_redirect_failed", { reason: error.name }); return ""; }
 }
 function explicitCurrency(text) { return /₪|\bNIS\b|\bILS\b/i.test(text) ? "ILS" : /€|\bEUR\b/i.test(text) ? "EUR" : /£|\bGBP\b/i.test(text) ? "GBP" : /\$|\bUSD\b/i.test(text) ? "USD" : null; }
 function localPrice(text, extracted) { const direct = number(extracted); if (direct !== null) return { value: direct, currency: explicitCurrency(text) ?? "USD" }; const ils = text.match(/(?:₪|NIS|ILS)\s*([0-9][0-9,.]*)|([0-9][0-9,.]*)\s*(?:₪|NIS|ILS)/i); if (ils) return { value: number(ils[1] ?? ils[2]), currency: "ILS" }; const usd = text.match(/\$\s*([0-9][0-9,.]*)/); return usd ? { value: number(usd[1]), currency: "USD" } : { value: null, currency: "USD" }; }
-async function localProduct(item, index, query, location) { const link = await resolveGoogleGoto(item.link); if (!link || isCategoryPage(item.title, link) || !isRelevantProduct(item.title, query)) return null; const url = new URL(link); if (comparisonHosts.test(url.hostname) || excludedHosts.test(url.hostname) || url.pathname === "/" || /\/cat(?:\/|\b)|models\.aspx|[?&]act=cat\b/i.test(link) || /zap\.co\.il$/i.test(url.hostname) || !isLocalResult(url, item, location)) return null; const snippet = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${(item.rich_snippet?.top?.extensions ?? []).join(" ")}`, page = await enrichProductPage(link), title = page.title || item.title; if (page.unavailable || page.isCatalog || isCategoryPage(title, link) || !isRelevantProduct(title, query)) return null; const fallback = localPrice(snippet, item.extracted_price), itemPrice = page.price ?? fallback.value, currency = page.price != null ? page.currency : explicitCurrency(snippet) ?? fallback.currency, merchant = shortRetailerName(item.source || item.displayed_link?.split(" › ")[0] || url.hostname.replace(/^www\./, "").split(".")[0]); if (!page.isProduct) return null; return { id: `local-product-${index}-${url.hostname}`, category: "order", merchant, merchantLogoUrl: safeHttpUrl(item.favicon), title, subtitle: String(item.snippet ?? "").slice(0, 150) || (location && location !== "Current location" ? `Available near ${location}` : "Available online"), imageUrl: page.imageUrl || productImageUrl(item.thumbnail || item.image), imageUrls: page.imageUrls ?? [], gtin: page.gtin, mpn: page.mpn, productBrand: page.brand, rating: 0, reviewCount: 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency, priceVerified: page.price != null, availability: page.availability || "", totalEstimated: true, condition: "New", attributes: attributesFor(query, `${snippet} ${title}`, "New", merchant, page), attributeLabels: attributeLabelsFor(query, `${snippet} ${title}`, page), destinationUrl: link, linkLabel: "View product" }; }
-
-async function shoppingMerchantOffer(item, result, index, query) {
+async function indexedMerchantOffer(item, result, index, query) {
   const destinationUrl = await resolveGoogleGoto(result.link);
-  if (!destinationUrl || !retailerMatchesDestination(item.source, destinationUrl) || !matchingProductTitle(item.title, `${result.title ?? ""} ${result.snippet ?? ""}`)) return null;
-  const url = new URL(destinationUrl);
-  if (comparisonHosts.test(url.hostname) || excludedHosts.test(url.hostname) || url.pathname === "/" || isCategoryPage(result.title, destinationUrl)) return null;
-  const evidence = `${item.title ?? ""} ${result.title ?? ""} ${result.snippet ?? ""}`;
-  if (/out of stock|sold out|אזל.?במלאי|לא.?במלאי/i.test(evidence)) return null;
+  if (!destinationUrl || isCategoryPage(result.title, destinationUrl)) return null;
+  const host = new URL(destinationUrl).hostname;
+  if (excludedHosts.test(host) || comparisonHosts.test(host) || new URL(destinationUrl).pathname === "/") return null;
+  const compact = value => String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const shop = compact(shortRetailerName(item.source));
+  const sameMerchant = shop.length >= 3 && (shop === compact(result.source) || (/^[a-z\d]+$/.test(shop) && compact(host).includes(shop)));
+  if (!sameMerchant || /out of stock|sold out|אזל.?במלאי|לא.?במלאי/i.test(`${result.title} ${result.snippet}`)) return null;
+  const evidence = matchingShoppingEvidence(item, { title: result.title, merchant: item.source, destinationUrl, itemPrice: null, imageUrl: "", currency: "USD" });
+  if (evidence.itemPrice === null || !evidence.imageUrl) return null;
   const offer = shoppingOffer({ ...item, link: destinationUrl }, index, query);
   if (!offer) return null;
-  return { ...offer, subtitle: String(result.snippet ?? "").slice(0, 150) || offer.subtitle, attributes: fillMissingAttributes(offer.attributes, attributesFor(query, evidence, offer.condition, offer.merchant, item)), attributeLabels: { ...offer.attributeLabels, ...attributeLabelsFor(query, evidence, item) } };
+  // Matching indexed model + merchant evidence survives a blocked page fetch.
+  // Explicit deletion, category redirects and stock evidence still reject it.
+  return enrichOffer({ ...offer, priceVerified: false, attributes: fillMissingAttributes(offer.attributes, attributesFor(query, `${item.title} ${result.title} ${result.snippet ?? ""}`, offer.condition, offer.merchant, item)) }, query);
 }
+async function localProduct(item, index, query, location) { const link = await resolveGoogleGoto(item.link); if (!link || isCategoryPage(item.title, link) || !isRelevantProduct(item.title, query)) return null; const url = new URL(link); if (comparisonHosts.test(url.hostname) || excludedHosts.test(url.hostname) || url.pathname === "/" || /\/cat(?:\/|\b)|models\.aspx|[?&]act=cat\b/i.test(link) || /zap\.co\.il$/i.test(url.hostname) || !isLocalResult(url, item, location)) return null; const snippet = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${(item.rich_snippet?.top?.extensions ?? []).join(" ")}`, page = await enrichProductPage(link), title = page.title || item.title; if (page.unavailable || page.isCatalog || isCategoryPage(title, link) || !isRelevantProduct(title, query)) return null; const fallback = localPrice(snippet, item.extracted_price), itemPrice = page.price ?? fallback.value, currency = page.price != null ? page.currency : explicitCurrency(snippet) ?? fallback.currency, merchant = shortRetailerName(item.source || item.displayed_link?.split(" › ")[0] || url.hostname.replace(/^www\./, "").split(".")[0]); if (!page.isProduct) return null; return { id: `local-product-${index}-${url.hostname}`, category: "order", merchant, merchantLogoUrl: safeHttpUrl(item.favicon), title, subtitle: String(item.snippet ?? "").slice(0, 150) || (location && location !== "Current location" ? `Available near ${location}` : "Available online"), imageUrl: page.imageUrl || productImageUrl(item.thumbnail || item.image), imageUrls: page.imageUrls ?? [], gtin: page.gtin, mpn: page.mpn, productBrand: page.brand, rating: 0, reviewCount: 0, itemPrice, shippingPrice: null, totalPrice: itemPrice, currency, priceVerified: page.price != null, availability: page.availability || "", totalEstimated: true, condition: "New", attributes: attributesFor(query, `${snippet} ${title}`, "New", merchant, page), attributeLabels: attributeLabelsFor(query, `${snippet} ${title}`, page), destinationUrl: link, linkLabel: "View product" }; }
 
 async function enrichOffer(offer, query, requireProductPage = false) {
   if (!offer?.destinationUrl) return offer;
@@ -546,13 +537,13 @@ async function completeFacetAttributes(offers, query, location, key, deadline = 
   }
   return { offers: enriched, required };
 }
-async function shoppingSearch(query, location, key) {
+async function shoppingSearch(query, location, key, retailerPages) {
   const code = countryCode(location);
   const searchVariant = async variant => {
     const params = new URLSearchParams({ engine: "google_shopping", q: variant, api_key: key, hl: variant === query ? "en" : code === "IL" ? "he" : "en", num: "40" });
     if (code) params.set("gl", code.toLowerCase());
     if (location && location !== "Current location") params.set("location", providerLocation(location));
-    try { return await searchProvider(params, key, 7000); }
+    try { return await searchProvider(params, key, 10000); }
     catch (error) {
       if (!/unsupported.*location/i.test(error.message) || !params.has("location")) throw error;
       params.delete("location");
@@ -574,6 +565,7 @@ async function shoppingSearch(query, location, key) {
     seenItems.add(identity); return true;
   });
   if (typeof key === "object") {
+    let needsMerchantDiscovery = false;
     const rows = await mapConcurrent(items.slice(0, 8), 6, async (item, index) => {
       const url = safeHttpUrl(item.link);
       const parsed = url ? new URL(url) : null;
@@ -586,19 +578,27 @@ async function shoppingSearch(query, location, key) {
         const offer = shoppingOffer(item, index, query);
         return offer ? [await enrichOffer(offer, query, true)].filter(Boolean) : [];
       }
-      // A Google product-group URL is not a merchant product URL. Discover actual
-      // product pages and extract their own prices; never attach another shop's price.
-      const shop = shortRetailerName(item.source);
-      const restriction = /^[a-z\d.-]+\.[a-z]{2,}$/i.test(shop) ? "site:" + shop : shop;
-      try {
-        const params = new URLSearchParams({ engine: "google", q: item.title + " " + restriction + " buy", gl: code?.toLowerCase() || "", hl: "en" });
-        const found = await searchProvider(params, key, 4500);
-        const candidates = await Promise.all((found.organic_results ?? []).filter(result => isRelevantProduct(result.title, query)).slice(0, 5)
-          .map((result, n) => shoppingMerchantOffer(item, result, index * 5 + n, query)));
-        return candidates.filter(Boolean).slice(0, 1);
-      } catch { return []; }
+      // Group links need merchant discovery. Share the retailer search already in
+      // progress instead of issuing a paid query for every Shopping row.
+      needsMerchantDiscovery = true;
+      return [];
     });
-    const offers = rows.flat().filter(Boolean);
+    let retailerFailure;
+    let discovered = needsMerchantDiscovery ? await retailerPages.catch(error => { retailerFailure = error; return []; }) : [];
+    if (retailerFailure?.code === "quota_exhausted" || [401, 403].includes(retailerFailure?.status)) throw retailerFailure;
+    if (needsMerchantDiscovery && !discovered.length && !rows.flat().some(Boolean)) {
+      // Only recover two indexed products when the shared page search failed.
+      // This is a fallback, never the old per-row eight-query fan-out.
+      discovered = (await mapConcurrent(items.slice(0, 2), 2, async (item, index) => {
+        try {
+          const params = new URLSearchParams({ engine: "google", q: `${item.title} ${shortRetailerName(item.source)} buy`, gl: code?.toLowerCase() || "", hl: "en" });
+          const found = await searchProvider(params, key, 4000);
+          const offers = await Promise.all((found.organic_results ?? []).filter(result => isRelevantProduct(result.title, query)).slice(0, 4).map((result, n) => indexedMerchantOffer(item, result, index * 4 + n, query)));
+          return offers.filter(Boolean).slice(0, 1);
+        } catch { return []; }
+      })).flat();
+    }
+    const offers = [...rows.flat().filter(Boolean), ...discovered];
     if (items.length && !offers.length) throw new Error("Merchant product pages unavailable");
     return offers;
   }
@@ -717,23 +717,39 @@ async function localProductSearch(query, location, key, stores = [], deadline = 
     const site = merchantWebsite(store.destinationUrl);
     return site ? "site:" + new URL(site).hostname : '"' + shortRetailerName(store.merchant).replaceAll('"', '') + '"';
   }))].slice(0, 6);
-  const base = localQuery(query, code) + " " + (merchants.length ? "(" + merchants.join(" OR ") + ")" : terms) + " -inurl:cat -inurl:models -inurl:category";
-  const queries = [base];
-  const pages = await Promise.allSettled(queries.map(q => {
+  const restriction = merchants.length ? "(" + merchants.join(" OR ") + ")" : terms;
+  // "-inurl:cat" also excludes real product URLs such as Ivory's catalog.php.
+  // Keep search exclusions specific; validate every returned URL separately.
+  const base = localQuery(query, code) + " " + restriction + " -inurl:category -inurl:categories -inurl:search";
+  const queries = [base, query + " " + restriction + " buy"];
+  const seen = new Set();
+  let lastError;
+  for (const q of queries) {
+    if (Date.now() >= deadline) break;
     const params = new URLSearchParams({ engine: "google", q, api_key: key, hl: code === "IL" ? "he" : "en", num: "30" });
     if (code) params.set("gl", code.toLowerCase());
-    return searchProvider(params, key, Math.min(5500, Math.max(1, deadline - Date.now())));
-  }));
-  if (pages.every(p => p.status === "rejected")) throw pages[0].reason;
-  const seen = new Set(), domains = new Map();
-  const candidates = pages.flatMap(p => p.status === "fulfilled" ? p.value.organic_results ?? [] : []).filter(item => {
-    const link = safeHttpUrl(item.link);
-    if (!link || seen.has(link) || !isRelevantProduct(item.title, query)) return false;
-    seen.add(link); return true;
-  }).map(item => { const domain = new URL(item.link).hostname; const rank = domains.get(domain) ?? 0; domains.set(domain, rank + 1); return { item, rank }; })
-    .sort((a, b) => a.rank - b.rank).slice(0, 24).map(({ item }) => item);
-  const products = (await mapConcurrent(candidates, 24, (item, index) => Date.now() < deadline ? localProduct(item, index, query, location) : null)).filter(Boolean);
-  return products;
+    let page;
+    try { page = await searchProvider(params, key, Math.min(7500, Math.max(1, deadline - Date.now() - 3000))); }
+    catch (error) {
+      console.info("retailer_search_failed", { attempt: queries.indexOf(q) + 1, status: error.status, reason: error.name, code: error.code });
+      if (error.code === "quota_exhausted" || [400, 401, 403].includes(error.status)) throw error;
+      lastError = error;
+      continue;
+    }
+    lastError = undefined;
+    const domains = new Map(), offset = seen.size;
+    const candidates = (page.organic_results ?? []).filter(item => {
+      const link = safeHttpUrl(item.link);
+      if (!link || seen.has(link) || !isRelevantProduct(item.title, query)) return false;
+      seen.add(link); return true;
+    }).map(item => { const domain = new URL(item.link).hostname; const rank = domains.get(domain) ?? 0; domains.set(domain, rank + 1); return { item, rank }; })
+      .sort((a, b) => a.rank - b.rank).slice(0, 24).map(({ item }) => item);
+    const products = (await mapConcurrent(candidates, 24, (item, index) => Date.now() < deadline ? localProduct(item, offset + index, query, location) : null)).filter(Boolean);
+    console.info("retailer_discovery", { attempt: queries.indexOf(q) + 1, candidates: candidates.length, products: products.length });
+    if (products.length) return products;
+  }
+  if (lastError) throw lastError;
+  return [];
 }
 async function runScope(scope, query, location, key, coordinates, credentials) {
   const facetDeadline = Date.now() + 17000;
@@ -745,9 +761,9 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   }
   let settled;
   if (scope === "all") {
-    const shoppingJob = finishBefore(() => shoppingSearch(query, productLocation, key), facetDeadline, []);
+    const pagesJob = finishBefore(() => localProductSearch(query, productLocation, key, [], facetDeadline), facetDeadline, []);
+    const shoppingJob = finishBefore(() => shoppingSearch(query, productLocation, key, pagesJob), facetDeadline, []);
     const mapsJob = mapsSearch(query, location, key, coordinates);
-    const pagesJob = localProductSearch(query, productLocation, key, [], facetDeadline);
     const localJob = (async () => {
       const [maps, pages] = await Promise.allSettled([mapsJob, pagesJob]);
       if (maps.status !== "fulfilled" || !maps.value.length) return [];
@@ -760,9 +776,9 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
       settled = [shopping, maps, { status: "fulfilled", value: [...(retailerPages.status === "fulfilled" ? retailerPages.value : []), ...targeted.value] }, secondHand];
     } else settled = [shopping, maps, retailerPages, secondHand];
   } else if (scope === "online") {
-    const [shopping, secondHand] = await Promise.allSettled([shoppingSearch(query, productLocation, key), ebaySearch(query, productLocation, credentials)]);
-    const [retailerPages] = await Promise.allSettled([
-      shopping.status === "fulfilled" && shopping.value.length > 0 ? Promise.resolve([]) : finishBefore(() => localProductSearch(query, productLocation, key, [], facetDeadline), facetDeadline, []),
+    const pagesJob = finishBefore(() => localProductSearch(query, productLocation, key, [], facetDeadline), facetDeadline, []);
+    const [shopping, retailerPages, secondHand] = await Promise.allSettled([
+      finishBefore(() => shoppingSearch(query, productLocation, key, pagesJob), facetDeadline, []), pagesJob, ebaySearch(query, productLocation, credentials),
     ]);
     settled = [shopping, retailerPages, secondHand];
   } else {

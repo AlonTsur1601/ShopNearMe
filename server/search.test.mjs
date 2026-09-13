@@ -80,7 +80,7 @@ describe("searchCatalog", () => {
     const second = await searchCatalog("provider failure boundary", "Israel", "test", undefined, undefined, "online");
     expect(first.warnings).toEqual(["Online products could not be searched. Please try again.", "Retailer product pages could not be searched. Please try again."]);
     expect(second.warnings).toEqual(first.warnings);
-    expect(fetch).toHaveBeenCalledTimes(8);
+    expect(fetch).toHaveBeenCalledTimes(12); // Two searches, each with Shopping and two retailer query variants, retried once.
   });
 
   it("reads structured specifications but identifies category pages", () => {
@@ -113,7 +113,7 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.merchant === "Corner Cafe")).toBe(false);
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("order");
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(5);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(7);
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=watch+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
   });
@@ -288,11 +288,11 @@ describe("searchCatalog", () => {
     vi.stubGlobal("fetch", fetchMock);
     const first = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
     const second = searchCatalog("coalescing boundary product", "Haifa, Israel", "coalesce-key", undefined, undefined, "online");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // Shopping and retailer discovery start together.
     releaseFirst();
     const [a, b] = await Promise.all([first, second]);
     expect(a).toBe(b);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3); // One alternate retailer query, shared by both callers.
   });
 
   it("adds eBay item details, specifications, shipping and import charges to the total", async () => {

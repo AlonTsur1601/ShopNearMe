@@ -54,7 +54,10 @@ export function englishText(value, properName = false) {
 export function translateTerms(value) {
   let text = String(value ?? "");
   for (const [source, target] of Object.entries(phrases)) text = text.replaceAll(source, target);
-  return text.replace(/[\p{L}]+/gu, word => {
+  return text.replace(/[\p{L}]+/gu, (word, offset) => {
+    // Bare שיש also means "that has". Infer marble in prose only with material
+    // context; structured material values still use englishText's exact mapping.
+    if (word === "שיש" && text.trim() !== word && !/(?:חומר|עשוי|משטח|שולחן|פלטת|דמוי|ציפוי)\s*[:–-]?\s*$/u.test(text.slice(Math.max(0, offset - 30), offset))) return word;
     if (words[word.toLowerCase()]) return words[word.toLowerCase()];
     // Hebrew joins prepositions/conjunctions to the property word (e.g. מאלומיניום).
     // Only strip a short prefix when the complete remainder is in the dictionary.
