@@ -113,6 +113,7 @@ const translatedCategories = [
   [/charger/i, /מטען/, "מטען"],
 ];
 export function isRelevantProduct(title, query) {
+  if (/\bclock\b/i.test(query) && /\b(?:watch|watches|smartwatch|wristwatch)\b|שעו(?:ן|ני)\s+(?:יד|חכ)/i.test(title)) return false;
   if (/laptop|notebook|chromebook/i.test(query) && /motherboard|mainboard|replacement (?:battery|screen|keyboard)|(?:battery|charger|screen|keyboard)\s+for\b/i.test(title)) return false;
   if (/camping tent/i.test(query) && /tent (?:carpet|rug|spring buckle|rope tensioner)|camping (?:complex|site)|(?:פנס|עששית|תאורה|אירוח|מתחם קמפינג).*אוהל/i.test(title)) return false;
   if (/camping tent/i.test(query) && /tent (?:stakes|poles|stove|footprint)|(?:stove|heater) (?:for|with).{0,15}tent|play tent|אוהל (?:משחק|ילדים)/i.test(title)) return false;
@@ -135,7 +136,9 @@ function localQuery(query, code) {
   if (code !== "IL") return query;
   if (/(?:laptop|notebook)\s+(?:stand|riser|holder|tray)|(?:stand|riser|holder|tray)\s+(?:for\s+)?(?:laptop|notebook)/i.test(query)) return query;
   const translated = translatedCategories.find(([match]) => match.test(query));
-  return translated ? query.replace(translated[0], translated[2]).replace(/1440p/ig, "2560x1440") : query;
+  const localized = translated ? query.replace(translated[0], translated[2]).replace(/1440p/ig, "2560x1440") : query;
+  const modifiers = { digital: "דיגיטלי", alarm: "מעורר", wall: "קיר", wireless: "אלחוטי", external: "חיצוני", gaming: "גיימינג" };
+  return localized.replace(/\b(digital|alarm|wall|wireless|external|gaming)\b/gi, word => modifiers[word.toLowerCase()]);
 }
 export function providerLocation(location) {
   const parts = String(location ?? "").split(",").map(p => p.trim()).filter(Boolean);
@@ -540,7 +543,7 @@ async function completeFacetAttributes(offers, query, location, key, deadline = 
 async function shoppingSearch(query, location, key, retailerPages) {
   const code = countryCode(location);
   const searchVariant = async variant => {
-    const params = new URLSearchParams({ engine: "google_shopping", q: variant, api_key: key, hl: variant === query ? "en" : code === "IL" ? "he" : "en", num: "40" });
+    const params = new URLSearchParams({ engine: "google_shopping", q: variant, api_key: key, hl: code === "IL" ? "he" : "en", num: "40" });
     if (code) params.set("gl", code.toLowerCase());
     if (location && location !== "Current location") params.set("location", providerLocation(location));
     try { return await searchProvider(params, key, 10000); }
@@ -585,13 +588,19 @@ async function shoppingSearch(query, location, key, retailerPages) {
     });
     let retailerFailure;
     let discovered = needsMerchantDiscovery ? await retailerPages.catch(error => { retailerFailure = error; return []; }) : [];
-    if (retailerFailure?.code === "quota_exhausted" || [401, 403].includes(retailerFailure?.status)) throw retailerFailure;
+    if (["quota_exhausted", "source_blocked"].includes(retailerFailure?.code) || [401, 403].includes(retailerFailure?.status)) throw retailerFailure;
     if (needsMerchantDiscovery && !discovered.length && !rows.flat().some(Boolean)) {
       // Only recover two indexed products when the shared page search failed.
       // This is a fallback, never the old per-row eight-query fan-out.
-      discovered = (await mapConcurrent(items.slice(0, 2), 2, async (item, index) => {
+      const merchants = new Set();
+      const recoverable = items.filter(item => {
+        const shop = shortRetailerName(item.source).trim().toLowerCase();
+        if (!shop || /\b(?:ebay|amazon|aliexpress|temu|etsy|facebook)\b/i.test(shop) || merchants.has(shop)) return false;
+        merchants.add(shop); return true;
+      });
+      discovered = (await mapConcurrent(recoverable.slice(0, 2), 2, async (item, index) => {
         try {
-          const params = new URLSearchParams({ engine: "google", q: `${item.title} ${shortRetailerName(item.source)} buy`, gl: code?.toLowerCase() || "", hl: "en" });
+          const params = new URLSearchParams({ engine: "google", q: `${item.title} ${shortRetailerName(item.source)} buy`, gl: code?.toLowerCase() || "", hl: code === "IL" ? "he" : "en" });
           const found = await searchProvider(params, key, 4000);
           const offers = await Promise.all((found.organic_results ?? []).filter(result => isRelevantProduct(result.title, query)).slice(0, 4).map((result, n) => indexedMerchantOffer(item, result, index * 4 + n, query)));
           return offers.filter(Boolean).slice(0, 1);
@@ -732,7 +741,7 @@ async function localProductSearch(query, location, key, stores = [], deadline = 
     try { page = await searchProvider(params, key, Math.min(7500, Math.max(1, deadline - Date.now() - 3000))); }
     catch (error) {
       console.info("retailer_search_failed", { attempt: queries.indexOf(q) + 1, status: error.status, reason: error.name, code: error.code });
-      if (error.code === "quota_exhausted" || [400, 401, 403].includes(error.status)) throw error;
+      if (["quota_exhausted", "source_blocked"].includes(error.code) || [400, 401, 403].includes(error.status)) throw error;
       lastError = error;
       continue;
     }
@@ -800,7 +809,9 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   const quotaFailure = settled.find(entry => entry.status === "rejected" && entry.reason?.code === "quota_exhausted");
   result.warnings = quotaFailure
     ? [`Search provider quota has been used up.${quotaFailure.reason.resetAt ? ` It will reset ${quotaFailure.reason.resetAt}.` : " The provider did not supply a reset time."}`]
-    : settled.flatMap((entry, index) => entry.status === "rejected" ? [labels[index] + " could not be searched. Please try again."] : []);
+    : settled.flatMap((entry, index) => entry.status === "rejected" ? [labels[index] + (entry.reason?.code === "source_blocked"
+      ? " could not be searched because the search provider was blocked by Google (CAPTCHA). Results are incomplete."
+      : " could not be searched. Please try again.")] : []);
   result.partialFailure = settled.some(entry => entry.status === "rejected");
   if (result.offers.some(offer => offer.category === "order")) result.warnings = result.warnings.filter(warning => !/^(Online products|Retailer product pages) could not/.test(warning));
   if ((!location || location === "Current location") && !coordinates && scope !== "online") result.warnings.push("Choose a location to include nearby products.");

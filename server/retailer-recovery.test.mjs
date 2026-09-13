@@ -5,6 +5,15 @@ import { englishText, translateTerms } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("reports a blocked search source without extra retailer retries or claiming no matches", async () => {
+  const fetcher = vi.fn(async () => Response.json({ status_code: 502, headers: { "x-brd-error-code": "captcha" } }));
+  vi.stubGlobal("fetch", fetcher);
+  const result = await searchCatalog("Digital Clock blocked source fixture", "Israel", { apiKey: "blocked-fixture", zone: "fixture" }, undefined, undefined, "online");
+  expect(result.partialFailure).toBe(true);
+  expect(result.warnings.some(message => message.includes("blocked by Google (CAPTCHA)"))).toBe(true);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
 it("rejects numbered catalog pages before borrowing a product card's price", async () => {
   vi.stubGlobal("fetch", vi.fn());
   expect(await enrichProductPage("https://www.lastprice.co.il/c/898/computers/docks")).toEqual({ isCatalog: true });
@@ -22,6 +31,11 @@ it("recognizes localized docks without accepting a USB charger or cable", () => 
   expect(isRelevantProduct("תחנות עגינה Dell", "docking station")).toBe(true);
   expect(isRelevantProduct("USB-C charger 65W", "USB-C dock")).toBe(false);
   expect(isRelevantProduct("USB-C cable", "USB-C dock")).toBe(false);
+});
+
+it("excludes wristwatches and smartwatches from clock searches", () => {
+  for (const title of ["Casio Digital Watch", "Apple Watch", "שעון יד דיגיטלי", "שעון חכם לילדים"]) expect(isRelevantProduct(title, "Digital Clock")).toBe(false);
+  expect(isRelevantProduct("שעון קיר דיגיטלי", "Digital Clock")).toBe(true);
 });
 
 it.each(["upstream failure", "catalog only"])("recovers real retailer products after %s with one shared alternate query", async failure => {
@@ -71,7 +85,11 @@ it.each([403, 404])("uses exact indexed merchant/model evidence for a blocked pa
   vi.stubGlobal("fetch", vi.fn(async (url, options) => {
     if (String(url).includes("api.brightdata.com")) {
       const target = new URL(JSON.parse(options.body).url), q = target.searchParams.get("q");
-      if (target.searchParams.get("tbm") === "shop") return Response.json({ shopping: [{ title: "Belkin USB-C Dock INC002VFBK", shop: "Fixture Shop", price: "₪999", image: "https://fixture-shop.co.il/dock.jpg", url: "https://www.google.com/search?udm=28&prds=fixture" }] });
+      if (target.searchParams.get("tbm") === "shop") {
+        const item = { title: "Belkin USB-C Dock INC002VFBK", shop: "Fixture Shop", price: "₪999", image: "https://fixture-shop.co.il/dock.jpg", url: "https://www.google.com/search?udm=28&prds=fixture" };
+        return Response.json({ shopping: [{ ...item, shop: "eBay", url: item.url + "-ebay" }, item, { ...item, url: item.url + "-duplicate" }] });
+      }
+      expect(q).not.toContain("eBay");
       return Response.json({ organic: q.includes("INC002VFBK") ? [
         { title: "Belkin USB-C Dock INC002VFBK", source: "Different Shop", url: "https://other.co.il/products/inc002" },
         { title: "Belkin USB-C Dock INC999VFBK", source: "Fixture Shop", url: "https://fixture-shop.co.il/products/inc999" },

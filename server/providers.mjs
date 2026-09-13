@@ -52,7 +52,7 @@ export async function searchProvider(params, config, timeoutMs = 15000) {
   const match = params.get("ll")?.match(/@(-?[\d.]+),(-?[\d.]+)/);
   const data = await brightDataSearch({
     query: params.get("q"), kind: engine === "google_maps" ? "maps" : engine === "google_shopping" ? "shopping" : "web",
-    country: params.get("gl"), location: params.get("location"), start: Number(params.get("start") || 0),
+    country: params.get("gl"), language: params.get("hl") || "en", location: params.get("location"), start: Number(params.get("start") || 0),
     coordinates: match ? { lat: Number(match[1]), lon: Number(match[2]) } : undefined,
   }, config, timeoutMs);
   const local = engine === "google_maps" ? rows(data.organic, data.local, data.places, data.snack_pack) : rows(data.local, data.places, data.snack_pack);

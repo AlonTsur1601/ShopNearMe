@@ -4,12 +4,12 @@ const cache = new Map(), pending = new Map();
 const TTL = 15 * 60 * 1000;
 
 // This client is server-only. A zone must be explicitly configured, never guessed.
-export function brightDataSearchUrl({ query, kind = "web", country, location, coordinates, start = 0 }) {
+export function brightDataSearchUrl({ query, kind = "web", country, language = "en", location, coordinates, start = 0 }) {
   if (!["web", "shopping", "maps"].includes(kind)) throw new Error("Unsupported search kind");
   if (!String(query ?? "").trim()) throw new Error("A search query is required");
   const url = new URL("https://www.google.com/search");
   url.searchParams.set("q", query);
-  url.searchParams.set("hl", "en");
+  url.searchParams.set("hl", /^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(language) ? language : "en");
   url.searchParams.set("brd_json", "1");
   if (/^[a-z]{2}$/i.test(country ?? "")) url.searchParams.set("gl", country.toLowerCase());
   if (Number.isInteger(start) && start > 0) url.searchParams.set("start", String(start));
@@ -62,6 +62,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         if (data?.status_code && data.status_code !== 200) {
           const error = new Error("Bright Data upstream search failed (HTTP " + data.status_code + ")");
           error.status = data.status_code;
+          if (data.headers?.["x-brd-error-code"] === "captcha") error.code = "source_blocked";
           if (data.status_code === 402 || /(?:quota|credit|balance|limit).{0,30}(?:exhaust|exceed|insufficient|deplet|used)/i.test(String(data.message ?? data.error ?? ""))) error.code = "quota_exhausted";
           throw error;
         }
@@ -78,7 +79,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         return data;
       } catch (error) {
         const temporary = [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|did not return parsed/i.test(error.message);
-        if (attempt || !temporary) throw error;
+        if (attempt || !temporary || error.code === "source_blocked") throw error;
       }
     }
   })();

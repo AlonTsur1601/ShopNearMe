@@ -39,6 +39,15 @@ it("requires an explicitly configured zone before spending any requests", async 
   await expect(brightDataSearch({ query: "clock" }, { apiKey: "test" })).rejects.toThrow("BRIGHTDATA_SERP_ZONE");
   expect(fetcher).not.toHaveBeenCalled();
 });
+it.each(["he", "fr"])("preserves the requested search language (%s) through the provider adapter", async language => {
+  const { searchProvider } = await import("./providers.mjs");
+  vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+    const target = new URL(JSON.parse(options.body).url);
+    expect(target.searchParams.get("hl")).toBe(language);
+    return Response.json({ organic: [] });
+  }));
+  await searchProvider(new URLSearchParams({ engine: "google", q: "language fixture " + language, hl: language }), { apiKey: "fixture", zone: "zone" });
+});
 it("uses native authenticated POST and coalesces then caches identical searches", async () => {
   const fetcher = vi.fn(async (url, options) => {
     expect(url).toBe("https://api.brightdata.com/request");
@@ -56,6 +65,14 @@ it("retries a transient provider failure once", async () => {
   vi.stubGlobal("fetch", fetcher);
   await brightDataSearch({ query: "retry" }, { apiKey: "test", zone: "zone" });
   expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it("identifies a CAPTCHA without paying for an identical retry or exposing upstream text", async () => {
+  const fetcher = vi.fn(async () => Response.json({ status_code: 502, headers: { "x-brd-error-code": "captcha", "x-brd-error": "private fixture" }, body: "" }));
+  vi.stubGlobal("fetch", fetcher);
+  const error = await brightDataSearch({ query: "blocked fixture" }, { apiKey: "test", zone: "zone" }).catch(value => value);
+  expect(error).toMatchObject({ code: "source_blocked", status: 502 });
+  expect(error.message).not.toContain("private fixture");
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
 it("never echoes credentials in an upstream error or retries invalid credentials", async () => {
   const fetcher = vi.fn(async () => new Response("private fixture-key", { status: 401 })); vi.stubGlobal("fetch", fetcher);
