@@ -1,4 +1,5 @@
 import { searchCatalog } from "../server/search.mjs";
+import { publicSearchError } from "../server/search-errors.mjs";
 
 export default async function handler(request, response) {
   if (request.method !== "GET") return response.status(405).json({ error: "Method not allowed" });
@@ -15,5 +16,5 @@ export default async function handler(request, response) {
     }, scope);
     response.setHeader("Cache-Control", result.partialFailure || result.warnings?.length ? "no-store" : "s-maxage=900, stale-while-revalidate=3600");
     return response.status(200).json(result);
-  } catch (error) { return response.status(502).json({ error: error instanceof Error ? error.message : "Search failed" }); }
+  } catch (error) { response.setHeader("Cache-Control", "no-store"); return response.status(502).json(publicSearchError(error)); }
 }

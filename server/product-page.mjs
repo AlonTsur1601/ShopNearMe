@@ -1,3 +1,4 @@
+import { budgetFetch } from "./search-budget.mjs";
 import { extractNamedSpecifications } from "./specifications.mjs";
 import { merchantDom } from "./merchant-dom.mjs";
 const pageCache = new Map();
@@ -176,7 +177,7 @@ export async function enrichProductPage(value) {
       let best = {};
       let gone = false;
       for (const candidate of candidates) {
-        const response = await fetch(candidate, { signal: controller.signal, redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
+        const response = await budgetFetch(candidate, { signal: controller.signal, redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
         if (response.url && isSearchResultsUrl(response.url)) return { isCatalog: true };
         if ([404, 410].includes(response.status)) { gone = true; continue; }
         if (!response.ok || !String(response.headers?.get?.("content-type") || "").includes("html")) { console.info("merchant_page_failed", { host: parsed.hostname, status: response.status }); continue; }

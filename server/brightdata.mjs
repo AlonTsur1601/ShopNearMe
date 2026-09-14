@@ -1,3 +1,4 @@
+import { budgetFetch, searchContext } from "./search-budget.mjs";
 import { createHash } from "node:crypto";
 
 const cache = new Map(), pending = new Map();
@@ -34,11 +35,12 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
   const url = brightDataSearchUrl(request);
   const key = createHash("sha256").update(config.apiKey + "|" + config.zone + "|" + url).digest("hex");
   if (cache.get(key)?.expires > Date.now()) return cache.get(key).data;
+  if (searchContext()?.providerFailure) throw searchContext().providerFailure;
   if (pending.has(key)) return pending.get(key);
   const task = (async () => {
     for (let attempt = 0; ; attempt++) {
       try {
-        const response = await fetch("https://api.brightdata.com/request", {
+        const response = await budgetFetch("https://api.brightdata.com/request", {
           method: "POST",
           headers: { Authorization: "Bearer " + config.apiKey, "Content-Type": "application/json" },
           body: JSON.stringify({ zone: config.zone, url, format: "json" }),
@@ -71,6 +73,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
           catch { throw new Error("Bright Data did not return parsed search data"); }
         }
         if (!data || typeof data !== "object" || Array.isArray(data) || data.error) throw new Error("Bright Data returned an invalid search response");
+        if (!["organic", "shopping", "local", "places", "snack_pack"].some(field => Object.hasOwn(data, field))) throw new Error("Bright Data returned an unrecognized search response");
         // Unknown schemas/empty results are deliberately not cached as successes.
         if ([data.organic, data.shopping, data.local, data.places, data.snack_pack].some(items => (Array.isArray(items) ? items : items?.places ?? items?.results)?.length)) {
           if (cache.size >= 200) cache.delete(cache.keys().next().value);
@@ -78,6 +81,8 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         }
         return data;
       } catch (error) {
+        if (searchContext() && ["source_blocked", "quota_exhausted"].includes(error.code)) searchContext().providerFailure = error;
+        if (searchContext()?.signal.aborted) throw searchContext().signal.reason;
         const temporary = [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|did not return parsed/i.test(error.message);
         if (attempt || !temporary || error.code === "source_blocked") throw error;
       }

@@ -60,7 +60,7 @@ describe("specification-driven facets", () => {
     expect(monitorAttributes("monitor", "27 inch monitor").attributes.speakers).toBeUndefined();
     expect(monitorAttributes("camping tent", "glossy fabric").attributes).toEqual({});
     const facets = buildFacets([{ attributes: { ports: ["HDMI", "HDMI", "USB-C"] }, attributeLabels: { ports: "Ports" } }, { attributes: {} }], "monitor");
-    expect(facets.find(f => f.id === "ports")).toBeUndefined();
+    expect(facets.find(f => f.id === "ports")).toMatchObject({ missingCount: 1 });
   });
 
   it("cleans store interface noise, preserves generic sizes and splits multiple features", () => {

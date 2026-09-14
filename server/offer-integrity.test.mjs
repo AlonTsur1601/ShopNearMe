@@ -96,7 +96,7 @@ it("retries a missing filter property and accepts a real value from the second s
   const result = await recoverModelSpecifications(offers, "headphones", "Israel", { apiKey: "second-retry-fixture", zone: "zone" });
   expect(searches).toBe(2);
   expect(result[1].attributes.connectivity).toBe("Bluetooth");
-  expect(requireCompleteFacets(result, "headphones").map(offer => offer.title)).toEqual(["Wireless headphones A", "Headphones B"]);
+  expect(requireCompleteFacets(result, "headphones", ["connectivity"]).map(offer => offer.title)).toEqual(["Wireless headphones A", "Headphones B"]);
 });
 
 it("keeps only complete product offers for every generated filter", () => {
@@ -131,7 +131,7 @@ it("does not resurrect a deleted product from an indexed price", async () => {
   expect(result.offers).toEqual([]);
 });
 
-it("suppresses a source failure warning when another source supplies online offers, but keeps failure state", async () => {
+it("preserves a source failure warning when another source supplies online offers", async () => {
   vi.stubGlobal("fetch", vi.fn(async url => {
     const target = new URL(url);
     if (target.hostname === "working.co.il") return new Response('<script type="application/ld+json">{"@type":"Product","name":"Working desk lamp","offers":{"price":99,"priceCurrency":"ILS"},"image":"/lamp.jpg"}</script>', { headers: { "Content-Type": "text/html" } });
@@ -140,7 +140,7 @@ it("suppresses a source failure warning when another source supplies online offe
   }));
   const result = await searchCatalog("Working desk lamp", "Israel", "working-fixture", undefined, undefined, "online");
   expect(result.offers).toHaveLength(1);
-  expect(result.warnings).toEqual([]);
+  expect(result.warnings).toContain("Online products could not be searched. Please try again.");
   expect(result.partialFailure).toBe(true);
   const before = vi.mocked(fetch).mock.calls.length;
   await searchCatalog("Working desk lamp", "Israel", "working-fixture", undefined, undefined, "online");

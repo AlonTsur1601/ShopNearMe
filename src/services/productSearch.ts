@@ -6,8 +6,8 @@ const demoQueries = /(sony|headphones?|wh-1000xm6)/i;
 export function isShowcaseQuery(query: string) { return demoQueries.test(query.trim()); }
 export type SearchScope = "online" | "local" | "local-products" | "all";
 
-function genericFallback(query: string): ShowcaseSearch {
-  return { query, resultCount: 0, offers: [], facets: [], source: "fallback" };
+function genericFallback(query: string, warning = "Product search is temporarily unavailable."): ShowcaseSearch {
+  return { query, resultCount: 0, offers: [], facets: [], source: "fallback", partialFailure: true, warnings: [warning] };
 }
 
 function facetsFor(offers: Offer[], results: ShowcaseSearch[]): Facet[] {
@@ -30,7 +30,10 @@ export async function searchProductScope(query: string, location: string, scope:
   const params = new URLSearchParams({ q: query.trim(), location, scope });
   if (place) { params.set("lat", String(place.lat)); params.set("lon", String(place.lon)); }
   const response = await fetch(`/api/search?${params}`, { signal });
-  if (!response.ok) throw new Error(`Search request failed (${response.status})`);
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(typeof failure.error === "string" ? failure.error + (failure.resetAt ? ` It will reset ${failure.resetAt}.` : "") : `Search request failed (${response.status})`);
+  }
   const result = await response.json() as ShowcaseSearch;
   if (!Array.isArray(result.offers) || !Array.isArray(result.facets)) throw new Error("Invalid search response");
   return { ...result, source: "live" };
@@ -39,7 +42,7 @@ export async function searchProductScope(query: string, location: string, scope:
 export async function searchProducts(query: string, location: string, signal?: AbortSignal, place?: LocationPlace): Promise<ShowcaseSearch> {
   const normalized = query.trim();
   try { return await searchProductScope(normalized, location, "all", signal, place); }
-  catch (error) { if (error instanceof DOMException && error.name === "AbortError") throw error; return genericFallback(normalized); }
+  catch (error) { if (signal?.aborted && signal.reason?.name !== "TimeoutError") throw error; return genericFallback(normalized, signal?.reason?.name === "TimeoutError" ? "The search time limit was reached. Please try again." : error instanceof Error ? error.message : undefined); }
 }
 
 export { genericFallback };

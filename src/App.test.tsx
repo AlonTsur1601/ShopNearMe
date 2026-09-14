@@ -14,6 +14,27 @@ vi.mock("./services/productSearch", () => ({
 }));
 
 describe("App", () => {
+  it("clears previous price and distance restrictions on a new product search", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "clock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByRole("textbox", { name: "Minimum price" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Minimum price" }), { target: { value: "99999" } });
+    fireEvent.change(screen.getByRole("slider", { name: "Maximum distance" }), { target: { value: "1" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "new clock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByRole("textbox", { name: "Minimum price" })).toHaveValue("");
+    expect(screen.getByRole("slider", { name: "Maximum distance" })).toHaveValue("50");
+  });
+  it("explains incomplete empty results instead of blaming filters", async () => {
+    vi.mocked(searchProducts).mockResolvedValueOnce({ query: "battery", offers: [], facets: [], resultCount: 0, source: "live", partialFailure: true, warnings: ["Provider blocked"] });
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "battery" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByRole("heading", { name: "Search incomplete" })).toBeVisible();
+    expect(screen.getByText("Provider blocked")).toBeVisible();
+    expect(screen.queryByText("Clear a filter or try a broader search.")).not.toBeInTheDocument();
+  });
   it("marks an out-of-stock notice for the red status style", () => {
     render(<OfferSection category="order" distanceUnit="km" offers={[{ ...clockShowcase.offers[0], availability: "Out of stock" }]} />);
     expect(screen.getByText("Out of stock")).toHaveClass("stock-unavailable");
@@ -128,7 +149,7 @@ describe("App", () => {
     expect(clockType).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("checkbox", { name: /Wall clock/ })).toBeVisible();
     expect(screen.getAllByText("Movement")[0]).toBeVisible();
-    const localHeading = screen.getByRole("heading", { name: /Buy in store/ });
+    const localHeading = screen.getByRole("heading", { name: /Nearby retailers/ });
     const onlineHeading = screen.getByRole("heading", { name: /Order online/ });
     expect(localHeading.compareDocumentPosition(onlineHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -194,6 +215,6 @@ describe("App", () => {
 
   it("does not render an empty shopping category", () => {
     render(<OfferSection category="local" offers={[]} distanceUnit="km" />);
-    expect(screen.queryByRole("heading", { name: /Buy in store/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Nearby retailers/ })).not.toBeInTheDocument();
   });
 });

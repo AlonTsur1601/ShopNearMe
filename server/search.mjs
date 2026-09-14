@@ -4,6 +4,8 @@ import { monitorAttributes, proseAttributes, specificationPairs, structuredAttri
 import { amountInCurrency, costBreakdown } from "./costs.mjs";
 import { englishLabel, normalizeOfferFacets, translateTerms } from "./facet-language.mjs";
 import { fetchJson, mapConcurrent, searchProvider } from "./providers.mjs";
+import { productWords, contradictsQuery, sameProductIdentity } from "./product-identity.mjs";
+import { budgetFetch, deadlineError, searchContext, withSearchBudget } from "./search-budget.mjs";
 const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 let ebayToken = null;
@@ -58,6 +60,7 @@ function inferUnit(text, pattern, unit) { const value = text.match(pattern)?.[1]
 function inferBoolean(text, yes, no, yesLabel, noLabel) { return yes.test(text) ? yesLabel : no.test(text) ? noLabel : undefined; }
 
 const productRules = [
+  { match: /\bdock(?:ing station)?s?\b/i, rules: [{ id: "connectivity", label: "Connectivity", values: ["USB-C", "Thunderbolt", "USB 3.0", "USB 2.0"] }] },
   { match: /dining\s+(?:table|set)/i, rules: [{ id: "tableSize", label: "Size / seats", infer: inferTableSize }, { id: "material", label: "Material", values: materials }, { id: "shape", label: "Shape", values: ["Rectangular", "Round", "Oval", "Square"] }, { id: "chairsIncluded", label: "Chairs included", infer: inferChairs }, { id: "extendable", label: "Extendable", infer: inferExtendable }] },
   { match: /clock/i, rules: [{ id: "clockType", label: "Clock type", values: ["Wall clock", "Alarm clock", "Desk clock", "Smart clock", "Mantel clock"] }, { id: "movement", label: "Movement", values: ["Quartz", "Digital", "Mechanical", "Atomic"] }] },
   { match: /coffee\s+(?:maker|machine)|espresso|french press/i, rules: [{ id: "type", label: "Coffee maker type", values: ["Drip", "Espresso", "Pod", "Single serve", "Cold brew", "French press"] }] },
@@ -113,6 +116,8 @@ const translatedCategories = [
   [/charger/i, /מטען/, "מטען"],
 ];
 export function isRelevantProduct(title, query) {
+  if (contradictsQuery(title, query)) return false;
+  title = productWords(title); query = productWords(query);
   if (/\bclock\b/i.test(query) && /\b(?:watch|watches|smartwatch|wristwatch)\b|שעו(?:ן|ני)\s+(?:יד|חכ)/i.test(title)) return false;
   if (/laptop|notebook|chromebook/i.test(query) && /motherboard|mainboard|replacement (?:battery|screen|keyboard)|(?:battery|charger|screen|keyboard)\s+for\b/i.test(title)) return false;
   if (/camping tent/i.test(query) && /tent (?:carpet|rug|spring buckle|rope tensioner)|camping (?:complex|site)|(?:פנס|עששית|תאורה|אירוח|מתחם קמפינג).*אוהל/i.test(title)) return false;
@@ -130,10 +135,11 @@ export function isRelevantProduct(title, query) {
   const wanted = searchTokens(query), actual = searchTokens(title);
   if (!wanted.length) return false;
   const matched = wanted.filter((token) => actual.some((value) => value === token || (token.length >= 5 && (value.startsWith(token) || token.startsWith(value)))));
-  return wanted.length === 1 ? matched.length === 1 : matched.length >= Math.min(2, wanted.length);
+  return matched.length === wanted.length;
 }
 function localQuery(query, code) {
   if (code !== "IL") return query;
+  if (/\b(?:rechargeable\s+)?batter(?:y|ies)\b/i.test(query)) return query.replace(/rechargeable\s+batter(?:y|ies)/ig, "סוללות נטענות").replace(/batter(?:y|ies)/ig, "סוללות");
   if (/(?:laptop|notebook)\s+(?:stand|riser|holder|tray)|(?:stand|riser|holder|tray)\s+(?:for\s+)?(?:laptop|notebook)/i.test(query)) return query;
   const translated = translatedCategories.find(([match]) => match.test(query));
   const localized = translated ? query.replace(translated[0], translated[2]).replace(/1440p/ig, "2560x1440") : query;
@@ -153,7 +159,7 @@ const genericRules = [
   { id: "dimensions", label: "Dimensions", infer: (text) => text.match(/\b(\d+(?:\.\d+)?\s*(?:x|×)\s*\d+(?:\.\d+)?(?:\s*(?:x|×)\s*\d+(?:\.\d+)?)?\s*(?:cm|mm|in(?:ches)?|"))/i)?.[1] },
   { id: "capacity", label: "Capacity", infer: (text) => text.match(/\b(\d+(?:\.\d+)?\s*(?:ml|l|liters?|oz|cups?|quarts?|people|person))\b/i)?.[1] },
   { id: "power", label: "Power", infer: (text) => text.match(/\b(\d{2,5})\s*w(?:att)?s?\b/i)?.[1] ? `${text.match(/\b(\d{2,5})\s*w(?:att)?s?\b/i)[1]} W` : undefined },
-  { id: "packSize", label: "Pack size", infer: (text) => text.match(/\b(\d+)\s*(?:pack|count|ct|pieces?)\b/i)?.[1] ? `${text.match(/\b(\d+)\s*(?:pack|count|ct|pieces?)\b/i)[1]} pack` : undefined },
+  { id: "packSize", label: "Pack size", infer: (text) => { const multiple = text.match(/\b(\d+)\s*pack\s*[x×]\s*(\d+)\b/i), count = text.match(/\b(?:pack\s+of\s+|מארז\s*(?:של\s*)?)(\d+)\b/i)?.[1] ?? text.match(/\b(\d+)\s*(?:pack|count|ct|pieces?)\b/i)?.[1]; return multiple ? `${Number(multiple[1]) * Number(multiple[2])} pack` : count ? `${count} pack` : undefined; } },
   { id: "storage", label: "Storage", infer: inferStorage },
   { id: "connectivity", label: "Connectivity", values: ["Bluetooth", "Wi-Fi", "Wired", "USB-C", "Lightning", "HDMI"] },
   { id: "weight", label: "Weight", infer: (text) => text.match(/\b(\d+(?:\.\d+)?\s*(?:kg|g|lb|lbs|oz))\b/i)?.[1] },
@@ -213,7 +219,7 @@ async function ebayAccess(credentials) { if (!credentials?.clientId || !credenti
 async function ebaySearch(query, location, credentials) {
   const token = await ebayAccess(credentials);
   if (!token) return [];
-  const country = countryCode(location), filters = ["conditions:{USED}"];
+  const country = countryCode(location), filters = ["conditions:{NEW|USED}"];
   if (country) filters.push(`deliveryCountry:${country}`);
   const params = new URLSearchParams({ q: query, limit: "15", filter: filters.join(",") });
   const headers = { Authorization: `Bearer ${token}`, "X-EBAY-C-MARKETPLACE-ID": "EBAY_US" };
@@ -225,6 +231,7 @@ async function ebaySearch(query, location, credentials) {
     try {
       const detail = await fetchJson(`https://api.ebay.com/buy/browse/v1/item/${encodeURIComponent(item.itemId)}`, { headers }, 2200);
       item.specifications = specificationPairs(detail.localizedAspects);
+      item.specificationText = detail.shortDescription || "";
       item.shippingOptions = detail.shippingOptions ?? item.shippingOptions;
       item.importCharges = detail.importCharges ?? item.importCharges;
       if (detail.brand) item.specifications.push({ name: "Manufacturer", value: detail.brand });
@@ -235,8 +242,8 @@ async function ebaySearch(query, location, credentials) {
     const itemPrice = number(price?.convertedFromCurrency === "USD" ? price.convertedFromValue : price?.value);
     const shippingPrice = number(shipping?.convertedFromCurrency === "USD" ? shipping.convertedFromValue : shipping?.value);
     const totalPrice = itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice;
-    const condition = item.condition || "Used", merchant = "eBay";
-    return { id: `ebay-${item.itemId ?? index}`, category: "secondHand", merchant, merchantLogoUrl: "/ebay.svg", title: item.title || "Pre-owned eBay listing", subtitle: [condition, item.itemLocation?.country].filter(Boolean).join(" · "), imageUrl: safeHttpUrl(item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl), rating: number(item.seller?.feedbackPercentage) ? Math.min(5, number(item.seller.feedbackPercentage) / 20) : 0, reviewCount: number(item.seller?.feedbackScore) ?? 0, itemPrice, shippingPrice, totalPrice, currency: price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD", ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: amountInCurrency(item.shippingOptions?.[0]?.importCharges ?? item.importCharges, price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD"), crossBorder: !!country && !!item.itemLocation?.country && item.itemLocation.country !== country }), priceVerified: totalPrice !== null, availability: "Available on eBay", condition, attributes: attributesFor(query, item.title || "", condition, merchant, item), attributeLabels: attributeLabelsFor(query, item.title || "", item), destinationUrl: safeHttpUrl(item.itemWebUrl), linkLabel: "View product" };
+    const condition = item.condition || "Used", merchant = "eBay", category = String(item.conditionId) === "1000" || /^new(?:\b|$)/i.test(condition) ? "order" : "secondHand";
+    return { id: `ebay-${item.itemId ?? index}`, category, merchant, merchantLogoUrl: "/ebay.svg", title: item.title || "Pre-owned eBay listing", subtitle: [condition, item.itemLocation?.country].filter(Boolean).join(" · "), imageUrl: safeHttpUrl(item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl), rating: number(item.seller?.feedbackPercentage) ? Math.min(5, number(item.seller.feedbackPercentage) / 20) : 0, reviewCount: number(item.seller?.feedbackScore) ?? 0, itemPrice, shippingPrice, totalPrice, currency: price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD", ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: amountInCurrency(item.shippingOptions?.[0]?.importCharges ?? item.importCharges, price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD"), crossBorder: !!country && !!item.itemLocation?.country && item.itemLocation.country !== country }), priceVerified: totalPrice !== null, availability: "Available on eBay", condition, attributes: attributesFor(query, item.title || "", condition, merchant, item), attributeLabels: attributeLabelsFor(query, item.title || "", item), destinationUrl: safeHttpUrl(item.itemWebUrl), linkLabel: "View product" };
   }).filter((offer) => offer.destinationUrl);
 }
 function shoppingOffer(item, index, query) { if (!isRelevantProduct(item.title, query) || !safeHttpUrl(item.link || item.product_link)) return null; const itemPrice = number(item.extracted_price ?? item.price), shipping = shippingFor(item, itemPrice), isUsed = used(item), isLocal = !isUsed && local(item), merchant = shortRetailerName(item.source || item.merchant || item.seller || "Retailer"), text = `${item.title ?? ""} ${(item.extensions ?? []).join(" ")}`, condition = isUsed ? (item.condition || (/refurb|renewed/i.test(text) ? "Refurbished" : "Used")) : "New", shippingPrice = isLocal ? null : shipping.shippingPrice; return { id: `serp-${item.product_id ?? item.position ?? index}`, category: isUsed ? "secondHand" : isLocal ? "local" : "order", merchant, merchantLogoUrl: safeHttpUrl(item.source_icon || item.favicon), title: item.title || "Product offer", subtitle: (item.extensions ?? []).slice(0, 3).join(" · ") || item.delivery || "See retailer for product details", imageUrl: productImageUrl(item.thumbnail || item.image), rating: number(item.rating) ?? 0, reviewCount: number(item.reviews) ?? 0, itemPrice, shippingPrice, totalPrice: itemPrice === null ? null : shippingPrice === null ? itemPrice : shipping.totalPrice, currency: /₪|NIS|ILS/i.test(`${item.price ?? ""} ${text}`) ? "ILS" : /€|EUR/i.test(`${item.price ?? ""} ${text}`) ? "EUR" : /£|GBP/i.test(`${item.price ?? ""} ${text}`) ? "GBP" : "USD", shippingEstimated: shipping.shippingEstimated, priceVerified: itemPrice !== null, availability: isLocal ? "Check local stock" : "Available online", arrival: isLocal ? undefined : item.delivery, condition, attributes: attributesFor(query, text, condition, merchant), destinationUrl: safeHttpUrl(item.link || item.product_link), linkLabel: "View product" }; }
@@ -247,7 +254,7 @@ async function resolveGoogleGoto(value) {
   const url = new URL(link);
   if (!/(^|\.)google\./i.test(url.hostname) || url.pathname !== "/goto") return link;
   try {
-    const response = await fetch(link, { redirect: "manual", signal: AbortSignal.timeout(1200), headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
+    const response = await budgetFetch(link, { redirect: "manual", signal: AbortSignal.timeout(1200), headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
     const destination = safeHttpUrl(response.headers?.get?.("location"));
     if (!destination) console.info("merchant_redirect_failed", { status: response.status });
     try { await response.body?.cancel?.(); } catch { /* The redirect target is all that is needed. */ }
@@ -320,7 +327,7 @@ export function merchantWebsite(value) {
 
 function nearbyProductOffers(maps, offers) {
   return offers.filter(offer => offer.category === "order" && maps.some(store => storeMatchesProduct(store, offer)))
-    .map(offer => ({ ...offer, id: `${offer.id}-pickup`, category: "local", totalPrice: offer.itemPrice, shippingPrice: null, importTaxPrice: null, taxPrice: null, otherFeesPrice: 0, importTaxUnknown: false, totalEstimated: false, availability: offer.availability || "" }));
+    .map(offer => ({ ...offer, id: `${offer.id}-pickup`, category: "local", totalPrice: offer.itemPrice, shippingPrice: null, importTaxPrice: null, taxPrice: null, otherFeesPrice: 0, importTaxUnknown: false, totalEstimated: true, pickupVerified: false, availability: "Branch stock not verified" }));
 }
 
 export function isCategoryPage(title, link) {
@@ -349,15 +356,8 @@ function facetDefinitions(offers, query) {
 function requiredFacetIds(offers, query) {
   const products = offers.map(normalizeOfferFacets).filter(offer => !offer.potentialStore);
   if (!products.length) return [];
-  const { definitions, specificIds } = facetDefinitions(products, query);
-  return definitions.map(([id]) => id).filter(id => {
-    if (id === "retailer") return false;
-    const populated = products.filter(offer => valuesForFacet(offer, id).length);
-    if (!populated.length) return false;
-    const options = new Set(populated.flatMap(offer => valuesForFacet(offer, id)));
-    const minimum = Math.max(2, Math.ceil(products.length * (specificIds.has(id) ? .05 : .2)));
-    return options.size === 1 ? specificIds.has(id) : populated.length >= minimum;
-  });
+  const { definitions } = facetDefinitions(products, query);
+  return definitions.map(([id]) => id).filter(id => id !== "retailer" && products.some(offer => valuesForFacet(offer, id).length));
 }
 
 function recoveryFacetIds(offers, query) {
@@ -375,19 +375,18 @@ export function requireCompleteFacets(offers, query, required = requiredFacetIds
 export function buildFacets(offers, query) {
   offers = offers.map(normalizeOfferFacets);
   const products = offers.filter(offer => !offer.potentialStore);
-  const { definitions, discovered, specificIds } = facetDefinitions(offers, query);
+  const { definitions, discovered } = facetDefinitions(offers, query);
   return definitions.map(([id, label]) => {
     const candidates = id === "retailer" ? offers : products;
     if (!candidates.length) return null;
     const counts = new Map();
     for (const offer of candidates) {
       const values = valuesForFacet(offer, id);
-      if (!values.length) return null;
+      if (!values.length) continue;
       for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
     }
-    const specific = specificIds.has(id);
-    if (!counts.size || (!discovered.has(id) && counts.size === 1 && !specific)) return null;
-    return { id, label: discovered.get(id) ?? label, options: [...counts].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, count })) };
+    if (!counts.size) return null;
+    return { id, label: discovered.get(id) ?? label, missingCount: candidates.filter(offer => !valuesForFacet(offer, id).length).length, options: [...counts].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, count })) };
   }).filter(Boolean);
 }
 export function shareProductSpecs(offers) {
@@ -414,9 +413,6 @@ export function shareProductSpecs(offers) {
     return { ...offer, attributes, attributeLabels };
   });
 }
-function completeFacetCohort(offers, required) {
-  return offers.filter(offer => !offer.potentialStore && required.every(id => valuesForFacet(offer, id).length));
-}
 function hasProductBasics(offer) {
   return !!(offer?.title && !offer.potentialStore && offer.itemPrice !== null && offer.itemPrice !== undefined && productImageUrl(offer.imageUrl || offer.imageUrls?.[0]) && merchantWebsite(offer.destinationUrl) && !isCategoryPage(offer.title, offer.destinationUrl) && !/^out of stock$/i.test(String(offer.availability).trim()));
 }
@@ -432,32 +428,12 @@ function coalesceOffers(offers) {
   }
   return [...merged.values()];
 }
-function coherentFacetCohort(offers, query, requested) {
-  const specific = new Set((productRules.find(group => group.match.test(query))?.rules ?? []).map(rule => rule.id));
-  const secondHand = offers.filter(offer => offer.category === "secondHand");
-  const retailerProducts = offers.filter(offer => offer.category !== "secondHand" && [...specific].filter(id => valuesForFacet(offer, id).length).length >= Math.min(2, specific.size));
-  const pool = retailerProducts.length ? [...retailerProducts, ...secondHand] : secondHand.length ? secondHand : offers;
-  const applicable = requiredFacetIds(pool, query);
-  const candidates = (requested ?? applicable).filter(id => applicable.includes(id));
-  const target = Math.min(pool.length, Math.max(1, Math.min(4, Math.ceil(pool.length * .25))));
-  const exact = completeFacetCohort(pool, candidates);
-  if (exact.length >= target) return exact;
-  if (retailerProducts.length) {
-    const shared = candidates.filter(id => retailerProducts.every(offer => valuesForFacet(offer, id).length));
-    return pool.filter(offer => shared.every(id => valuesForFacet(offer, id).length));
-  }
-  let cohort = pool;
-  for (const id of [...candidates].sort((a, b) => Number(specific.has(b)) - Number(specific.has(a)) || pool.filter(offer => valuesForFacet(offer, b).length).length - pool.filter(offer => valuesForFacet(offer, a).length).length)) {
-    const complete = cohort.filter(offer => valuesForFacet(offer, id).length);
-    if (complete.length >= target) cohort = complete;
-  }
-  return cohort;
-}
-
-function makeResult(query, offers, required) {
-  const order = { local: 0, order: 1, secondHand: 2 }, valid = coalesceOffers(offers);
-  const clean = coherentFacetCohort(valid, query, required).sort((a, b) => order[a.category] - order[b.category]);
-  return { query, resultCount: clean.length, offers: clean, facets: buildFacets(clean, query), source: "live" };
+export function makeResult(query, offers) {
+  const order = { local: 0, order: 1, secondHand: 2 };
+  const clean = coalesceOffers(offers).sort((a, b) => order[a.category] - order[b.category]);
+  const facets = buildFacets(clean, query);
+  const incomplete = clean.map(offer => ({ ...offer, missingAttributes: facets.filter(facet => !valuesForFacet(offer, facet.id).length).map(facet => facet.id) }));
+  return { query, resultCount: clean.length, offers: incomplete, facets, source: "live", attributesComplete: incomplete.every(offer => !offer.missingAttributes.length) };
 }
 export async function recoverModelSpecifications(offers, query, location, key, required = undefined, repeated = false, budget = { deadline: Infinity, remaining: 4 }) {
   const shared = shareProductSpecs(offers);
@@ -465,35 +441,40 @@ export async function recoverModelSpecifications(offers, query, location, key, r
   const propertyIds = [...new Set([...recoveryFacetIds(shared, query), ...requiredIds])];
   if (!propertyIds.length) return shared;
   const labels = new Map(facetDefinitions(shared, query).definitions);
-  const matchingTitle = (offer, title) => {
-    const wanted = searchTokens(offer.title), actual = searchTokens(title);
-    const identifiers = wanted.filter(token => /\d/.test(token) && /[a-z]/i.test(token));
-    if (identifiers.length && identifiers.some(token => actual.includes(token))) return true;
-    return wanted.length > 0 && wanted.filter(token => actual.includes(token)).length >= Math.min(3, wanted.length);
-  };
+  const matchingTitle = (offer, title) => offer.gtin && String(title).includes(offer.gtin)
+    || offer.mpn && offer.productBrand && sameProductIdentity(`${offer.productBrand} ${offer.mpn}`, title)
+    || sameProductIdentity(offer.title, title);
   const sameProduct = (offer, page) => {
     if (offer.gtin) return page.gtin === offer.gtin;
     if (offer.mpn && /[a-z]/i.test(offer.mpn)) return page.mpn?.toLowerCase() === offer.mpn.toLowerCase() && (!offer.productBrand || String(page.brand ?? "").toLowerCase() === String(offer.productBrand).toLowerCase());
     return matchingTitle(offer, page.title);
   };
+  const lookupFor = offer => /^\d{8,14}$/.test(offer.gtin ?? "") ? offer.gtin : offer.productBrand && /[a-z]/i.test(offer.mpn ?? "") ? `${offer.productBrand} ${offer.mpn}` : offer.title;
+  const missingOffers = shared.filter(offer => !offer.potentialStore && propertyIds.some(id => !valuesForFacet(offer, id).length));
+  const batchSize = Math.max(1, Math.ceil(missingOffers.length / Math.max(1, budget.remaining)));
+  const batches = new Map();
+  const findSpecifications = offer => {
+    const index = Math.floor(missingOffers.indexOf(offer) / batchSize);
+    if (batches.has(index)) return batches.get(index);
+    if (budget.remaining <= 0 || searchContext()?.providerFailure || budget.deadline <= Date.now()) return Promise.resolve([]);
+    budget.remaining--;
+    const lookups = [...new Set(missingOffers.slice(index * batchSize, (index + 1) * batchSize).map(lookupFor).filter(Boolean))];
+    const requested = propertyIds.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
+    const search = `(${lookups.map(lookup => `"${lookup.replaceAll('"', '')}"`).join(" OR ")}) ${repeated ? "manufacturer" : "technical"} specifications ${requested}`;
+    const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
+    if (typeof key === "string") params.set("api_key", key);
+    const job = searchProvider(params, key, Math.min(4000, budget.deadline - Date.now())).then(data => data.organic_results ?? []).catch(() => []);
+    batches.set(index, job);
+    return job;
+  };
   const recovered = await mapConcurrent(shared, 4, async offer => {
-    if (offer.potentialStore || budget.deadline - Date.now() < 1000 || budget.remaining <= 0) return offer;
+    if (offer.potentialStore || budget.deadline - Date.now() < 1000) return offer;
     const missing = propertyIds.filter(id => !valuesForFacet(offer, id).length);
     if (!missing.length) return offer;
-    const lookup = /^\d{8,14}$/.test(offer.gtin ?? "") ? offer.gtin : offer.productBrand && /[a-z]/i.test(offer.mpn ?? "") ? `${offer.productBrand} ${offer.mpn}` : offer.title;
+    const lookup = lookupFor(offer);
     if (!lookup) return offer;
-    budget.remaining--;
     let attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
-    const requested = missing.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
-    const searches = repeated
-      ? [`"${lookup}" manufacturer specifications ${requested}`.trim()]
-      : [`"${lookup}" technical specifications ${requested}`.trim()];
-    const attempts = await Promise.allSettled(searches.map(async search => {
-        const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
-        if (typeof key === "string") params.set("api_key", key);
-        return searchProvider(params, key, Math.min(4000, budget.deadline - Date.now()));
-    }));
-    const seenLinks = new Set(), results = attempts.flatMap(attempt => attempt.status === "fulfilled" ? attempt.value.organic_results ?? [] : []).filter(item => {
+    const seenLinks = new Set(), results = (await findSpecifications(offer)).filter(item => {
       const link = safeHttpUrl(item.link), identity = link || `${item.title ?? ""}|${item.snippet ?? ""}`;
       if (seenLinks.has(identity)) return false;
       seenLinks.add(identity); return true;
@@ -521,22 +502,26 @@ export async function recoverModelSpecifications(offers, query, location, key, r
   return result;
 }
 
-async function finishBefore(operation, deadline, fallback) {
+export async function finishBefore(operation, deadline) {
   const remaining = Math.max(0, deadline - Date.now());
-  if (!remaining) return fallback;
+  if (!remaining) throw deadlineError();
   let timer;
-  try { return await Promise.race([operation(), new Promise(resolve => { timer = setTimeout(() => resolve(fallback), remaining); })]); }
+  try {
+    const value = await Promise.race([operation(), new Promise((_, reject) => { timer = setTimeout(() => reject(deadlineError()), remaining); })]);
+    if (searchContext()?.signal.aborted || Date.now() >= deadline) throw deadlineError();
+    return value;
+  }
   finally { clearTimeout(timer); }
 }
 
 async function completeFacetAttributes(offers, query, location, key, deadline = Number.POSITIVE_INFINITY) {
   let enriched = shareProductSpecs(coalesceOffers(offers)), required = requiredFacetIds(enriched, query);
   const budget = { deadline, remaining: 4 };
-  enriched = await finishBefore(() => recoverModelSpecifications(enriched, query, location, key, required, false, budget), deadline, enriched);
+  enriched = await finishBefore(() => recoverModelSpecifications(enriched, query, location, key, required, false, budget), deadline).catch(() => enriched);
   const expanded = requiredFacetIds(enriched, query);
   required = [...required, ...expanded.filter(id => !required.includes(id))];
   if (enriched.some(offer => !offer.potentialStore && required.some(id => !valuesForFacet(offer, id).length))) {
-    enriched = await finishBefore(() => recoverModelSpecifications(enriched, query, location, key, required, true, budget), deadline, enriched);
+    enriched = await finishBefore(() => recoverModelSpecifications(enriched, query, location, key, required, true, budget), deadline).catch(() => enriched);
   }
   return { offers: enriched, required };
 }
@@ -588,8 +573,9 @@ async function shoppingSearch(query, location, key, retailerPages) {
     });
     let retailerFailure;
     let discovered = needsMerchantDiscovery ? await retailerPages.catch(error => { retailerFailure = error; return []; }) : [];
-    if (["quota_exhausted", "source_blocked"].includes(retailerFailure?.code) || [401, 403].includes(retailerFailure?.status)) throw retailerFailure;
-    if (needsMerchantDiscovery && !discovered.length && !rows.flat().some(Boolean)) {
+    const cannotRecover = ["quota_exhausted", "source_blocked"].includes(retailerFailure?.code) || [401, 403].includes(retailerFailure?.status);
+    if (cannotRecover && !rows.flat().some(Boolean)) throw retailerFailure;
+    if (!cannotRecover && needsMerchantDiscovery && !discovered.length && !rows.flat().some(Boolean)) {
       // Only recover two indexed products when the shared page search failed.
       // This is a fallback, never the old per-row eight-query fan-out.
       const merchants = new Set();
@@ -761,7 +747,7 @@ async function localProductSearch(query, location, key, stores = [], deadline = 
   return [];
 }
 async function runScope(scope, query, location, key, coordinates, credentials) {
-  const facetDeadline = Date.now() + 17000;
+  const facetDeadline = searchContext()?.deadline ?? Date.now() + 16000;
   const productLocation = searchLocation(location, coordinates);
   if (scope === "local") {
     // Local-only searches need the same product discovery as combined searches.
@@ -803,18 +789,20 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   }
   const completed = await completeFacetAttributes(offers, query, location, key, facetDeadline), enriched = completed.offers, required = completed.required;
   const result = makeResult(query, await localizeOffers(enriched.map(offer => ({ ...offer, availability: offer.availability === "Out of stock" ? "Out of stock" : "" })), productLocation), required);
-  const labels = scope === "online" ? ["Online products", "Retailer product pages", "Second-hand products"]
+  const labels = scope === "online" ? ["Online products", "Retailer product pages", "Marketplace products"]
     : scope === "local" ? ["Nearby products"] : scope === "local-products" ? ["Retailer product pages"]
-    : ["Online products", "Nearby product availability", "Retailer product pages", "Second-hand products"];
+    : ["Online products", "Nearby product availability", "Retailer product pages", "Marketplace products"];
   const quotaFailure = settled.find(entry => entry.status === "rejected" && entry.reason?.code === "quota_exhausted");
+  result.sourceStatus = settled.map((entry, index) => ({ source: labels[index], status: entry.status === "fulfilled" ? "completed" : "failed", ...(entry.status === "rejected" ? { code: entry.reason?.code || (entry.reason?.name === "TimeoutError" ? "search_timeout" : "search_unavailable") } : {}) }));
   result.warnings = quotaFailure
     ? [`Search provider quota has been used up.${quotaFailure.reason.resetAt ? ` It will reset ${quotaFailure.reason.resetAt}.` : " The provider did not supply a reset time."}`]
     : settled.flatMap((entry, index) => entry.status === "rejected" ? [labels[index] + (entry.reason?.code === "source_blocked"
       ? " could not be searched because the search provider was blocked by Google (CAPTCHA). Results are incomplete."
       : " could not be searched. Please try again.")] : []);
   result.partialFailure = settled.some(entry => entry.status === "rejected");
-  if (result.offers.some(offer => offer.category === "order")) result.warnings = result.warnings.filter(warning => !/^(Online products|Retailer product pages) could not/.test(warning));
+  if (result.warnings.some(warning => warning.includes("(CAPTCHA)"))) result.warnings = [...result.warnings.filter(warning => !warning.includes("(CAPTCHA)")), "Google product and retailer search was blocked (CAPTCHA). Other available sources are shown; results are incomplete."];
+  if (!result.attributesComplete) result.warnings.push("Some product specifications could not be verified. Filters match only confirmed values; affected filters show the number of products still missing a value.");
   if ((!location || location === "Current location") && !coordinates && scope !== "online") result.warnings.push("Choose a location to include nearby products.");
   return result;
 }
-export async function searchCatalog(query, location, apiKey, coordinates, credentials, scope = "all") { if (!apiKey || (typeof apiKey === "object" && (!apiKey.apiKey || !apiKey.zone))) throw new Error("Bright Data API key and SERP zone must be configured"); const safeScope = ["all", "online", "local", "local-products"].includes(scope) ? scope : "all", point = validCoordinates(coordinates), cacheKey = `${safeScope}|${query.trim().toLowerCase()}|${String(location || "").trim().toLowerCase()}|${point ? `${point.lat.toFixed(4)},${point.lon.toFixed(4)}` : ""}`; const cached = cache.get(cacheKey); if (cached && Date.now() - cached.at < CACHE_MS) return cached.value; if (inFlight.has(cacheKey)) return inFlight.get(cacheKey); const request = runScope(safeScope, query.trim(), location, apiKey, point, credentials).then((value) => { if (!value.partialFailure && !value.warnings?.length) cache.set(cacheKey, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(cacheKey)); inFlight.set(cacheKey, request); return request; }
+export async function searchCatalog(query, location, apiKey = {}, coordinates, credentials, scope = "all") { const safeScope = ["all", "online", "local", "local-products"].includes(scope) ? scope : "all", point = validCoordinates(coordinates), cacheKey = `${safeScope}|${query.trim().toLowerCase()}|${String(location || "").trim().toLowerCase()}|${point ? `${point.lat.toFixed(4)},${point.lon.toFixed(4)}` : ""}`; const cached = cache.get(cacheKey); if (cached && Date.now() - cached.at < CACHE_MS) return cached.value; if (inFlight.has(cacheKey)) return inFlight.get(cacheKey); const request = withSearchBudget(() => runScope(safeScope, query.trim(), location, apiKey, point, credentials)).then((value) => { if (!value.partialFailure && !value.warnings?.length) cache.set(cacheKey, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(cacheKey)); inFlight.set(cacheKey, request); return request; }

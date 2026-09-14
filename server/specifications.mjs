@@ -5,7 +5,8 @@ const aliases = [
   ["brand", "Manufacturer", /^(brand|manufacturer|make|יצרן|מותג)$/i],
   ["screenSize", "Screen size", /^(screen size(?: in inches)?|display size|screen diagonal|display diagonal|גודל מסך|אינצ')$/i],
   ["size", "Size", /^(size|גודל)$/i],
-  ["displayType", "Panel type", /^(panel type|display type|display technology|סוג פאנל|סוג הצג)$/i],
+  ["displayType", "Panel type", /^(panel type|display type|screen type|display technology|סוג פאנל|סוג הצג)$/i],
+  ["movement", "Movement", /^(movement|clock movement)$/i],
   ["resolution", "Resolution", /^(resolution|maximum resolution|display resolution|native resolution|רזולוציה|רזולוציית מסך)$/i],
   ["refreshRate", "Refresh rate", /^(hz|refresh rate|maximum refresh rate|קצב רענון|קצב ריענון מרבי)$/i],
   ["responseTime", "Response time", /^(response time|זמן תגובה)$/i],
@@ -29,11 +30,15 @@ const aliases = [
   ["material", "Material", /^(material|materials|חומר)$/i],
   ["color", "Color", /^(colou?r|צבע)$/i],
   ["capacity", "Capacity", /^(capacity|volume|נפח|קיבולת)$/i],
+  ["voltage", "Voltage", /^(voltage|nominal voltage|battery voltage|מתח|מתח סוללה)$/i],
+  ["batteryCapacity", "Battery capacity", /^(battery capacity|קיבולת סוללה)$/i],
+  ["batteryType", "Battery type", /^(battery type|סוג סוללה)$/i],
+  ["type", "Product type", /^(type|product type|סוג מוצר)$/i],
   ["batteryLife", "Battery life", /^(battery life|battery runtime|run time|runtime|זמן עבודה)$/i],
   ["waterResistance", "Water resistance", /^(water resistance|waterproof rating|water resistance rating|עמידות במים)$/i],
   ["power", "Power", /^(power|power consumption|rated power|הספק)$/i],
-  ["width", "Width", /^(width|רוחב)$/i], ["height", "Height", /^(height|גובה)$/i],
-  ["depth", "Depth", /^(depth|עומק)$/i], ["length", "Length", /^(length|אורך)$/i],
+  ["width", "Width", /^(?:(?:item|product) )?(width|רוחב)$/i], ["height", "Height", /^(?:(?:item|product) )?(height|גובה)$/i],
+  ["depth", "Depth", /^(?:(?:item|product) )?(depth|עומק)$/i], ["length", "Length", /^(?:(?:item|product) )?(length|אורך)$/i],
   ["chairsIncluded", "Chairs included", /^(chairs included|includes chairs)$/i],
   ["extendable", "Extendable", /^(extendable|extending|extension leaf)$/i],
   ["aspectRatio", "Aspect ratio", /^(aspect ratio|יחס גובה רוחב)$/i],
@@ -99,6 +104,12 @@ function normalizedValue(id, raw, unit = "") {
   if (id === "mounting") value = value.replace(/(\d)\s*[xX×]\s*(\d)/g, "$1 x $2");
   if (id === "adaptiveSync") value = value.replace(/(?:NVIDIA|AMD|™)/gi, "").replace(/g[- ]?sync/gi, "G-Sync").replace(/freesync/gi, "FreeSync").trim();
   if (id === "ports") value = value.replace(/displayport/gi, "DisplayPort").replace(/hdmi/gi, "HDMI").replace(/usb[- ]c/gi, "USB-C");
+  if (id === "voltage") value = value.replace(/(\d)\s*v(?:olts?)?\b/gi, "$1 V");
+  if (id === "type" && /^rechargeable batter(?:y|ies)$/i.test(value)) value = "Battery";
+  if (id === "batteryCapacity") {
+    const capacity = value.match(/^([\d.]+)\s*(m?Ah)$/i);
+    if (capacity) return `${Number(capacity[1]) * (/^Ah$/i.test(capacity[2]) ? 1000 : 1)} mAh`;
+  }
   if (["memory", "storage"].includes(id)) {
     const capacity = value.match(/\b(\d+(?:\.\d+)?)\s*(GB|TB)\b/i);
     if (capacity) {
@@ -184,6 +195,12 @@ export function monitorAttributes(query, text) {
 
 export function proseAttributes(text) {
   const pairs = [], add = (name, value) => { if (value) pairs.push({ name, value }); };
+  add("Voltage", [...text.matchAll(/\b(\d+(?:\.\d+)?)\s*V\b/gi)].map(match => `${match[1]} V`));
+  add("Battery capacity", [...text.matchAll(/\b(\d+(?:\.\d+)?)\s*(mAh|Ah)\b/gi)].map(match => `${match[1]} ${match[2]}`));
+  if (/\bbatter(?:y|ies)\b/i.test(text)) {
+    add("Product type", "Battery");
+    if (/\brechargeable\b/i.test(text) && !/non[- ]rechargeable/i.test(text)) add("Battery type", "Rechargeable");
+  }
   for (const [name, regex] of [
     ["Capacity", /\b(\d+(?:[-–]\d+)?)\s*(?:people|persons?|person|man)\b/i],
     ["Power", /(?<![\d.])(\d{1,5}(?:\.\d+)?)\s*(?:W|watts?)\b/i],

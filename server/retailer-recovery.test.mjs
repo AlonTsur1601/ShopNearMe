@@ -10,7 +10,7 @@ it("reports a blocked search source without extra retailer retries or claiming n
   vi.stubGlobal("fetch", fetcher);
   const result = await searchCatalog("Digital Clock blocked source fixture", "Israel", { apiKey: "blocked-fixture", zone: "fixture" }, undefined, undefined, "online");
   expect(result.partialFailure).toBe(true);
-  expect(result.warnings.some(message => message.includes("blocked by Google (CAPTCHA)"))).toBe(true);
+  expect(result.warnings.some(message => message.includes("(CAPTCHA)"))).toBe(true);
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FilterPanel } from "./components/FilterPanel";
 import { Header } from "./components/Header";
 import { LocationModal, type LocationPlace } from "./components/LocationModal";
-import { getCurrentLocation } from "./services/currentLocation";
+import { getSearchLocation } from "./services/currentLocation";
 import { OfferSection } from "./components/OfferSection";
 import { SearchBar } from "./components/SearchBar";
 import { SortMenu } from "./components/SortMenu";
@@ -65,19 +65,20 @@ export function App() {
   const performSearch = useCallback(async (nextQuery: string, nextLocation = location) => {
     const normalized = nextQuery.trim(); if (!normalized) return getShowcase("Sony WH-1000XM6");
     searchController.current?.abort(); const controller = new AbortController(); searchController.current = controller;
-    setQuery(normalized); setActiveQuery(normalized); setSelected({}); setLoading(true); setSearchResult(null);
+    setQuery(normalized); setActiveQuery(normalized); setSelected({}); setDistance(50); setPriceMin(""); setPriceMax(""); setLoading(true); setSearchResult(null);
     setRecentSearches((current) => { const next = [normalized, ...current.filter((value) => value.toLowerCase() !== normalized.toLowerCase())].slice(0, 5); localStorage.setItem("shopnearme:recent", JSON.stringify(next)); return next; });
+    const totalSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]);
     try {
       let place = nextLocation === location ? locationPlace : undefined;
       let locationWarning: string | undefined;
       if (nextLocation === "Current location" && !place) {
         setLocating(true);
-        try { place = await getCurrentLocation(); if (!controller.signal.aborted) setLocationPlace(place); }
+        try { place = await getSearchLocation(totalSignal); if (!controller.signal.aborted) setLocationPlace(place); }
         catch (error) { locationWarning = error instanceof Error ? error.message : "Your location could not be determined."; }
         finally { if (!controller.signal.aborted) setLocating(false); }
       }
       if (controller.signal.aborted) return { query: normalized, resultCount: 0, offers: [], facets: [] };
-      const response = await searchProducts(normalized, place?.label ?? nextLocation, controller.signal, place);
+      const response = await searchProducts(normalized, place?.label ?? nextLocation, totalSignal, place);
       const result = locationWarning ? { ...response, warnings: [...new Set([...(response.warnings ?? []).filter(warning => warning !== "Choose a location to include nearby stores."), locationWarning])] } : response;
       if (!controller.signal.aborted) setSearchResult(result);
       return result;
@@ -132,7 +133,7 @@ export function App() {
             {!loading && showcase.warnings?.map((warning) => <p className="search-warning" role="status" key={warning}>{warning}</p>)}
             {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} distanceUnit={distanceUnit} />)}
             {loading && <div className="search-loading" aria-live="polite"><span /><strong>{locating ? "Finding your current location…" : "Searching stores and delivery sites…"}</strong></div>}
-            {!loading && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" ? "Search temporarily unavailable" : "No matching offers"}</h2><p>{showcase.source === "fallback" ? "Please try again in a moment. No guessed retailer links are shown." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}
+            {!loading && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" || showcase.partialFailure ? "Search incomplete" : "No matching offers"}</h2><p>{showcase.source === "fallback" || showcase.partialFailure ? "Some sources could not be searched. See the message above for details." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}
           </div>
         </div>
       </div>

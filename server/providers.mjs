@@ -1,3 +1,4 @@
+import { budgetFetch } from "./search-budget.mjs";
 const cache = new Map(), pending = new Map();
 const TTL = 15 * 60 * 1000;
 export async function fetchJson(url, options = {}, timeoutMs = 10000) {
@@ -9,7 +10,7 @@ export async function fetchJson(url, options = {}, timeoutMs = 10000) {
     for (let attempt = 0; ; attempt++) {
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), attempt ? Math.min(timeoutMs, 2000) : timeoutMs);
       try {
-        const response = await fetch(url, { ...options, signal: controller.signal });
+        const response = await budgetFetch(url, { ...options, signal: controller.signal });
         const data = await response.json();
         if (!response.ok || data.error) {
           const error = new Error(data.error || "Provider returned " + response.status);

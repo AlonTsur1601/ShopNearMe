@@ -90,9 +90,9 @@ describe("searchCatalog", () => {
     expect(extractProductData('<script type="application/ld+json">{"@type":"ItemList","itemListElement":[{"@type":"Product","name":"A"},{"@type":"Product","name":"B"}]}</script>').isCatalog).toBe(true);
   });
 
-  it("hides sparse guessed facets that cannot provide a real choice", () => {
+  it("retains observed facets and reports missing values", () => {
     const offers = Array.from({ length: 8 }, (_, index) => ({ attributes: index === 0 ? { material: "Wood" } : {} }));
-    expect(buildFacets(offers, "generic product").some((facet) => facet.id === "material")).toBe(false);
+    expect(buildFacets(offers, "generic product").find((facet) => facet.id === "material")).toMatchObject({ missingCount: 7, options: [{ value: "Wood", count: 1 }] });
   });
 
   it("merges nearby Google Maps stores with shopping offers using the selected coordinates", async () => {
@@ -175,7 +175,7 @@ describe("searchCatalog", () => {
     expect(result.facets.find(facet => facet.id === "screenSize")?.options.map(({ value }) => value)).toEqual(expect.arrayContaining(["14 in", "15.6 in", "16 in", "17.3 in"]));
   });
 
-  it("keeps a generated filter and excludes products still missing its value after retries", async () => {
+  it("keeps products and their generated filter with explicit unresolved attributes after retries", async () => {
     const titles = ["Wireless headphones Alpha", "Headphones Beta", "Headphones Gamma"];
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url));
@@ -184,7 +184,8 @@ describe("searchCatalog", () => {
       return { ok: true, json: async () => ({ organic_results: [] }) };
     }));
     const result = await searchCatalog("headphones required facet fixture", "Israel", "required-facet-fixture", undefined, undefined, "online");
-    expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.title)).toEqual(["Wireless headphones Alpha"]);
+    expect(result.offers.filter(offer => !offer.potentialStore).map(offer => offer.title)).toEqual(titles);
+    expect(result.attributesComplete).toBe(false);
     expect(result.offers.some(offer => offer.potentialStore || offer.linkLabel === "View store")).toBe(false);
     expect(result.facets.find(facet => facet.id === "connectivity")?.options.map(option => option.value)).toEqual(["Wireless"]);
   });
@@ -319,6 +320,6 @@ describe("searchCatalog", () => {
     const offer = result.offers.find((item) => item.id === "ebay-v1|123|0");
     expect(offer).toMatchObject({ category: "secondHand", merchant: "eBay", itemPrice: 24, shippingPrice: 6.5, importTaxPrice: 3.2, totalPrice: 33.7, priceVerified: true, attributes: { "spec:power_source": ["Battery"] } });
     const ebayCall = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("item_summary/search"));
-    expect(String(ebayCall?.[0])).toContain("conditions%3A%7BUSED%7D%2CdeliveryCountry%3AIL");
+    expect(String(ebayCall?.[0])).toContain("conditions%3A%7BNEW%7CUSED%7D%2CdeliveryCountry%3AIL");
   });
 });
