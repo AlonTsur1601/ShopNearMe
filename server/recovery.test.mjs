@@ -7,6 +7,11 @@ import { isRelevantProduct, searchCatalog, shareProductSpecs } from "./search.mj
 afterEach(() => vi.unstubAllGlobals());
 
 describe("English-only facets from merchant pages", () => {
+  it("merges material casing variants while preserving canonical compound names", () => {
+    const offer = normalizeOfferFacets({ attributes: { material: ["plastic", "Plastic", "SOLID WOOD", "Solid wood", "עץ מלא", "Stainless STEEL", "פלדת אל חלד"] } });
+    expect(offer.attributes.material).toEqual(["Plastic", "Solid wood", "Stainless steel"]);
+    expect(normalizeOfferFacets(offer).attributes).toEqual(offer.attributes);
+  });
   it("translates Hebrew and French properties and values to the same English facet", () => {
     const data = structuredAttributes([{ name: "couleur", value: "rouge" }, { name: "צבע", value: "אדום" }, { name: "מספר לנים", value: "6 אנשים" }]);
     expect(data.attributes).toMatchObject({ color: ["Red"], capacity: ["6 people"] });

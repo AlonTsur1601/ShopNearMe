@@ -74,7 +74,7 @@ export function normalizeOfferFacets(offer) {
     if (name) { const label = englishLabel(name); if (!label) continue; attributeLabels[id] = label; }
     let values = [raw].flat().map(value => englishText(value, id === "retailer" || id === "brand")).filter(Boolean);
     if (id === "color") values = values.map(value => value.toLowerCase().replace(/\bgrey\b/g, "gray").replace(/\b[a-z]/g, char => char.toUpperCase()));
-    if (id === "material") values = values.map(value => value.replace(/\baluminium\b/gi, "Aluminum").replace(/\b(?:plastic|glass|metal|wood|leather|steel|cotton)\b/gi, word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()));
+    if (id === "material") values = values.map(value => value.replace(/\baluminium\b/gi, "Aluminum").replace(/\b(?:(?:solid|engineered) wood|tempered glass|stainless steel|plastic|glass|metal|wood|leather|steel|cotton)\b/gi, word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()));
     if (id === "retailer" && !values.length) {
       try { values = [new URL(offer.destinationUrl).hostname.replace(/^www\./, "")]; } catch { /* no safe merchant label */ }
     }
