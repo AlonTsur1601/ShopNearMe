@@ -1,8 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getCurrentLocation } from "./currentLocation";
+import { getCurrentLocation, getSearchLocation } from "./currentLocation";
 function geolocation(getCurrentPosition: unknown) { vi.stubGlobal("navigator", { geolocation: { getCurrentPosition } }); }
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); sessionStorage.clear(); });
 describe("shared current location", () => {
+  it("retains search coordinates arriving after the former 1.5 second cutoff", async () => {
+    vi.useFakeTimers();
+    geolocation((success: PositionCallback) => setTimeout(() => success({ coords: { latitude: 32.08, longitude: 34.78 } } as GeolocationPosition), 2200));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Reverse unavailable")));
+    const result = getSearchLocation(new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(2201);
+    expect(await result).toEqual({ lat: 32.08, lon: 34.78, label: "Current location" });
+  });
+  it("cancels a location lookup when its owning search is cancelled", async () => {
+    geolocation(() => {});
+    const controller = new AbortController();
+    const result = getSearchLocation(controller.signal);
+    controller.abort(new Error("Search replaced"));
+    await expect(result).rejects.toThrow("Search replaced");
+  });
   it("waits for the default device location beyond the old three-second cutoff and coalesces requests", async () => {
     vi.useFakeTimers();
     const get = vi.fn<Geolocation["getCurrentPosition"]>((success) => { setTimeout(() => success({ coords: { latitude: 32.08, longitude: 34.78 } } as GeolocationPosition), 4000); });

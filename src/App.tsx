@@ -79,7 +79,7 @@ export function App() {
       }
       if (controller.signal.aborted) return { query: normalized, resultCount: 0, offers: [], facets: [] };
       const response = await searchProducts(normalized, place?.label ?? nextLocation, totalSignal, place);
-      const result = locationWarning ? { ...response, warnings: [...new Set([...(response.warnings ?? []).filter(warning => warning !== "Choose a location to include nearby stores."), locationWarning])] } : response;
+      const result = locationWarning ? { ...response, warnings: [...new Set([...(response.warnings ?? []).filter(warning => !/^Choose a location to include nearby (?:stores|products)\.$/.test(warning)), locationWarning])] } : response;
       if (!controller.signal.aborted) setSearchResult(result);
       return result;
     } finally { if (!controller.signal.aborted) { setLoading(false); setLocating(false); } }

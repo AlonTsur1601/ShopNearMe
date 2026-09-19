@@ -10,7 +10,7 @@ export default async function handler(request, response) {
   const coordinates = Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : undefined;
   if (!query || query.length > 180) return response.status(400).json({ error: "A valid product query is required" });
   try {
-    const result = await searchCatalog(query, location, { apiKey: process.env.BRIGHTDATA_API_KEY, zone: process.env.BRIGHTDATA_SERP_ZONE }, coordinates, {
+    const result = await searchCatalog(query, location, { apiKey: process.env.BRIGHTDATA_API_KEY, zone: process.env.BRIGHTDATA_SERP_ZONE, fallbackApiKey: process.env.SERPAPI_API_KEY }, coordinates, {
       clientId: process.env.EBAY_CLIENT_ID,
       clientSecret: process.env.EBAY_CLIENT_SECRET,
     }, scope);

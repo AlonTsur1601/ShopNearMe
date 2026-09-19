@@ -1,11 +1,12 @@
 import { enrichProductPage, isSearchResultsUrl, productImageUrl } from "./product-page.mjs";
 import { localizeOffers } from "./currency.mjs";
-import { monitorAttributes, proseAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
+import { extractNamedSpecifications, monitorAttributes, proseAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
 import { amountInCurrency, costBreakdown } from "./costs.mjs";
 import { englishLabel, normalizeOfferFacets, translateTerms } from "./facet-language.mjs";
 import { fetchJson, mapConcurrent, searchProvider } from "./providers.mjs";
 import { productWords, contradictsQuery, sameProductIdentity } from "./product-identity.mjs";
 import { budgetFetch, deadlineError, searchContext, withSearchBudget } from "./search-budget.mjs";
+import { catalogProductLinks } from "./catalog-products.mjs";
 const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 let ebayToken = null;
@@ -230,8 +231,13 @@ async function ebaySearch(query, location, credentials) {
     if (!item.itemId) return;
     try {
       const detail = await fetchJson(`https://api.ebay.com/buy/browse/v1/item/${encodeURIComponent(item.itemId)}`, { headers }, 2200);
-      item.specifications = specificationPairs(detail.localizedAspects);
+      item.specifications = [...specificationPairs(detail.localizedAspects), ...extractNamedSpecifications(detail.description || "")];
+      // Seller HTML also contains ads and compatible products. Only named specification
+      // rows are evidence; mining all its prose assigns those other products' features.
       item.specificationText = detail.shortDescription || "";
+      item.gtin = detail.gtin;
+      item.mpn = detail.mpn;
+      item.productBrand = detail.brand;
       item.shippingOptions = detail.shippingOptions ?? item.shippingOptions;
       item.importCharges = detail.importCharges ?? item.importCharges;
       if (detail.brand) item.specifications.push({ name: "Manufacturer", value: detail.brand });
@@ -243,7 +249,7 @@ async function ebaySearch(query, location, credentials) {
     const shippingPrice = number(shipping?.convertedFromCurrency === "USD" ? shipping.convertedFromValue : shipping?.value);
     const totalPrice = itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice;
     const condition = item.condition || "Used", merchant = "eBay", category = String(item.conditionId) === "1000" || /^new(?:\b|$)/i.test(condition) ? "order" : "secondHand";
-    return { id: `ebay-${item.itemId ?? index}`, category, merchant, merchantLogoUrl: "/ebay.svg", title: item.title || "Pre-owned eBay listing", subtitle: [condition, item.itemLocation?.country].filter(Boolean).join(" · "), imageUrl: safeHttpUrl(item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl), rating: number(item.seller?.feedbackPercentage) ? Math.min(5, number(item.seller.feedbackPercentage) / 20) : 0, reviewCount: number(item.seller?.feedbackScore) ?? 0, itemPrice, shippingPrice, totalPrice, currency: price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD", ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: amountInCurrency(item.shippingOptions?.[0]?.importCharges ?? item.importCharges, price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD"), crossBorder: !!country && !!item.itemLocation?.country && item.itemLocation.country !== country }), priceVerified: totalPrice !== null, availability: "Available on eBay", condition, attributes: attributesFor(query, item.title || "", condition, merchant, item), attributeLabels: attributeLabelsFor(query, item.title || "", item), destinationUrl: safeHttpUrl(item.itemWebUrl), linkLabel: "View product" };
+    return { id: `ebay-${item.itemId ?? index}`, gtin: item.gtin, mpn: item.mpn, productBrand: item.productBrand, category, merchant, merchantLogoUrl: "/ebay.svg", title: item.title || "Pre-owned eBay listing", subtitle: [condition, item.itemLocation?.country].filter(Boolean).join(" · "), imageUrl: safeHttpUrl(item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl), rating: number(item.seller?.feedbackPercentage) ? Math.min(5, number(item.seller.feedbackPercentage) / 20) : 0, reviewCount: number(item.seller?.feedbackScore) ?? 0, itemPrice, shippingPrice, totalPrice, currency: price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD", ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: amountInCurrency(item.shippingOptions?.[0]?.importCharges ?? item.importCharges, price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD"), crossBorder: !!country && !!item.itemLocation?.country && item.itemLocation.country !== country }), priceVerified: totalPrice !== null, availability: "Available on eBay", condition, attributes: attributesFor(query, item.title || "", condition, merchant, item), attributeLabels: attributeLabelsFor(query, item.title || "", item), destinationUrl: safeHttpUrl(item.itemWebUrl), linkLabel: "View product" };
   }).filter((offer) => offer.destinationUrl);
 }
 function shoppingOffer(item, index, query) { if (!isRelevantProduct(item.title, query) || !safeHttpUrl(item.link || item.product_link)) return null; const itemPrice = number(item.extracted_price ?? item.price), shipping = shippingFor(item, itemPrice), isUsed = used(item), isLocal = !isUsed && local(item), merchant = shortRetailerName(item.source || item.merchant || item.seller || "Retailer"), text = `${item.title ?? ""} ${(item.extensions ?? []).join(" ")}`, condition = isUsed ? (item.condition || (/refurb|renewed/i.test(text) ? "Refurbished" : "Used")) : "New", shippingPrice = isLocal ? null : shipping.shippingPrice; return { id: `serp-${item.product_id ?? item.position ?? index}`, category: isUsed ? "secondHand" : isLocal ? "local" : "order", merchant, merchantLogoUrl: safeHttpUrl(item.source_icon || item.favicon), title: item.title || "Product offer", subtitle: (item.extensions ?? []).slice(0, 3).join(" · ") || item.delivery || "See retailer for product details", imageUrl: productImageUrl(item.thumbnail || item.image), rating: number(item.rating) ?? 0, reviewCount: number(item.reviews) ?? 0, itemPrice, shippingPrice, totalPrice: itemPrice === null ? null : shippingPrice === null ? itemPrice : shipping.totalPrice, currency: /₪|NIS|ILS/i.test(`${item.price ?? ""} ${text}`) ? "ILS" : /€|EUR/i.test(`${item.price ?? ""} ${text}`) ? "EUR" : /£|GBP/i.test(`${item.price ?? ""} ${text}`) ? "GBP" : "USD", shippingEstimated: shipping.shippingEstimated, priceVerified: itemPrice !== null, availability: isLocal ? "Check local stock" : "Available online", arrival: isLocal ? undefined : item.delivery, condition, attributes: attributesFor(query, text, condition, merchant), destinationUrl: safeHttpUrl(item.link || item.product_link), linkLabel: "View product" }; }
@@ -742,6 +748,22 @@ async function localProductSearch(query, location, key, stores = [], deadline = 
     const products = (await mapConcurrent(candidates, 24, (item, index) => Date.now() < deadline ? localProduct(item, offset + index, query, location) : null)).filter(Boolean);
     console.info("retailer_discovery", { attempt: queries.indexOf(q) + 1, candidates: candidates.length, products: products.length });
     if (products.length) return products;
+    if (Date.now() + 3000 < deadline) {
+      const queryTerms = productWords(query).match(/[\p{L}\p{N}]{3,}/gu) ?? [];
+      const relatedCatalogs = (page.organic_results ?? []).filter(item => {
+        const link = safeHttpUrl(item.link);
+        return link && isCategoryPage(item.title, link) && queryTerms.some(term => includesPhrase(productWords(item.title), term));
+      });
+      const catalogHosts = new Set();
+      const catalogs = [...relatedCatalogs, ...candidates].filter(item => {
+        const link = merchantWebsite(item.link);
+        if (!link || !isLocalResult(new URL(link), item, location) || catalogHosts.has(new URL(link).hostname)) return false;
+        catalogHosts.add(new URL(link).hostname); return true;
+      }).slice(0, 2);
+      const linked = (await mapConcurrent(catalogs, 2, async item => (await catalogProductLinks(item.link, title => isRelevantProduct(title, query))).map(product => ({ ...item, ...product })))).flat();
+      const recovered = (await mapConcurrent(linked, 8, (item, index) => localProduct(item, offset + 100 + index, query, location))).filter(Boolean);
+      if (recovered.length) return recovered;
+    }
   }
   if (lastError) throw lastError;
   return [];
@@ -801,7 +823,8 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
       : " could not be searched. Please try again.")] : []);
   result.partialFailure = settled.some(entry => entry.status === "rejected");
   if (result.warnings.some(warning => warning.includes("(CAPTCHA)"))) result.warnings = [...result.warnings.filter(warning => !warning.includes("(CAPTCHA)")), "Google product and retailer search was blocked (CAPTCHA). Other available sources are shown; results are incomplete."];
-  if (!result.attributesComplete) result.warnings.push("Some product specifications could not be verified. Filters match only confirmed values; affected filters show the number of products still missing a value.");
+  if (!result.attributesComplete) result.warnings.push("Some product specifications could not be verified. Filters match only confirmed values.");
+  if (searchContext()?.backupQuota) result.warnings.push("Backup search allowance has been used up." + (searchContext().backupQuota.reset ? ` It renews on ${searchContext().backupQuota.reset}.` : ""));
   if ((!location || location === "Current location") && !coordinates && scope !== "online") result.warnings.push("Choose a location to include nearby products.");
   return result;
 }

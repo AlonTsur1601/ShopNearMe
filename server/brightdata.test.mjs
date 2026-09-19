@@ -1,7 +1,24 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { brightDataSearch, brightDataSearchUrl } from "./brightdata.mjs";
+import { withSearchBudget } from "./search-budget.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
+it("isolates a blocked Maps source while permitting Shopping and web recovery", async () => {
+  const fetcher = vi.fn(async (_url, options) => {
+    const target = new URL(JSON.parse(options.body).url);
+    if (target.pathname.startsWith("/maps")) return Response.json({ status_code: 502, headers: { "x-brd-error-code": "captcha" } });
+    return Response.json(target.searchParams.has("udm") ? { shopping: [] } : { organic: [] });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  await withSearchBudget(async () => {
+    const config = { apiKey: "isolation-test", zone: "zone" };
+    await expect(brightDataSearch({ query: "isolated source", kind: "maps" }, config)).rejects.toMatchObject({ code: "source_blocked" });
+    await expect(brightDataSearch({ query: "isolated source", kind: "shopping" }, config)).resolves.toEqual({ shopping: [] });
+    await expect(brightDataSearch({ query: "isolated source", kind: "web" }, config)).resolves.toEqual({ organic: [] });
+    await expect(brightDataSearch({ query: "different maps request", kind: "maps" }, config)).rejects.toMatchObject({ code: "source_blocked" });
+  });
+  expect(fetcher).toHaveBeenCalledTimes(3);
+});
 it("reads and caches the native local pack even without organic results or website links", async () => {
   const { searchProvider } = await import("./providers.mjs");
   const fetcher = vi.fn(async () => new Response(JSON.stringify({ snack_pack: [{ cid: "pack-1", name: "Nearby PC - Central", type: "Computer store", address: "1 Main St", reviews_cnt: 12 }] })));
@@ -26,7 +43,9 @@ it("rejects editorial and category URLs rather than borrowing a recommendation p
 });
 it("targets shopping and local coordinates without forwarding credentials to Google", () => {
   const shopping = new URL(brightDataSearchUrl({ query: "OLED monitor", kind: "shopping", country: "IL", location: "Petah Tikva, Israel" }));
-  expect(shopping.searchParams.get("tbm")).toBe("shop");
+  expect(shopping.searchParams.get("udm")).toBe("28");
+  expect(shopping.searchParams.has("tbm")).toBe(false);
+  expect(shopping.searchParams.get("brd_browser")).toBe("chrome");
   expect(shopping.searchParams.get("gl")).toBe("il");
   expect(shopping.searchParams.get("brd_json")).toBe("1");
   expect(shopping.searchParams.has("api_key")).toBe(false);

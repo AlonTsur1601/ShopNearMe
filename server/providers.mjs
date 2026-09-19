@@ -1,4 +1,5 @@
 import { budgetFetch } from "./search-budget.mjs";
+import { backupSearch } from "./backup-search.mjs";
 const cache = new Map(), pending = new Map();
 const TTL = 15 * 60 * 1000;
 export async function fetchJson(url, options = {}, timeoutMs = 10000) {
@@ -51,11 +52,16 @@ export async function searchProvider(params, config, timeoutMs = 15000) {
   if (typeof config === "string") return fetchJson("https://serpapi.com/search.json?" + params, {}, timeoutMs);
   const engine = params.get("engine");
   const match = params.get("ll")?.match(/@(-?[\d.]+),(-?[\d.]+)/);
-  const data = await brightDataSearch({
+  let data;
+  try { data = await brightDataSearch({
     query: params.get("q"), kind: engine === "google_maps" ? "maps" : engine === "google_shopping" ? "shopping" : "web",
     country: params.get("gl"), language: params.get("hl") || "en", location: params.get("location"), start: Number(params.get("start") || 0),
     coordinates: match ? { lat: Number(match[1]), lon: Number(match[2]) } : undefined,
-  }, config, timeoutMs);
+  }, config, timeoutMs); }
+  catch (error) {
+    if (engine !== "google" || !config?.fallbackApiKey) throw error;
+    return backupSearch(params, config.fallbackApiKey, error);
+  }
   const local = engine === "google_maps" ? rows(data.organic, data.local, data.places, data.snack_pack) : rows(data.local, data.places, data.snack_pack);
   return {
     organic_results: rows(data.organic).map(item => ({ ...item, link: item.link ?? item.url, snippet: item.description ?? item.snippet, displayed_link: item.display_link, favicon: item.icon })),

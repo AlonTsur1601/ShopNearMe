@@ -46,9 +46,9 @@ it.each(["upstream failure", "catalog only"])("recovers real retailer products a
     if (String(url).includes("api.brightdata.com")) {
       const target = new URL(JSON.parse(options.body).url);
       calls.push(target);
-      if (target.searchParams.get("tbm") === "shop") {
+      if (target.searchParams.get("udm") === "28") {
         // Retailer discovery must have started before Shopping finishes.
-        expect(calls.some(call => !call.searchParams.has("tbm"))).toBe(true);
+        expect(calls.some(call => !call.searchParams.has("udm"))).toBe(true);
         return Response.json({ shopping: Array.from({ length: 8 }, (_, n) => ({ title: "USB-C dock model " + n, shop: "Shop " + n, price: "₪9999", url: "https://www.google.com/search?udm=28&prds=" + n })) });
       }
       if (target.searchParams.get("q").includes("-inurl:cat")) {
@@ -65,7 +65,7 @@ it.each(["upstream failure", "catalog only"])("recovers real retailer products a
   expect(result.warnings).toEqual([]);
   expect(result.facets.length).toBeGreaterThan(0);
   for (const facet of result.facets) expect(result.offers[0].attributes[facet.id]).toBeTruthy();
-  const web = calls.filter(call => !call.searchParams.has("tbm"));
+  const web = calls.filter(call => !call.searchParams.has("udm"));
   expect(web.every(call => !/-inurl:cat(?:\s|$)/.test(call.searchParams.get("q")))).toBe(true);
   expect(new Set(web.map(call => call.searchParams.get("q"))).size).toBe(2);
   expect(web).toHaveLength(failure === "upstream failure" ? 3 : 2);
@@ -85,7 +85,7 @@ it.each([403, 404])("uses exact indexed merchant/model evidence for a blocked pa
   vi.stubGlobal("fetch", vi.fn(async (url, options) => {
     if (String(url).includes("api.brightdata.com")) {
       const target = new URL(JSON.parse(options.body).url), q = target.searchParams.get("q");
-      if (target.searchParams.get("tbm") === "shop") {
+      if (target.searchParams.get("udm") === "28") {
         const item = { title: "Belkin USB-C Dock INC002VFBK", shop: "Fixture Shop", price: "₪999", image: "https://fixture-shop.co.il/dock.jpg", url: "https://www.google.com/search?udm=28&prds=fixture" };
         return Response.json({ shopping: [{ ...item, shop: "eBay", url: item.url + "-ebay" }, item, { ...item, url: item.url + "-duplicate" }] });
       }

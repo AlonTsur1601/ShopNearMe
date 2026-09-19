@@ -19,7 +19,7 @@ it.each(["local pack", "OSM", "typed location"])("returns actual nearby products
     const target = new URL(JSON.parse(options.body).url), q = target.searchParams.get("q") || "";
     queries.push(q);
     if (target.pathname.startsWith("/maps/")) throw new DOMException("Fixture Maps timeout", "TimeoutError");
-    if (target.searchParams.get("tbm") === "shop") return Response.json({ shopping: [{ title: "Fixture laptop stand", shop: "Online", link: "https://online.co.il/product/stand" }] });
+    if (target.searchParams.get("udm") === "28") return Response.json({ shopping: [{ title: "Fixture laptop stand", shop: "Online", link: "https://online.co.il/product/stand" }] });
     if (q.includes("stores near")) return Response.json({ snack_pack: source === "local pack" ? [{ cid: "fixture-nearby", name: "Nearby - Central", type: "Computer store", address: "1 Main St" }] : [] });
     if (q.includes('"Nearby')) return Response.json({ organic: [{ title: "Fixture laptop stand", link: "https://nearby.co.il/product/stand" }] });
     return Response.json({});

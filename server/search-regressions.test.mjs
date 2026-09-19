@@ -45,7 +45,7 @@ it("keeps successful Shopping products when shared retailer discovery is CAPTCHA
   vi.stubGlobal("fetch", vi.fn(async (url, options) => {
     if (String(url) === link) return new Response('<script type="application/ld+json">'+JSON.stringify({ "@type": "Product", name: "Digital Alarm Clock", image: "/clock.jpg", offers: { price: 25, priceCurrency: "USD" } })+'</script>', { headers: { "content-type": "text/html" } });
     const target = new URL(JSON.parse(options.body).url);
-    if (target.searchParams.has("tbm")) return Response.json({ shopping: [{ title: "Digital Alarm Clock", shop: "Independent", price: "$25", url: link }, { title: "Digital Wall Clock", shop: "Group", price: "$30", url: "https://www.google.com/search?udm=28&prds=1" }] });
+    if (target.searchParams.has("udm")) return Response.json({ shopping: [{ title: "Digital Alarm Clock", shop: "Independent", price: "$25", url: link }, { title: "Digital Wall Clock", shop: "Group", price: "$30", url: "https://www.google.com/search?udm=28&prds=1" }] });
     return Response.json({ status_code: 502, headers: { "x-brd-error-code": "captcha" } });
   }));
   const result = await searchCatalog("Digital Clock isolation", "United States", { apiKey: "isolation-test", zone: "test" }, undefined, undefined, "online");

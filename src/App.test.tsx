@@ -14,6 +14,16 @@ vi.mock("./services/productSearch", () => ({
 }));
 
 describe("App", () => {
+  it("shows one actionable location warning instead of duplicate nearby-product warnings", async () => {
+    vi.stubGlobal("navigator", Object.create(navigator, { geolocation: { value: { getCurrentPosition: (_success: PositionCallback, failure: PositionErrorCallback) => failure({ code: 1 } as GeolocationPositionError) } } }));
+    vi.mocked(searchProducts).mockResolvedValueOnce({ query: "hooks", offers: [], facets: [], resultCount: 0, source: "live", warnings: ["Choose a location to include nearby products.", "Provider blocked"] });
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "hooks" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText(/Location permission is blocked/)).toBeVisible();
+    expect(screen.queryByText("Choose a location to include nearby products.")).not.toBeInTheDocument();
+    expect(screen.getByText("Provider blocked")).toBeVisible();
+  });
   it("clears previous price and distance restrictions on a new product search", async () => {
     render(<App />);
     fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "clock" } });

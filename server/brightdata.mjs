@@ -12,9 +12,10 @@ export function brightDataSearchUrl({ query, kind = "web", country, language = "
   url.searchParams.set("q", query);
   url.searchParams.set("hl", /^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(language) ? language : "en");
   url.searchParams.set("brd_json", "1");
+  url.searchParams.set("brd_browser", "chrome");
   if (/^[a-z]{2}$/i.test(country ?? "")) url.searchParams.set("gl", country.toLowerCase());
   if (Number.isInteger(start) && start > 0) url.searchParams.set("start", String(start));
-  if (kind === "shopping") url.searchParams.set("tbm", "shop");
+  if (kind === "shopping") url.searchParams.set("udm", "28");
   if (kind === "maps") {
     const point = coordinates && Number.isFinite(coordinates.lat) && Number.isFinite(coordinates.lon)
       && Math.abs(coordinates.lat) <= 90 && Math.abs(coordinates.lon) <= 180 ? coordinates : null;
@@ -33,9 +34,11 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
   if (!config?.apiKey) throw new Error("BRIGHTDATA_API_KEY is not configured");
   if (!config?.zone) throw new Error("BRIGHTDATA_SERP_ZONE is not configured");
   const url = brightDataSearchUrl(request);
+  const source = request.kind || "web";
   const key = createHash("sha256").update(config.apiKey + "|" + config.zone + "|" + url).digest("hex");
   if (cache.get(key)?.expires > Date.now()) return cache.get(key).data;
   if (searchContext()?.providerFailure) throw searchContext().providerFailure;
+  if (searchContext()?.providerFailures.has(source)) throw searchContext().providerFailures.get(source);
   if (pending.has(key)) return pending.get(key);
   const task = (async () => {
     for (let attempt = 0; ; attempt++) {
@@ -81,7 +84,8 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         }
         return data;
       } catch (error) {
-        if (searchContext() && ["source_blocked", "quota_exhausted"].includes(error.code)) searchContext().providerFailure = error;
+        if (searchContext() && error.code === "quota_exhausted") searchContext().providerFailure = error;
+        if (searchContext() && error.code === "source_blocked") searchContext().providerFailures.set(source, error);
         if (searchContext()?.signal.aborted) throw searchContext().signal.reason;
         const temporary = [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|did not return parsed/i.test(error.message);
         if (attempt || !temporary || error.code === "source_blocked") throw error;

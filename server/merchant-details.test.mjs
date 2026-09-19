@@ -53,7 +53,7 @@ it("applies merchant description facets and images to both local pickup and deli
     if (url === "https://api.brightdata.com/request") {
       const target = new URL(JSON.parse(options.body).url);
       if (target.pathname.startsWith("/maps/")) return new Response(JSON.stringify({ organic: [{ title: "Outdoor Store", link: "https://fixture-shop.co.il/", category: [{ id: "camping_store" }], latitude: 32.08, longitude: 34.88 }] }));
-      if (target.searchParams.get("tbm") === "shop") return new Response('{"shopping":[]}');
+      if (target.searchParams.get("udm") === "28") return new Response('{"shopping":[]}');
       return new Response(JSON.stringify({ organic: [{ title: "Camping tent T600", link: "https://fixture-shop.co.il/products/t600", source: "Outdoor Store", description: "Camping tent for 6 people, green" }] }));
     }
     return new Response('<main><h1>Camping tent T600</h1><meta property="product:price:amount" content="299"><meta property="product:price:currency" content="ILS"><div class="product-description">Green waterproof camping tent for 6 people. Weight: 4 kg.</div><div class="product-gallery"><img data-src="/tent.jpg"></div></main>', { headers: { "content-type": "text/html" } });

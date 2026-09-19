@@ -18,14 +18,14 @@ export async function reversePlace(lat: number, lon: number, signal?: AbortSigna
 let pending: Promise<LocationPlace> | undefined;
 // The interactive picker may wait longer; a product search has one total budget.
 export async function getSearchLocation(signal: AbortSignal): Promise<LocationPlace> {
-  const locationSignal = AbortSignal.any([signal, AbortSignal.timeout(2000)]);
+  const locationSignal = AbortSignal.any([signal, AbortSignal.timeout(3500)]);
   const point = await new Promise<LocationPlace>((resolve, reject) => {
     const abort = () => reject(locationSignal.reason);
     locationSignal.throwIfAborted();
     locationSignal.addEventListener("abort", abort, { once: true });
     const done = () => locationSignal.removeEventListener("abort", abort);
     if (!navigator.geolocation) { done(); reject(new Error("Enter a city to search nearby retailers.")); return; }
-    navigator.geolocation.getCurrentPosition(({ coords }) => { done(); resolve({ lat: coords.latitude, lon: coords.longitude, label: "Current location" }); }, () => { done(); reject(new Error("Your location could not be determined. Enter a city to include nearby retailers.")); }, { enableHighAccuracy: false, timeout: 1500, maximumAge: 300000 });
+    navigator.geolocation.getCurrentPosition(({ coords }) => { done(); resolve({ lat: coords.latitude, lon: coords.longitude, label: "Current location" }); }, (error) => { done(); reject(new Error(error.code === 1 ? "Location permission is blocked. Allow location access or enter a city to include nearby retailers." : error.code === 3 ? "Finding your location timed out. Enter a city to include nearby retailers." : "Your location could not be determined. Enter a city to include nearby retailers.")); }, { enableHighAccuracy: false, timeout: 3000, maximumAge: 300000 });
   });
   if (locationSignal.aborted) return point;
   return reversePlace(point.lat, point.lon, locationSignal).catch(() => point);

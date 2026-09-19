@@ -248,7 +248,7 @@ describe("searchCatalog", () => {
       if (request.hostname === "www.google.com" && request.pathname === "/goto") return new Response(null, { status: 302, headers: { Location: "https://pc-shop.example/products/gaming-laptop" } });
       if (request.hostname === "pc-shop.example") return new Response('<script type="application/ld+json">{"@type":"Product","name":"Gaming Laptop RAM 16GB 512GB SSD","image":"/laptop.jpg","offers":{"price":4999,"priceCurrency":"ILS"}}</script>', { headers: { "Content-Type": "text/html" } });
       const target = new URL(JSON.parse(options.body).url);
-      if (target.searchParams.get("tbm") === "shop") return new Response(JSON.stringify({ shopping: [{ title: "Gaming Laptop RAM 16GB 512GB SSD", shop: "PC Shop", displayed_link: "https://pc-shop.example › laptops", extracted_price: 4999, price: "4,999 ₪", link: "https://www.google.com/goto?url=opaque" }] }));
+      if (target.searchParams.get("udm") === "28") return new Response(JSON.stringify({ shopping: [{ title: "Gaming Laptop RAM 16GB 512GB SSD", shop: "PC Shop", displayed_link: "https://pc-shop.example › laptops", extracted_price: 4999, price: "4,999 ₪", link: "https://www.google.com/goto?url=opaque" }] }));
       return new Response(JSON.stringify({ organic: [] }));
     }));
     const result = await searchCatalog("Gaming Laptop tracked fixture", "Israel", { apiKey: "tracked-fixture", zone: "zone" }, undefined, undefined, "online");
@@ -304,6 +304,8 @@ describe("searchCatalog", () => {
       }
       if (request.hostname === "api.ebay.com" && request.pathname.includes("/item/")) return { ok: true, json: async () => ({
         localizedAspects: [{ name: "Power source", value: "Battery" }],
+        gtin: "4006381333931", mpn: "C100", brand: "Clockworks",
+        description: "<style>.blue { color: blue }</style><p>Color: Silver</p><p>Material: Steel</p><aside>Buy our Bluetooth speaker with 16GB storage</aside>",
         shippingOptions: [{ shippingCost: { value: "6.50", currency: "USD" }, importCharges: { value: "3.20", currency: "USD" } }],
       }) };
       if (request.hostname === "api.ebay.com") {
@@ -318,6 +320,9 @@ describe("searchCatalog", () => {
     }));
     const result = await searchCatalog("ebay integration clock", "Tel Aviv, Israel", "test-key", { lat: 32.08, lon: 34.78 }, { clientId: "client", clientSecret: "secret" });
     const offer = result.offers.find((item) => item.id === "ebay-v1|123|0");
+    expect(offer).toMatchObject({ gtin: "4006381333931", mpn: "C100", productBrand: "Clockworks", attributes: { color: ["Silver"], material: ["Steel"] } });
+    expect(offer.attributes.connectivity).toBeUndefined();
+    expect(offer.attributes.storage).toBeUndefined();
     expect(offer).toMatchObject({ category: "secondHand", merchant: "eBay", itemPrice: 24, shippingPrice: 6.5, importTaxPrice: 3.2, totalPrice: 33.7, priceVerified: true, attributes: { "spec:power_source": ["Battery"] } });
     const ebayCall = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("item_summary/search"));
     expect(String(ebayCall?.[0])).toContain("conditions%3A%7BNEW%7CUSED%7D%2CdeliveryCountry%3AIL");

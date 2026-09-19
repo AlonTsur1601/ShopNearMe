@@ -5,7 +5,7 @@ export function deadlineError() { return Object.assign(new Error("Search time li
 export function searchContext() { return searches.getStore(); }
 export async function withSearchBudget(operation, milliseconds = 16000) {
   const controller = new AbortController();
-  const context = { signal: controller.signal, deadline: Date.now() + milliseconds, providerFailure: null };
+  const context = { signal: controller.signal, deadline: Date.now() + milliseconds, providerFailure: null, providerFailures: new Map() };
   const timer = setTimeout(() => controller.abort(deadlineError()), milliseconds);
   try { return await searches.run(context, operation); }
   finally { clearTimeout(timer); controller.abort(deadlineError()); }
