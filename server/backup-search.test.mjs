@@ -8,9 +8,10 @@ it("permits one backup search and reuses the free quota check across searches", 
   const error = new Error("Primary blocked"), params = new URLSearchParams({ engine: "google", q: "product", api_key: "wrong-primary-key" });
   await withSearchBudget(async () => {
     expect((await backupSearch(params, "backup-fixture", error)).organic_results).toHaveLength(1);
-    await expect(backupSearch(params, "backup-fixture", error)).rejects.toBe(error);
+    await expect(backupSearch(new URLSearchParams({ q: "different product" }), "backup-fixture", error)).rejects.toBe(error);
   });
   await withSearchBudget(() => backupSearch(params, "backup-fixture", error));
+  await withSearchBudget(() => backupSearch(new URLSearchParams({ q: "different product" }), "backup-fixture", error));
   expect(fetcher.mock.calls.filter(([url]) => String(url).includes("account.json"))).toHaveLength(1);
   const searches = fetcher.mock.calls.filter(([url]) => String(url).includes("search.json"));
   expect(searches).toHaveLength(2);

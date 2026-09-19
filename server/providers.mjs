@@ -46,21 +46,26 @@ function rows(...sources) {
   return sources.flatMap(source => Array.isArray(source) ? source : Array.isArray(source?.places) ? source.places : Array.isArray(source?.results) ? source.results : []);
 }
 
-export async function searchProvider(params, config, timeoutMs = 15000) {
+export async function searchProvider(params, config, timeoutMs = 15000, { productDiscovery = false, backupQuery } = {}) {
   // Keep the legacy interface for existing integration fixtures and older callers.
   // The deployed API supplies only the Bright Data configuration object.
   if (typeof config === "string") return fetchJson("https://serpapi.com/search.json?" + params, {}, timeoutMs);
   const engine = params.get("engine");
+  // Reserve the single backup request for products, not map packs or facet lookups.
+  // Leave time for the backup and merchant-page validation inside the 16s budget.
+  const canRecover = productDiscovery && engine === "google" && config?.fallbackApiKey;
   const match = params.get("ll")?.match(/@(-?[\d.]+),(-?[\d.]+)/);
   let data;
   try { data = await brightDataSearch({
     query: params.get("q"), kind: engine === "google_maps" ? "maps" : engine === "google_shopping" ? "shopping" : "web",
     country: params.get("gl"), language: params.get("hl") || "en", location: params.get("location"), start: Number(params.get("start") || 0),
     coordinates: match ? { lat: Number(match[1]), lon: Number(match[2]) } : undefined,
-  }, config, timeoutMs); }
+  }, config, canRecover ? Math.min(timeoutMs, 3000) : timeoutMs); }
   catch (error) {
-    if (engine !== "google" || !config?.fallbackApiKey) throw error;
-    return backupSearch(params, config.fallbackApiKey, error);
+    if (!canRecover) throw error;
+    const fallbackParams = new URLSearchParams(params);
+    if (backupQuery) fallbackParams.set("q", backupQuery);
+    return backupSearch(fallbackParams, config.fallbackApiKey, error);
   }
   const local = engine === "google_maps" ? rows(data.organic, data.local, data.places, data.snack_pack) : rows(data.local, data.places, data.snack_pack);
   return {

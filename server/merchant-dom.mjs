@@ -5,7 +5,7 @@ export function merchantDom(html, baseUrl = "") {
   const $ = load(html);
   $("script,style,nav,header,footer,aside,del,s,.old-price,.price--compare,.related,.related-products,.recommendations,#otherProductsSlider,#products-that-might-interest-you").remove();
   const text = node => node.text().replace(/\s+/g, " ").trim();
-  const product = $("#productMainBlock,.product-info-main,.product-detail,#product,[itemtype$='/Product']").first();
+  const product = $("#productMainBlock,.product-info-main,.product-detail,#product,#product-page,.single-product,[itemtype$='/Product']").filter((_i, element) => $(element).find("h1").length).first();
   const scope = product.length ? product : $("main").length ? $("main").first() : $("body");
   const descriptions = $("[itemprop='description'],#description,#tab-description,#productInfo,.product-description,.product__description,.product.attribute.description,.woocommerce-product-details__short-description");
   const description = [...new Set(descriptions.map((_i, element) => text($(element))).get())].filter(Boolean).join("\n");
@@ -15,7 +15,7 @@ export function merchantDom(html, baseUrl = "") {
   const printTitle = isPrint ? bodyText.match(/שם המוצר\s*:\s*(.+?)(?=מספר מוצר|תאריך תוקף|מחיר אשראי)/)?.[1]?.trim() : "";
   const printPrice = isPrint ? bodyText.match(/מחיר אשראי\s*:\s*([\d,.]+)\s*₪/)?.[1] : undefined;
   let currentPrice;
-  for (const selector of ["[data-price-type='finalPrice']", ".special-price .price", "#pricetotalitemjs", "#our_price_display", ".product-price", "[itemprop='price']"]) {
+  for (const selector of ["[data-price-type='finalPrice']", ".special-price .price", ".single-price .price", "#pricetotalitemjs", "#our_price_display", ".product-price", "[itemprop='price']"]) {
     const element = scope.find(selector).first();
     const amount = element.attr("data-price-amount") || element.attr("content") || text(element);
     // Never concatenate a sale price, instalment count and previous price.
@@ -39,7 +39,7 @@ export function merchantDom(html, baseUrl = "") {
   });
   const stock = scope.find(".stock,.stock-status,.product-availability,[itemprop='availability']").first();
   const availability = stock.attr("content") || stock.attr("href") || text(stock);
-  $("#productslider img,.product-gallery img,.product__media img,.product-images img,[itemprop='image'],[data-zoom-image],.fotorama img,.woocommerce-product-gallery img").each((_i, element) => {
+  $("#productslider img,.product-gallery img,.single-gallery img,.product__media img,.product-images img,[itemprop='image'],[data-zoom-image],.fotorama img,.woocommerce-product-gallery img").each((_i, element) => {
     const node = $(element);
     for (const attr of ["data-zoom-image", "data-large-image", "data-src", "content", "src"]) if (node.attr(attr)) images.push(node.attr(attr));
     const srcset = node.attr("srcset") || node.attr("data-srcset");

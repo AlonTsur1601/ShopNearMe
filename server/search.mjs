@@ -143,7 +143,8 @@ function localQuery(query, code) {
   if (/\b(?:rechargeable\s+)?batter(?:y|ies)\b/i.test(query)) return query.replace(/rechargeable\s+batter(?:y|ies)/ig, "סוללות נטענות").replace(/batter(?:y|ies)/ig, "סוללות");
   if (/(?:laptop|notebook)\s+(?:stand|riser|holder|tray)|(?:stand|riser|holder|tray)\s+(?:for\s+)?(?:laptop|notebook)/i.test(query)) return query;
   const translated = translatedCategories.find(([match]) => match.test(query));
-  const localized = translated ? query.replace(translated[0], translated[2]).replace(/1440p/ig, "2560x1440") : query;
+  if (!translated) return query; // Do not translate only adjectives and leave an unknown product noun behind.
+  const localized = query.replace(translated[0], translated[2]).replace(/1440p/ig, "2560x1440");
   const modifiers = { digital: "דיגיטלי", alarm: "מעורר", wall: "קיר", wireless: "אלחוטי", external: "חיצוני", gaming: "גיימינג" };
   return localized.replace(/\b(digital|alarm|wall|wireless|external|gaming)\b/gi, word => modifiers[word.toLowerCase()]);
 }
@@ -730,7 +731,7 @@ async function localProductSearch(query, location, key, stores = [], deadline = 
     const params = new URLSearchParams({ engine: "google", q, api_key: key, hl: code === "IL" ? "he" : "en", num: "30" });
     if (code) params.set("gl", code.toLowerCase());
     let page;
-    try { page = await searchProvider(params, key, Math.min(7500, Math.max(1, deadline - Date.now() - 3000))); }
+    try { page = await searchProvider(params, key, Math.min(7500, Math.max(1, deadline - Date.now() - 3000)), { productDiscovery: true, backupQuery: query + (tld ? " site:" + tld : " buy") }); }
     catch (error) {
       console.info("retailer_search_failed", { attempt: queries.indexOf(q) + 1, status: error.status, reason: error.name, code: error.code });
       if (["quota_exhausted", "source_blocked"].includes(error.code) || [400, 401, 403].includes(error.status)) throw error;

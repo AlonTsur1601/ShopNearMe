@@ -5,6 +5,10 @@ import { proseAttributes } from "./specifications.mjs";
 import { translateTerms } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
+it("uses the product's price and gallery instead of earlier promotional cards", () => {
+  const page = extractProductData('<div class="price">789 ₪</div><img src="/promotion.jpg"><div id="product-page" class="single-product"><h1>Wireless mouse</h1><div class="single-price"><span class="price">99 ₪</span><div id="eilat-price">83 ₪</div></div><div class="single-gallery"><img src="/mouse.jpg"></div><button>Add to cart</button></div>', "https://merchant.co.il/product/mouse");
+  expect(page).toMatchObject({ isProduct: true, price: 99, imageUrl: "https://merchant.co.il/mouse.jpg" });
+});
 it("rejects camping services and accessories instead of using their prices for a tent", () => {
   for (const title of ["Camping complex in private tents", "פנס יד ועששית תאורה לאוהל MINI CREE R2", "Vango Tent Carpet Tigris 600", "Camping Tent Spring Buckle Rope Tensioner"]) expect(isRelevantProduct(title, "camping tent")).toBe(false);
 });
