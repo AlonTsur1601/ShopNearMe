@@ -2,7 +2,18 @@ import { budgetFetch, searchContext } from "./search-budget.mjs";
 import { createHash } from "node:crypto";
 
 const cache = new Map(), pending = new Map();
+const cooldowns = new Map();
 const TTL = 15 * 60 * 1000;
+
+function providerError(status, headers = {}, message = "Bright Data search failed") {
+  const get = name => typeof headers.get === "function" ? headers.get(name) : Object.entries(headers).find(([key]) => key.toLowerCase() === name)?.[1];
+  const upstream = get("x-brd-error-code") || get("x-brd-err-code");
+  const error = Object.assign(new Error(message + " (HTTP " + status + ")"), { status });
+  if (["captcha", "verifying"].includes(upstream)) error.code = "source_blocked";
+  if (status === 429) error.code = "source_rate_limited";
+  if (error.code) error.retryAfterMs = Math.max(15000, Math.min(300000, Number(get("x-brd-rate-limit-period-ms")) || 0));
+  return error;
+}
 
 // This client is server-only. A zone must be explicitly configured, never guessed.
 export function brightDataSearchUrl({ query, kind = "web", country, language = "en", location, coordinates, start = 0 }) {
@@ -37,6 +48,8 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
   const source = request.kind || "web";
   const key = createHash("sha256").update(config.apiKey + "|" + config.zone + "|" + url).digest("hex");
   if (cache.get(key)?.expires > Date.now()) return cache.get(key).data;
+  if (cooldowns.get(key)?.until > Date.now()) throw cooldowns.get(key).error;
+  cooldowns.delete(key);
   if (searchContext()?.providerFailure) throw searchContext().providerFailure;
   if (searchContext()?.providerFailures.has(source)) throw searchContext().providerFailures.get(source);
   if (pending.has(key)) return pending.get(key);
@@ -52,8 +65,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         // Never expose upstream error text: it may echo request credentials.
         if (!response.ok) {
           const body = await response.text().catch(() => "");
-          const error = new Error("Bright Data search failed (HTTP " + response.status + ")");
-          error.status = response.status;
+          const error = providerError(response.status, response.headers);
           if (response.status === 402 || /(?:quota|credit|balance|limit).{0,30}(?:exhaust|exceed|insufficient|deplet|used)/i.test(body)) {
             error.code = "quota_exhausted";
             const reset = response.headers.get("x-ratelimit-reset") || response.headers.get("ratelimit-reset") || response.headers.get("retry-after");
@@ -65,9 +77,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         try { data = JSON.parse(await response.text()); }
         catch { throw new Error("Bright Data did not return parsed search data"); }
         if (data?.status_code && data.status_code !== 200) {
-          const error = new Error("Bright Data upstream search failed (HTTP " + data.status_code + ")");
-          error.status = data.status_code;
-          if (data.headers?.["x-brd-error-code"] === "captcha") error.code = "source_blocked";
+          const error = providerError(data.status_code, data.headers, "Bright Data upstream search failed");
           if (data.status_code === 402 || /(?:quota|credit|balance|limit).{0,30}(?:exhaust|exceed|insufficient|deplet|used)/i.test(String(data.message ?? data.error ?? ""))) error.code = "quota_exhausted";
           throw error;
         }
@@ -76,19 +86,23 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
           catch { throw new Error("Bright Data did not return parsed search data"); }
         }
         if (!data || typeof data !== "object" || Array.isArray(data) || data.error) throw new Error("Bright Data returned an invalid search response");
-        if (!["organic", "shopping", "local", "places", "snack_pack"].some(field => Object.hasOwn(data, field))) throw new Error("Bright Data returned an unrecognized search response");
+        if (!["organic", "shopping", "top_pla", "bottom_pla", "jackpot_pla", "local", "places", "snack_pack"].some(field => Object.hasOwn(data, field))) throw new Error("Bright Data returned an unrecognized search response");
         // Unknown schemas/empty results are deliberately not cached as successes.
-        if ([data.organic, data.shopping, data.local, data.places, data.snack_pack].some(items => (Array.isArray(items) ? items : items?.places ?? items?.results)?.length)) {
+        if ([data.organic, data.shopping, data.top_pla, data.bottom_pla, data.jackpot_pla, data.local, data.places, data.snack_pack].some(items => (Array.isArray(items) ? items : items?.places ?? items?.results)?.length)) {
           if (cache.size >= 200) cache.delete(cache.keys().next().value);
           cache.set(key, { data, expires: Date.now() + TTL });
         }
         return data;
       } catch (error) {
+        if (error.retryAfterMs) {
+          if (cooldowns.size >= 200) cooldowns.delete(cooldowns.keys().next().value);
+          cooldowns.set(key, { until: Date.now() + error.retryAfterMs, error });
+        }
         if (searchContext() && error.code === "quota_exhausted") searchContext().providerFailure = error;
         if (searchContext() && error.code === "source_blocked") searchContext().providerFailures.set(source, error);
         if (searchContext()?.signal.aborted) throw searchContext().signal.reason;
         const temporary = [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|did not return parsed/i.test(error.message);
-        if (attempt || !temporary || error.code === "source_blocked") throw error;
+        if (attempt || !temporary || error.retryAfterMs) throw error;
       }
     }
   })();

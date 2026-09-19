@@ -70,7 +70,7 @@ export async function searchProvider(params, config, timeoutMs = 15000, { produc
   const local = engine === "google_maps" ? rows(data.organic, data.local, data.places, data.snack_pack) : rows(data.local, data.places, data.snack_pack);
   return {
     organic_results: rows(data.organic).map(item => ({ ...item, link: item.link ?? item.url, snippet: item.description ?? item.snippet, displayed_link: item.display_link, favicon: item.icon })),
-    shopping_results: rows(data.shopping).map(item => ({ ...item, link: item.link ?? item.url ?? item.product_url ?? item.merchant_url, source: item.shop ?? item.source ?? item.merchant, thumbnail: item.image ?? item.thumbnail, source_icon: item.shop_logo ?? item.source_icon, reviews: item.reviews_cnt ?? item.reviews, product_id: item.cid ?? item.product_id ?? item.rank })),
+    shopping_results: rows(data.shopping, data.top_pla, data.bottom_pla, data.jackpot_pla).filter(item => !item.view_all).map(item => ({ ...item, link: item.link ?? item.url ?? item.product_url ?? item.merchant_url, source: item.shop ?? item.source ?? item.merchant, thumbnail: item.image ?? item.thumbnail, source_icon: item.shop_logo ?? item.source_icon, reviews: item.reviews_cnt ?? item.reviews, product_id: item.cid ?? item.product_id ?? item.rank })),
     local_results: local.map(item => ({
       ...item, title: item.title ?? item.name, type: Array.isArray(item.category) ? item.category.map(c => (c.id ?? c.title ?? "").replaceAll("_", " ")).join(" · ") : item.category ?? item.type, website: item.website ?? item.business_url ?? item.link ?? item.url,
       reviews: item.reviews_cnt ?? item.reviews, gps_coordinates: item.gps_coordinates ?? (item.latitude != null ? { latitude: item.latitude, longitude: item.longitude } : undefined),

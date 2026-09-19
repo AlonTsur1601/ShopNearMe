@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { clockShowcase } from "./data/showcase";
 import { OfferSection } from "./components/OfferSection";
+import { FilterPanel } from "./components/FilterPanel";
 
 vi.mock("./services/productSearch", () => ({
   searchProducts: vi.fn(async () => ({ ...clockShowcase, source: "showcase" })),
@@ -14,6 +15,14 @@ vi.mock("./services/productSearch", () => ({
 }));
 
 describe("App", () => {
+  it("keeps missing-value notices out of filters and never repeats the subtitle condition", () => {
+    render(<FilterPanel facets={[{ id: "color", label: "Color", missingCount: 11, options: [{ value: "Gold", count: 2 }] }]} selected={{}} distance={50} distanceUnit="km" priceMin="" priceMax="" onToggle={() => {}} onDistance={() => {}} onPriceMin={() => {}} onPriceMax={() => {}} onClear={() => {}} />);
+    expect(screen.queryByText(/not verified|11 products/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Gold 2" })).toBeInTheDocument();
+    render(<OfferSection category="order" distanceUnit="km" offers={[{ ...clockShowcase.offers[0], subtitle: "New · CN", condition: "New" }]} />);
+    expect(screen.getByText("New · CN")).toBeInTheDocument();
+    expect(screen.queryByText("New", { exact: true })).not.toBeInTheDocument();
+  });
   it("shows one actionable location warning instead of duplicate nearby-product warnings", async () => {
     vi.stubGlobal("navigator", Object.create(navigator, { geolocation: { value: { getCurrentPosition: (_success: PositionCallback, failure: PositionErrorCallback) => failure({ code: 1 } as GeolocationPositionError) } } }));
     vi.mocked(searchProducts).mockResolvedValueOnce({ query: "hooks", offers: [], facets: [], resultCount: 0, source: "live", warnings: ["Choose a location to include nearby products.", "Provider blocked"] });

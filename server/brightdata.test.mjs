@@ -3,6 +3,22 @@ import { brightDataSearch, brightDataSearchUrl } from "./brightdata.mjs";
 import { withSearchBudget } from "./search-budget.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
+it.each(["failed_query_rejected", "repeat_query_rejected", "sr_rate_limit", "bucket_rate_limit", "client_10110", "verifying"])("honors documented retry cooldown for %s across searches", async code => {
+  const status = code === "verifying" ? 502 : 429;
+  const fetcher = vi.fn(async () => new Response("private upstream details", { status, headers: { "x-brd-error-code": code } }));
+  vi.stubGlobal("fetch", fetcher);
+  const run = () => withSearchBudget(() => brightDataSearch({ query: "cooldown fixture " + code }, { apiKey: "test", zone: "zone" }));
+  await expect(run()).rejects.toMatchObject({ status });
+  await expect(run()).rejects.toMatchObject({ status });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it("accepts documented product listing fields even without an organic array", async () => {
+  const { searchProvider } = await import("./providers.mjs");
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ top_pla: [{ title: "Mouse", shop: "Merchant", price: "$15", link: "https://merchant.example/mouse", image: "https://merchant.example/mouse.jpg" }, { title: "View all", view_all: true }] })));
+  const data = await searchProvider(new URLSearchParams({ engine: "google_shopping", q: "PLA fixture" }), { apiKey: "test", zone: "zone" });
+  expect(data.shopping_results).toHaveLength(1);
+  expect(data.shopping_results[0]).toMatchObject({ source: "Merchant", price: "$15", link: "https://merchant.example/mouse" });
+});
 it("isolates a blocked Maps source while permitting Shopping and web recovery", async () => {
   const fetcher = vi.fn(async (_url, options) => {
     const target = new URL(JSON.parse(options.body).url);
