@@ -16,13 +16,20 @@ function providerError(status, headers = {}, message = "Bright Data search faile
 }
 
 // This client is server-only. A zone must be explicitly configured, never guessed.
-export function brightDataSearchUrl({ query, kind = "web", country, language = "en", location, coordinates, start = 0 }) {
+export function brightDataSearchUrl({ query, kind = "web", country, language = "en", location, coordinates, start = 0, engine = "google", light = false }) {
   if (!["web", "shopping", "maps"].includes(kind)) throw new Error("Unsupported search kind");
   if (!String(query ?? "").trim()) throw new Error("A search query is required");
-  const url = new URL("https://www.google.com/search");
+  if (!["google", "bing"].includes(engine) || (engine === "bing" && kind !== "web")) throw new Error("Unsupported search engine");
+  const url = new URL(engine === "bing" ? "https://www.bing.com/search" : "https://www.google.com/search");
   url.searchParams.set("q", query);
+  if (engine === "bing") {
+    url.searchParams.set("brd_json", "1");
+    url.searchParams.set("setlang", /^[a-z]{2}$/i.test(language) ? language : "en");
+    if (/^[a-z]{2}$/i.test(country ?? "")) url.searchParams.set("cc", country.toLowerCase());
+    return url.href;
+  }
   url.searchParams.set("hl", /^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(language) ? language : "en");
-  url.searchParams.set("brd_json", "1");
+  url.searchParams.set("brd_json", light ? "parsed_light" : "1");
   url.searchParams.set("brd_browser", "chrome");
   if (/^[a-z]{2}$/i.test(country ?? "")) url.searchParams.set("gl", country.toLowerCase());
   if (Number.isInteger(start) && start > 0) url.searchParams.set("start", String(start));
@@ -45,7 +52,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
   if (!config?.apiKey) throw new Error("BRIGHTDATA_API_KEY is not configured");
   if (!config?.zone) throw new Error("BRIGHTDATA_SERP_ZONE is not configured");
   const url = brightDataSearchUrl(request);
-  const source = request.kind || "web";
+  const source = request.engine === "bing" ? "bing:web" : request.kind || "web";
   const key = createHash("sha256").update(config.apiKey + "|" + config.zone + "|" + url).digest("hex");
   if (cache.get(key)?.expires > Date.now()) return cache.get(key).data;
   if (cooldowns.get(key)?.until > Date.now()) throw cooldowns.get(key).error;
@@ -102,7 +109,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         if (searchContext() && error.code === "source_blocked") searchContext().providerFailures.set(source, error);
         if (searchContext()?.signal.aborted) throw searchContext().signal.reason;
         const temporary = [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|did not return parsed/i.test(error.message);
-        if (attempt || !temporary || error.retryAfterMs) throw error;
+        if (request.noRetry || attempt || !temporary || error.retryAfterMs) throw error;
       }
     }
   })();

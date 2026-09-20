@@ -7,6 +7,7 @@ import { fetchJson, mapConcurrent, searchProvider } from "./providers.mjs";
 import { productWords, contradictsQuery, sameProductIdentity } from "./product-identity.mjs";
 import { budgetFetch, deadlineError, searchContext, withSearchBudget } from "./search-budget.mjs";
 import { catalogProductLinks } from "./catalog-products.mjs";
+import { discoverRetailProducts } from "./retail-discovery.mjs";
 const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 let ebayToken = null;
@@ -830,3 +831,73 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   return result;
 }
 export async function searchCatalog(query, location, apiKey = {}, coordinates, credentials, scope = "all") { const safeScope = ["all", "online", "local", "local-products"].includes(scope) ? scope : "all", point = validCoordinates(coordinates), cacheKey = `${safeScope}|${query.trim().toLowerCase()}|${String(location || "").trim().toLowerCase()}|${point ? `${point.lat.toFixed(4)},${point.lon.toFixed(4)}` : ""}`; const cached = cache.get(cacheKey); if (cached && Date.now() - cached.at < CACHE_MS) return cached.value; if (inFlight.has(cacheKey)) return inFlight.get(cacheKey); const request = withSearchBudget(() => runScope(safeScope, query.trim(), location, apiKey, point, credentials)).then((value) => { if (!value.partialFailure && !value.warnings?.length) cache.set(cacheKey, { at: Date.now(), value }); return value; }).finally(() => inFlight.delete(cacheKey)); inFlight.set(cacheKey, request); return request; }
+
+function verifiedRetailOffer(record, query) {
+  const { page, link, id } = record;
+  const merchant = shortRetailerName(new URL(link).hostname.replace(/^www\./, ""));
+  return {
+    id: `retail-${id}`, category: "order", title: page.title || record.title, merchant,
+    subtitle: page.specificationText?.slice(0, 150) || "", imageUrl: page.imageUrl, imageUrls: page.imageUrls ?? [],
+    destinationUrl: link, linkLabel: "View product", itemPrice: page.price, totalPrice: page.price,
+    shippingPrice: null, currency: page.currency, totalEstimated: true, priceVerified: true,
+    availability: page.availability || "", rating: 0, reviewCount: 0,
+    gtin: page.gtin, mpn: page.mpn, productBrand: page.brand,
+    attributes: attributesFor(query, `${page.title} ${page.specificationText ?? ""}`, undefined, merchant, page),
+    attributeLabels: attributeLabelsFor(query, page.title || record.title, page),
+  };
+}
+
+// Production entry point. The old searchCatalog remains for legacy consumers;
+// this path does not call shoppingSearch, mapsSearch or localProductSearch.
+export async function searchRetailCatalog(query, location, config = {}, coordinates, credentials, scope = "all") {
+  scope = ["all", "online", "local", "local-products"].includes(scope) ? scope : "all";
+  query = query.trim();
+  const pointKey = validCoordinates(coordinates);
+  const requestKey = `retail-v2|${scope}|${query.toLowerCase()}|${location || ""}|${pointKey ? `${pointKey.lat},${pointKey.lon}` : ""}`;
+  if (inFlight.has(requestKey)) return inFlight.get(requestKey);
+  const request = withSearchBudget(async () => {
+    const deadline = searchContext().deadline, point = validCoordinates(coordinates);
+    const productLocation = searchLocation(location, point), country = countryCode(productLocation);
+    const translated = localQuery(query, country);
+    // Do not send half-translated noun phrases such as "שעון repair kit".
+    const localizedQuery = /[\u0590-\u05ff]/.test(translated) && !/[a-z]{3,}/i.test(translated) ? translated : query;
+    const discoveryJob = discoverRetailProducts({ query, country, localizedQuery, config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline });
+    const marketplaceJob = scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);
+    const placesJob = scope === "online" || scope === "local-products" || (!point && (!location || location === "Current location")) ? Promise.resolve([]) : (async () => {
+      const origin = point || await namedLocationCoordinates(location);
+      return (await osmStores(query, productLocation, origin)).map((place, index) => mapOffer(place, index, query, origin));
+    })();
+    const [discoveryState, marketplaceState, placesState] = await Promise.allSettled([discoveryJob, marketplaceJob, placesJob]);
+    const discovery = discoveryState.status === "fulfilled" ? discoveryState.value : { products: [], sourceStatus: [{ source: "retail", status: "failed", code: discoveryState.reason?.code || "search_unavailable" }], diagnostics: {} };
+    const online = discovery.products.map(record => verifiedRetailOffer(record, query));
+    const places = placesState.status === "fulfilled" ? placesState.value : [];
+    const localOffers = scope === "online" || scope === "local-products" ? [] : mergeLocalProducts(places, nearbyProductOffers(places, online));
+    // A merchant can publish its own store coordinates even when the map index has no entry.
+    if (point && scope !== "online" && scope !== "local-products") for (const record of discovery.products) {
+      const offer = online.find(item => item.id === `retail-${record.id}`);
+      if (!offer || localOffers.some(item => item.destinationUrl === offer.destinationUrl)) continue;
+      const branch = (record.page.locations ?? []).map(place => ({ ...place, distance: distanceMiles(point, place) })).filter(place => place.distance <= 50).sort((a, b) => a.distance - b.distance)[0];
+      if (branch) localOffers.push({ ...offer, id: `${offer.id}-pickup`, category: "local", distanceMiles: branch.distance, pickupVerified: false, subtitle: branch.address || offer.subtitle });
+    }
+    const marketplace = marketplaceState.status === "fulfilled" ? marketplaceState.value : [];
+    const offers = scope === "local" ? localOffers : [...localOffers, ...online, ...marketplace];
+    const completed = await completeFacetAttributes(offers, query, location, config, deadline);
+    const result = makeResult(query, await localizeOffers(completed.offers, productLocation));
+    result.sourceStatus = [
+      { source: "Retailer products", status: online.length || (discovery.sourceStatus.some(item => item.status === "completed") && !discovery.diagnostics.candidates) ? "completed" : "failed", products: online.length },
+      ...(scope === "online" || scope === "local-products" ? [] : [{ source: "Nearby product availability", status: placesState.status === "fulfilled" || localOffers.length ? "completed" : "failed", products: localOffers.length }]),
+      ...(scope === "local" || scope === "local-products" ? [] : [{ source: "Marketplace products", status: marketplaceState.status === "fulfilled" ? "completed" : "failed", products: marketplace.length }]),
+    ];
+    result.discoveryStatus = discovery.sourceStatus;
+    result.partialFailure = result.sourceStatus.some(source => source.status === "failed");
+    result.warnings = result.sourceStatus.filter(source => source.status === "failed").map(source => source.source + " could not be searched. Please try again.");
+    if (!online.length && discovery.sourceStatus.some(source => source.code === "quota_exhausted")) result.warnings.push("Search provider quota has been used up. The provider did not supply a reset time.");
+    if (!result.attributesComplete) result.warnings.push("Some product specifications could not be verified. Filters match only confirmed values.");
+    if ((!location || location === "Current location") && !point && scope !== "online") result.warnings.push("Choose a location to include nearby products.");
+    if (searchContext().backupQuota) result.warnings.push("Backup search allowance has been used up." + (searchContext().backupQuota.reset ? ` It renews on ${searchContext().backupQuota.reset}.` : ""));
+    console.info("retail_search", { ...discovery.diagnostics, sources: discovery.sourceStatus, online: online.length, local: localOffers.length });
+    return result;
+  }).finally(() => inFlight.delete(requestKey));
+  inFlight.set(requestKey, request);
+  return request;
+}
