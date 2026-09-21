@@ -8,6 +8,7 @@ import { productWords, contradictsQuery, sameProductIdentity } from "./product-i
 import { budgetFetch, deadlineError, searchContext, withSearchBudget } from "./search-budget.mjs";
 import { catalogProductLinks } from "./catalog-products.mjs";
 import { discoverRetailProducts } from "./retail-discovery.mjs";
+import { discoverOctoparseProducts } from "./octoparse-discovery.mjs";
 const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 let ebayToken = null;
@@ -116,6 +117,7 @@ const translatedCategories = [
   [/vacuum/i, /שואב/, "שואב אבק"], [/printer/i, /מדפסת/, "מדפסת"], [/phone|smartphone/i, /טלפון/, "טלפון"],
   [/chair/i, /כיסא|כסא/, "כיסא"], [/desk/i, /שולחן/, "שולחן"], [/camera/i, /מצלמה/, "מצלמה"],
   [/charger/i, /מטען/, "מטען"],
+  [/\bmouse\b|\bmice\b/i, /עכבר/, "עכבר"],
 ];
 export function isRelevantProduct(title, query) {
   if (contradictsQuery(title, query)) return false;
@@ -861,16 +863,20 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const translated = localQuery(query, country);
     // Do not send half-translated noun phrases such as "שעון repair kit".
     const localizedQuery = /[\u0590-\u05ff]/.test(translated) && !/[a-z]{3,}/i.test(translated) ? translated : query;
-    const discoveryJob = discoverRetailProducts({ query, country, localizedQuery, config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline });
+    const tld = countryTlds.get(country);
+    const retailQuery = country ? `${localizedQuery} ${country === "IL" ? "מחיר" : "price"}${tld ? ` site:${tld}` : ` ${country}`}` : `${query} price`;
+    const nearbyQuery = scope !== "online" && scope !== "local-products" && (point || (location && location !== "Current location")) ? `${storeRules.find(([match]) => match.test(query))?.[1][0] || query} stores near ${providerLocation(productLocation)}` : undefined;
+    const discoveryJob = (config.provider === "octoparse" ? discoverOctoparseProducts : discoverRetailProducts)({ query, country, localizedQuery, retailQuery, nearbyQuery, config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline });
     const marketplaceJob = scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);
-    const placesJob = scope === "online" || scope === "local-products" || (!point && (!location || location === "Current location")) ? Promise.resolve([]) : (async () => {
+    const placesJob = config.provider === "octoparse" || scope === "online" || scope === "local-products" || (!point && (!location || location === "Current location")) ? Promise.resolve([]) : (async () => {
       const origin = point || await namedLocationCoordinates(location);
       return (await osmStores(query, productLocation, origin)).map((place, index) => mapOffer(place, index, query, origin));
     })();
     const [discoveryState, marketplaceState, placesState] = await Promise.allSettled([discoveryJob, marketplaceJob, placesJob]);
     const discovery = discoveryState.status === "fulfilled" ? discoveryState.value : { products: [], sourceStatus: [{ source: "retail", status: "failed", code: discoveryState.reason?.code || "search_unavailable" }], diagnostics: {} };
     const online = discovery.products.map(record => verifiedRetailOffer(record, query));
-    const places = placesState.status === "fulfilled" ? placesState.value : [];
+    const origin = point || (nearbyQuery && discovery.places?.length ? await namedLocationCoordinates(location) : undefined);
+    const places = [...(placesState.status === "fulfilled" ? placesState.value : []), ...(discovery.places ?? []).map((place, index) => mapOffer(place, index, query, origin))];
     const localOffers = scope === "online" || scope === "local-products" ? [] : mergeLocalProducts(places, nearbyProductOffers(places, online));
     // A merchant can publish its own store coordinates even when the map index has no entry.
     if (point && scope !== "online" && scope !== "local-products") for (const record of discovery.products) {
@@ -881,17 +887,21 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     }
     const marketplace = marketplaceState.status === "fulfilled" ? marketplaceState.value : [];
     const offers = scope === "local" ? localOffers : [...localOffers, ...online, ...marketplace];
-    const completed = await completeFacetAttributes(offers, query, location, config, deadline);
+    // Legacy specification recovery calls the old SERP provider. The Octoparse
+    // path extracts source-backed attributes without silently calling Bright Data.
+    const completed = config.provider === "octoparse" ? { offers: shareProductSpecs(coalesceOffers(offers)) } : await completeFacetAttributes(offers, query, location, config, deadline);
     const result = makeResult(query, await localizeOffers(completed.offers, productLocation));
     result.sourceStatus = [
-      { source: "Retailer products", status: online.length || (discovery.sourceStatus.some(item => item.status === "completed") && !discovery.diagnostics.candidates) ? "completed" : "failed", products: online.length },
-      ...(scope === "online" || scope === "local-products" ? [] : [{ source: "Nearby product availability", status: placesState.status === "fulfilled" || localOffers.length ? "completed" : "failed", products: localOffers.length }]),
+      { source: "Retailer products", status: discovery.continuation ? "pending" : online.length || (discovery.sourceStatus.some(item => item.status === "completed") && !discovery.diagnostics.candidates) ? "completed" : "failed", products: online.length },
+      ...(scope === "online" || scope === "local-products" ? [] : [{ source: "Nearby product availability", status: discovery.sourceStatus.some(source => source.source === "Nearby branches via Octoparse" && source.status === "pending") ? "pending" : placesState.status === "fulfilled" || localOffers.length ? "completed" : "failed", products: localOffers.length }]),
       ...(scope === "local" || scope === "local-products" ? [] : [{ source: "Marketplace products", status: marketplaceState.status === "fulfilled" ? "completed" : "failed", products: marketplace.length }]),
     ];
     result.discoveryStatus = discovery.sourceStatus;
+    if (discovery.continuation) result.pendingSearch = { continuation: discovery.continuation, nextPollAt: discovery.nextPollAt };
+    if (config.provider === "octoparse") result.sourceStatus.push(...discovery.sourceStatus.filter(source => source.status === "failed"));
     result.partialFailure = result.sourceStatus.some(source => source.status === "failed");
     result.warnings = result.sourceStatus.filter(source => source.status === "failed").map(source => source.source + " could not be searched. Please try again.");
-    if (!online.length && discovery.sourceStatus.some(source => source.code === "quota_exhausted")) result.warnings.push("Search provider quota has been used up. The provider did not supply a reset time.");
+    if (discovery.sourceStatus.some(source => source.code === "quota_exhausted")) result.warnings.push("Search provider quota has been used up. The provider did not supply a reset time.");
     if (!result.attributesComplete) result.warnings.push("Some product specifications could not be verified. Filters match only confirmed values.");
     if ((!location || location === "Current location") && !point && scope !== "online") result.warnings.push("Choose a location to include nearby products.");
     if (searchContext().backupQuota) result.warnings.push("Backup search allowance has been used up." + (searchContext().backupQuota.reset ? ` It renews on ${searchContext().backupQuota.reset}.` : ""));

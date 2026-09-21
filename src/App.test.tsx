@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { searchProducts } from "./services/productSearch";
+import { searchProducts, searchProductScope } from "./services/productSearch";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { clockShowcase } from "./data/showcase";
@@ -15,6 +15,19 @@ vi.mock("./services/productSearch", () => ({
 }));
 
 describe("App", () => {
+  it("resumes an accepted search automatically instead of showing no matching offers", async () => {
+    vi.mocked(searchProducts).mockResolvedValueOnce({ query: "clock", offers: [], facets: [], resultCount: 0, source: "live", pendingSearch: { continuation: "signed-job", nextPollAt: Date.now() } });
+    vi.mocked(searchProductScope).mockResolvedValueOnce({ ...clockShowcase, source: "live" });
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "clock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText(/Additional products are still being collected/)).toBeVisible();
+    expect(screen.queryByText("No matching offers")).not.toBeInTheDocument();
+    await waitFor(() => expect(searchProductScope).toHaveBeenCalledWith("clock", expect.any(String), "all", expect.any(AbortSignal), undefined, "signed-job"), { timeout: 2500 });
+    await waitFor(() => expect(screen.queryByText(/Additional products are still being collected/)).not.toBeInTheDocument());
+    expect(screen.getByRole("textbox", { name: "Minimum price" })).toBeVisible();
+  });
+
   it("keeps missing-value notices out of filters and never repeats the subtitle condition", () => {
     render(<FilterPanel facets={[{ id: "color", label: "Color", missingCount: 11, options: [{ value: "Gold", count: 2 }] }]} selected={{}} distance={50} distanceUnit="km" priceMin="" priceMax="" onToggle={() => {}} onDistance={() => {}} onPriceMin={() => {}} onPriceMax={() => {}} onClear={() => {}} />);
     expect(screen.queryByText(/not verified|11 products/i)).not.toBeInTheDocument();

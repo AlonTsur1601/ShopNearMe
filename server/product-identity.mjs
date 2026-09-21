@@ -1,4 +1,5 @@
 const translations = [
+  [/לעכברים|לעכבר/gu, "for mouse"], [/עכברים|עכבר/gu, "mouse"], [/מטענים|מטען/gu, "charger"],
   [/סוללות|סוללה/gu, "battery"], [/נטענות|נטענים|נטענת|נטען/gu, "rechargeable"],
   [/אוזניות/gu, "headphones"], [/אלחוטיות|אלחוטיים|אלחוטי/gu, "wireless"], [/חוטיות|חוטיים|חוטי/gu, "wired"],
   [/מחשבים ניידים|מחשב נייד/gu, "laptop"], [/תחנות עגינה|תחנת עגינה/gu, "dock"],
@@ -31,7 +32,7 @@ export function contradictsQuery(title, query) {
   }
   // A feature/accessory in the tail of a title does not make it the main product.
   const head = actual.split(/\b(?:with|for|compatible with|including)\b|\s(?:עם|עבור|כולל)\s/i)[0];
-  const nouns = ["battery", "headphones", "laptop", "monitor", "clock", "dock", "camera", "printer", "tent", "charger"];
+  const nouns = ["battery", "headphones", "laptop", "monitor", "clock", "dock", "camera", "printer", "tent", "charger", "mouse"];
   const noun = nouns.find(word => new RegExp(`\\b${word}s?\\b`, "i").test(wanted));
   if (noun && head !== actual && !new RegExp(`\\b${noun}s?\\b`, "i").test(head)) return true;
   const capacities = [...wanted.matchAll(/\b(\d+)\s*(gb|tb)\b/gi)];

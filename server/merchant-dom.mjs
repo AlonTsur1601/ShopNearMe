@@ -47,5 +47,5 @@ export function merchantDom(html, baseUrl = "") {
   });
   if (isPrint && printTitle) scope.find("img").each((_i, element) => { const src = $(element).attr("src"); if (src && !/logo|banner|icon/i.test(src)) images.push(src); });
   const isCatalog = !product.length && $(".products-grid .product-item,.products.list .product-item,.collection .grid__item,.product-list .product-item").length > 1;
-  return { namedProperties, availability, title: printTitle || undefined, currentPrice: printPrice || currentPrice, description: [description, metadata, printTitle ? bodyText : ""].filter(Boolean).join("\n").slice(0, 18000), images, isCatalog, isProduct: !!printTitle || (!!product.length && !!currentPrice && !!scope.find("h1").length), specificationsHtml: descriptions.toArray().map(element => $.html(element)).join("\n") };
+  return { pageTitle: $("meta[property='og:title']").attr("content")?.trim(), namedProperties, availability, title: printTitle || undefined, currentPrice: printPrice || currentPrice, description: [description, metadata, printTitle ? bodyText : ""].filter(Boolean).join("\n").slice(0, 18000), images, isCatalog, isProduct: !!printTitle || (!!product.length && !!currentPrice && !!scope.find("h1").length), specificationsHtml: descriptions.toArray().map(element => $.html(element)).join("\n") };
 }

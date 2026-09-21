@@ -37,7 +37,13 @@ function webUrl(value, baseUrl = "") {
 }
 export function productImageUrl(value, baseUrl = "") {
   if (typeof value === "string" && value.length < 500000 && /^data:image\/(?:jpeg|png|webp|gif);base64,[a-z\d+/=\s]+$/i.test(value)) return value;
-  return webUrl(value, baseUrl);
+  const resolved = webUrl(value, baseUrl);
+  // A merchant can accidentally prefix its origin to an absolute CDN URL.
+  if (resolved) {
+    const parsed = new URL(resolved);
+    if (/^\/https?:\/\//i.test(parsed.pathname)) return webUrl(parsed.pathname.slice(1) + parsed.search);
+  }
+  return resolved;
 }
 function meta(html, key) {
   const name = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -118,7 +124,9 @@ export function extractProductData(html, baseUrl = "") {
     try { primary.push(...embeddedProducts(JSON.parse(match[1]))); } catch { /* invalid embedded data */ }
   }
   const product = found.find(item => item.url && sameProductUrl(item.url, baseUrl)) ?? primary.find(item => item.offers || item.image) ?? primary[0] ?? (found.length === 1 ? found[0] : {});
-  const title = product.name || dom.title || meta(html, "og:title") || html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]*>/g, " ").trim();
+  // Some merchants put only the category in JSON-LD and the model in OG.
+  const expandedTitle = product.name && dom.pageTitle?.toLowerCase().startsWith(String(product.name).toLowerCase()) ? dom.pageTitle : undefined;
+  const title = expandedTitle || product.name || dom.title || dom.pageTitle || meta(html, "og:title") || html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]*>/g, " ").trim();
   const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers ?? {};
   const specification = Array.isArray(offer.priceSpecification) ? offer.priceSpecification[0] : offer.priceSpecification ?? {};
   const imageUrls = [...new Set([...dom.images.map(value => productImageUrl(value, baseUrl)), ...productImages(html, product, title, baseUrl)].filter(value => value && !/logo|placeholder|favicon/i.test(value)))];
@@ -200,7 +208,7 @@ export async function enrichProductPage(value) {
       return best.isProduct ? best : gone ? { unavailable: true } : best;
     } catch (error) { console.info("merchant_page_failed", { host: new URL(url).hostname, reason: error.name }); return {}; }
   })();
-  const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({}); }, 3000); });
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({}); }, 6000); });
   const pending = Promise.race([request, timeout]).finally(() => { clearTimeout(timer); pageRequests.delete(url); });
   pageRequests.set(url, pending);
   return pending;

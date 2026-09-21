@@ -26,9 +26,10 @@ export function mergeSearchResults(query: string, results: ShowcaseSearch[]): Sh
   return { query, offers, resultCount: offers.length, facets: facetsFor(offers, results), source: results.some((result) => result.source === "live") ? "live" : results[0]?.source ?? "fallback" };
 }
 
-export async function searchProductScope(query: string, location: string, scope: SearchScope, signal?: AbortSignal, place?: LocationPlace): Promise<ShowcaseSearch> {
+export async function searchProductScope(query: string, location: string, scope: SearchScope, signal?: AbortSignal, place?: LocationPlace, continuation?: string): Promise<ShowcaseSearch> {
   const params = new URLSearchParams({ q: query.trim(), location, scope });
   if (place) { params.set("lat", String(place.lat)); params.set("lon", String(place.lon)); }
+  if (continuation) params.set("continuation", continuation);
   const response = await fetch(`/api/search?${params}`, { signal });
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));

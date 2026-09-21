@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { searchProducts } from "./productSearch";
+import { searchProducts, searchProductScope } from "./productSearch";
 
 describe("searchProducts", () => {
   afterEach(() => vi.unstubAllGlobals());
+  it("resumes pending work with the original continuation instead of starting another search", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ offers: [], facets: [], pendingSearch: { continuation: "next", nextPollAt: 123 } }));
+    vi.stubGlobal("fetch", fetch);
+    expect((await searchProductScope("mouse", "Israel", "all", undefined, undefined, "signed.token")).pendingSearch?.continuation).toBe("next");
+    expect(fetch.mock.calls[0][0]).toContain("continuation=signed.token");
+  });
 
   it("searches real providers for headphones and Sony instead of substituting demo offers", async () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ offers: [], facets: [] }) }));

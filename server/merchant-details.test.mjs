@@ -70,3 +70,13 @@ it("applies merchant description facets and images to both local pickup and deli
     expect(offer.attributes).toMatchObject({ capacity: ["6 people"], weight: ["4 kg"], color: "Green" });
   }
 });
+
+it("preserves a model in the page title when structured data names only the product category", () => {
+  const page = extractProductData('<meta property="og:title" content="Wireless mouse M171 Logitech"><script type="application/ld+json">{"@type":"Product","name":"Wireless mouse","offers":{"price":49,"priceCurrency":"ILS"},"image":"/mouse.jpg"}</script>', "https://store.example/m171");
+  expect(page.title).toBe("Wireless mouse M171 Logitech");
+});
+
+it("repairs an absolute CDN image accidentally prefixed by the merchant origin", () => {
+  expect(productImageUrl("https://store.example/https://cdn.example/mouse.webp")).toBe("https://cdn.example/mouse.webp");
+  expect(productImageUrl("https://store.example/http://127.0.0.1/private")).toBe("");
+});
