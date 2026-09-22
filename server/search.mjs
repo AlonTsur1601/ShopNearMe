@@ -97,6 +97,10 @@ const translatedCategories = [
   [/camping tent|tent/i, /אוהל/, "אוהל"],
   [/monitor|television|\btv\b/i, /מס[ךכ]/, "מסך"], [/headphones?|earbuds?/i, /אוזני[וה]ת/, "אוזניות"],
   [/dining\s+(?:table|set)/i, /שולח[ןנות]|פינת אוכל/, "שולחן אוכל"], [/clock/i, /שעו[ןנים]/, "שעון"],
+  [/\b(?:bedside|desk|table)\s+lamps?\b/i, /מנור(?:ות|ת|ה)\s+(?:שולחן|לילה|ליד המיטה)/, "מנורת שולחן"],
+  [/\b(?:floor|standing)\s+lamps?\b/i, /מנור(?:ות|ת|ה)\s+(?:רצפה|עמידה)/, "מנורת רצפה"],
+  [/\bwall\s+lamps?\b/i, /מנור(?:ות|ת|ה)\s+קיר/, "מנורת קיר"],
+  [/\blamps?\b/i, /מנורות|מנורה|מנורת/, "מנורה"],
   [/power supply|\bpsu\b/i, /ספק.*כ[ו]?ח/, "ספק כוח"], [/laptop|notebook/i, /מחשב.*נייד/, "מחשב נייד"],
   [/vacuum/i, /שואב/, "שואב אבק"], [/printer/i, /מדפסת/, "מדפסת"], [/phone|smartphone/i, /טלפון/, "טלפון"],
   [/chair/i, /כיסא|כסא/, "כיסא"], [/desk/i, /שולחן/, "שולחן"], [/camera/i, /מצלמה/, "מצלמה"],
@@ -687,13 +691,14 @@ async function mapsSearch(query, location, key, coordinates) {
     const local = localRows(result.value);
     places.push(...local);
   }
+  const mappedCount = places.length;
   places.push(...openStreetMapPlaces);
   if (!places.length && settled.every(result => result.status === "rejected")) throw settled[0].reason;
   const seen = new Set();
   return places.map((place, index) => ({ place, index, score: relevance(place, query, origin) }))
-    .sort((a, b) => (distanceMiles(origin, a.place.gps_coordinates && { lat: a.place.gps_coordinates.latitude, lon: a.place.gps_coordinates.longitude }) ?? Infinity) - (distanceMiles(origin, b.place.gps_coordinates && { lat: b.place.gps_coordinates.latitude, lon: b.place.gps_coordinates.longitude }) ?? Infinity) || b.score - a.score)
+    .sort((a, b) => Number(b.index < mappedCount) - Number(a.index < mappedCount) || a.index - b.index)
     .filter(({ place, score }) => { const destination = merchantWebsite(place.website) || place.links?.directions || place.google_maps_url || place.place_id || place.data_id; const titleKey = `title:${String(place.title ?? "").trim().toLowerCase()}`, destinationKey = merchantWebsite(place.website) ? `host:${new URL(merchantWebsite(place.website)).hostname.replace(/^www\./, "")}` : ""; if (!destination || !Number.isFinite(score) || score < 2 || seen.has(titleKey) || (destinationKey && seen.has(destinationKey))) return false; seen.add(titleKey); if (destinationKey) seen.add(destinationKey); return true; })
-    .sort((a, b) => b.score - a.score).slice(0, 50).map(({ place, index }) => mapOffer(place, index, query, origin));
+    .slice(0, 50).map(({ place, index }) => mapOffer(place, index, query, origin));
 }
 async function localProductSearch(query, location, key, stores = [], deadline = Infinity) {
   const code = countryCode(location), tld = code ? countryTlds.get(code) : undefined;
@@ -702,7 +707,7 @@ async function localProductSearch(query, location, key, stores = [], deadline = 
   const merchants = [...new Set(stores.map(store => {
     const site = merchantWebsite(store.destinationUrl);
     return site ? "site:" + new URL(site).hostname : '"' + shortRetailerName(store.merchant).replaceAll('"', '') + '"';
-  }))].slice(0, 6);
+  }))].slice(0, 12);
   const restriction = merchants.length ? "(" + merchants.join(" OR ") + ")" : terms;
   // "-inurl:cat" also excludes real product URLs such as Ivory's catalog.php.
   // Keep search exclusions specific; validate every returned URL separately.
@@ -767,10 +772,8 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
     const shoppingJob = finishBefore(() => shoppingSearch(query, productLocation, key, pagesJob), facetDeadline, []);
     const mapsJob = mapsSearch(query, location, key, coordinates);
     const localJob = (async () => {
-      const [maps, pages] = await Promise.allSettled([mapsJob, pagesJob]);
+      const maps = await Promise.resolve(mapsJob).then(value => ({ status: "fulfilled", value }), () => ({ status: "rejected" }));
       if (maps.status !== "fulfilled" || !maps.value.length) return [];
-      const found = pages.status === "fulfilled" ? pages.value : [];
-      if (nearbyProductOffers(maps.value, found).length) return [];
       return finishBefore(() => localProductSearch(query, productLocation, key, maps.value, facetDeadline), facetDeadline, []);
     })();
     const [shopping, maps, retailerPages, secondHand, targeted] = await Promise.allSettled([shoppingJob, mapsJob, pagesJob, ebaySearch(query, productLocation, credentials), localJob]);
