@@ -9,7 +9,7 @@ import { budgetFetch, deadlineError, searchContext, withSearchBudget } from "./s
 import { catalogProductLinks } from "./catalog-products.mjs";
 import { discoverRetailProducts } from "./retail-discovery.mjs";
 import { discoverOctoparseProducts } from "./octoparse-discovery.mjs";
-const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map();
+const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), photonStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map(), mapsQuotaBlockedUntil = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 let ebayToken = null;
 
@@ -310,10 +310,16 @@ async function enrichOffer(offer, query, requireProductPage = false) {
 function storeMatchesProduct(store, product) {
   const site = merchantWebsite(store.destinationUrl), destination = merchantWebsite(product.destinationUrl);
   if (!destination) return false;
-  if (site) return new URL(site).hostname.replace(/^www\./, "") === new URL(destination).hostname.replace(/^www\./, "");
+  if (site) {
+    const merchantDomain = value => {
+      const labels = new URL(value).hostname.toLowerCase().replace(/^www\./, "").split(".");
+      return labels.slice(-(/^(?:co|com|org|net|ac|gov)\.(?:il|uk|au|nz)$/.test(labels.slice(-2).join(".")) ? 3 : 2)).join(".");
+    };
+    return merchantDomain(site) === merchantDomain(destination);
+  }
   // Local packs often supply a business name and address without a website.
   // Match a complete merchant identity, never a substring such as PC / PC Store.
-  const identity = value => shortRetailerName(value).toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const identity = value => shortRetailerName(value).replace(/\s+(?:online|אונליין)$/iu, "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
   const left = identity(store.merchant), right = identity(product.merchant);
   if (left.length >= 3 && left === right) return true;
   const domainName = new URL(destination).hostname.replace(/^www\./, "").split(".")[0];
@@ -338,7 +344,7 @@ export function merchantWebsite(value) {
 }
 
 function nearbyProductOffers(maps, offers) {
-  return offers.filter(offer => offer.category === "order" && maps.some(store => storeMatchesProduct(store, offer)))
+  return offers.filter(offer => offer.category === "order" && offer.itemPrice !== null && !!offer.imageUrl && maps.some(store => storeMatchesProduct(store, offer)))
     .map(offer => ({ ...offer, id: `${offer.id}-pickup`, category: "local", totalPrice: offer.itemPrice, shippingPrice: null, importTaxPrice: null, taxPrice: null, otherFeesPrice: 0, importTaxUnknown: false, totalEstimated: true, pickupVerified: false, availability: "Branch stock not verified" }));
 }
 
@@ -537,7 +543,7 @@ async function completeFacetAttributes(offers, query, location, key, deadline = 
   }
   return { offers: enriched, required };
 }
-async function shoppingSearch(query, location, key, retailerPages) {
+async function shoppingSearch(query, location, key, retailerPages, onMerchantCandidates = () => {}) {
   const code = countryCode(location);
   const searchVariant = async variant => {
     const params = new URLSearchParams({ engine: "google_shopping", q: variant, api_key: key, hl: code === "IL" ? "he" : "en", num: "40" });
@@ -567,6 +573,11 @@ async function shoppingSearch(query, location, key, retailerPages) {
     if (seenItems.has(identity)) return false;
     seenItems.add(identity); return true;
   });
+  const localTld = countryTlds.get(code);
+  const publishCandidates = offers => onMerchantCandidates(offers.filter(offer => offer.category === "order" && offer.itemPrice !== null && offer.imageUrl).map((offer, index) => {
+    const host = new URL(offer.destinationUrl).hostname;
+    return { name: offer.merchant, score: Number(!!localTld && host.endsWith(localTld)) * 2 + Number(code === "IL" && offer.currency === "ILS"), index };
+  }).sort((a, b) => b.score - a.score || a.index - b.index).map(item => item.name));
   if (typeof key === "object") {
     let needsMerchantDiscovery = false;
     const rows = await mapConcurrent(items.slice(0, 8), 6, async (item, index) => {
@@ -610,6 +621,7 @@ async function shoppingSearch(query, location, key, retailerPages) {
     }
     const offers = [...rows.flat().filter(Boolean), ...discovered];
     if (items.length && !offers.length) throw new Error("Merchant product pages unavailable");
+    publishCandidates(offers);
     return offers;
   }
   // Resolve a bounded set of product groups concurrently; each can contain several retailers.
@@ -630,7 +642,9 @@ async function shoppingSearch(query, location, key, retailerPages) {
     const shippingPrice = number(item.shipping_extracted) ?? (/free|חינם/i.test(item.shipping ?? "") ? 0 : offer.shippingPrice);
     return { ...offer, ...costBreakdown({ itemPrice: offer.itemPrice, shippingPrice, importTaxPrice: number(item.import_charges_extracted ?? item.extracted_import_charges), taxPrice: number(item.extracted_estimated_tax), providerTotal: number(item.extracted_total) }), attributeLabels: attributeLabelsFor(query, `${item.title} ${item.specificationText ?? ""}`, item), attributes: attributesFor(query, `${item.title} ${(item.extensions ?? []).join(" ")}`, offer.condition, offer.merchant, item) };
   }).filter(Boolean);
-  return (await mapConcurrent(offers, 20, (offer, index) => index < 50 ? enrichOffer(offer, query) : offer)).filter(Boolean);
+  const enriched = (await mapConcurrent(offers, 20, (offer, index) => index < 50 ? enrichOffer(offer, query) : offer)).filter(Boolean);
+  publishCandidates(enriched);
+  return enriched;
 }
 async function osmStores(query, location, origin) {
   if (!origin) return [];
@@ -667,26 +681,54 @@ async function namedLocationCoordinates(location) {
   try { return await job; } finally { geocodePending.delete(cacheKey); }
 }
 
-async function mapsSearch(query, location, key, coordinates) {
+async function photonStores(names, origin) {
+  if (!origin || !names.length) return [];
+  const identity = value => String(value || "").toLowerCase().replace(/\s+(?:online|אונליין)$/iu, "").replace(/[^\p{L}\p{N}]/gu, "");
+  const results = await Promise.allSettled(names.map(async name => {
+    const cacheKey = `${identity(name)}|${origin.lat.toFixed(2)},${origin.lon.toFixed(2)}`;
+    const cached = photonStoreCache.get(cacheKey);
+    if (cached?.expires > Date.now()) return cached.value;
+    const params = new URLSearchParams({ q: name.replace(/[-–—]/g, " "), lat: String(origin.lat), lon: String(origin.lon), limit: "15", lang: "en" });
+    const data = await fetchJson(`https://photon.komoot.io/api/?${params}`, { headers: { "User-Agent": "ShopNearMe/0.1 (nearby merchant branch lookup)", Accept: "application/json" } }, 3000);
+    const places = (data.features ?? []).filter(feature => identity(feature.properties?.name) === identity(name)).map(feature => {
+      const props = feature.properties, [lon, lat] = feature.geometry?.coordinates ?? [];
+      const type = { N: "node", W: "way", R: "relation" }[props.osm_type];
+      if (!type || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return { place_id: `photon-${type}-${props.osm_id}`, title: props.name, type: props.osm_value || "store", address: [props.housenumber, props.street, props.city].filter(Boolean).join(" "), website: `https://www.openstreetmap.org/${type}/${props.osm_id}`, gps_coordinates: { latitude: lat, longitude: lon } };
+    }).filter(Boolean);
+    if (photonStoreCache.size >= 100) photonStoreCache.delete(photonStoreCache.keys().next().value);
+    photonStoreCache.set(cacheKey, { value: places, expires: Date.now() + 3600000 });
+    return places;
+  }));
+  return results.flatMap(result => result.status === "fulfilled" ? result.value : []);
+}
+
+async function mapsSearch(query, location, key, coordinates, merchantCandidates = []) {
   let origin = validCoordinates(coordinates);
   if (!origin && (!location || location === "Current location")) return [];
   const target = query + " stores";
   const place = location && location !== "Current location" ? providerLocation(location) : "";
-  const params = new URLSearchParams({ engine: "google_maps", type: "search", q: target + (place ? " near " + place : " near me"), api_key: key, hl: "en" });
-  if (origin) params.set("ll", "@" + origin.lat + "," + origin.lon + ",14z");
-  if (!place && origin) params.set("nearby", "true");
+  const candidates = [...new Set(merchantCandidates.map(name => String(name || "").replace(/\s+(?:online|אונליין)$/iu, "").trim()).filter(name => name.length >= 3 && !/^(?:ebay|amazon|aliexpress|temu|etsy|facebook|google|retailer|online)$/i.test(name)))].slice(0, 2);
+  const mapsParams = name => {
+    const params = new URLSearchParams({ engine: "google_maps", type: "search", q: name + (place ? " near " + place : " near me"), api_key: key, hl: "en" });
+    if (origin) params.set("ll", "@" + origin.lat + "," + origin.lon + ",14z");
+    return params;
+  };
   const localRows = data => Array.isArray(data?.local_results) ? data.local_results : Array.isArray(data?.local_results?.places) ? data.local_results.places : [];
-  // A normal Google local pack remains usable when the Maps endpoint times out.
-  // Run different sources concurrently instead of paying for two Maps requests.
-  const packParams = new URLSearchParams({ engine: "google", q: target + " near " + (place.replace(/,\s*/g, " ") || `${origin.lat},${origin.lon}`), hl: "en" });
+  const packParams = new URLSearchParams({ engine: "google", q: (candidates[0] || target) + " near " + (place.replace(/,\s*/g, " ") || `${origin.lat},${origin.lon}`), hl: "en" });
   const code = countryCode(searchLocation(location, coordinates));
   if (code) packParams.set("gl", code.toLowerCase());
   if (typeof key === "string") packParams.set("api_key", key);
-  const attempts = [packParams, params];
-  const [settled, openStreetMapPlaces] = await Promise.all([
-    Promise.allSettled(attempts.map((attempt, index) => searchProvider(attempt, key, index === 0 ? 5000 : 4000))),
+  // Search for branches of merchants that actually returned product offers.
+  // A product-category Maps search regularly omits chains that sell the item.
+  const attempts = [packParams, ...(candidates.length ? candidates.map(mapsParams) : [mapsParams(target)])];
+  const quotaKey = typeof key === "string" ? key : key?.apiKey || key;
+  const [settled, openStreetMapPlaces, merchantPlaces] = await Promise.all([
+    Date.now() < (mapsQuotaBlockedUntil.get(quotaKey) ?? 0) ? Promise.resolve([]) : Promise.allSettled(attempts.map(attempt => searchProvider(attempt, key, attempt.get("engine") === "google_maps" ? 7000 : 4000))),
     (async () => { origin ??= await namedLocationCoordinates(location); return osmStores(query, location, origin); })().catch(() => []),
+    (async () => photonStores(candidates, origin ?? await namedLocationCoordinates(location)))().catch(() => []),
   ]);
+  if (settled.length && settled.every(result => result.status === "rejected" && result.reason?.status === 429)) mapsQuotaBlockedUntil.set(quotaKey, Date.now() + 3600000);
   let places = [];
   for (let index = 0; index < attempts.length; index++) {
     const result = settled[index];
@@ -695,8 +737,10 @@ async function mapsSearch(query, location, key, coordinates) {
     places.push(...local);
   }
   const mappedCount = places.length;
-  places.push(...openStreetMapPlaces);
-  if (!places.length && settled.every(result => result.status === "rejected")) throw settled[0].reason;
+  // Merchant-specific branches must be considered before the generic store cap.
+  places.push(...merchantPlaces, ...openStreetMapPlaces);
+  console.info("merchant_branch_lookup", { candidates, sources: settled.map((result, index) => ({ engine: attempts[index].get("engine"), count: result.status === "fulfilled" ? localRows(result.value).length : 0, status: result.status === "fulfilled" ? "ok" : result.reason?.status || result.reason?.name || "error" })), osm: openStreetMapPlaces.length, photon: merchantPlaces.length });
+  if (!places.length && settled.length && settled.every(result => result.status === "rejected")) throw settled[0].reason;
   const seen = new Set();
   return places.map((place, index) => ({ place, index, score: relevance(place, query, origin) }))
     .sort((a, b) => Number(b.index < mappedCount) - Number(a.index < mappedCount) || a.index - b.index)
@@ -772,8 +816,10 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
   let settled;
   if (scope === "all") {
     const pagesJob = finishBefore(() => localProductSearch(query, productLocation, key, [], facetDeadline), facetDeadline, []);
-    const shoppingJob = finishBefore(() => shoppingSearch(query, productLocation, key, pagesJob), facetDeadline, []);
-    const mapsJob = mapsSearch(query, location, key, coordinates);
+    let publishMerchants;
+    const merchantCandidates = new Promise(resolve => { publishMerchants = resolve; });
+    const shoppingJob = finishBefore(() => shoppingSearch(query, productLocation, key, pagesJob, publishMerchants), facetDeadline, []).finally(() => publishMerchants([]));
+    const mapsJob = finishBefore(async () => mapsSearch(query, location, key, coordinates, await merchantCandidates), facetDeadline);
     const localJob = (async () => {
       const maps = await Promise.resolve(mapsJob).then(value => ({ status: "fulfilled", value }), () => ({ status: "rejected" }));
       if (maps.status !== "fulfilled" || !maps.value.length) return [];

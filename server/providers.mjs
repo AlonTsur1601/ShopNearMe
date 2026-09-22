@@ -16,6 +16,7 @@ export async function fetchJson(url, options = {}, timeoutMs = 10000) {
         if (!response.ok || data.error) {
           const error = new Error(data.error || "Provider returned " + response.status);
           error.status = response.status;
+          if (isSearch && response.status === 429) error.code = /run out|exhaust|no searches|quota/i.test(error.message) ? "quota_exhausted" : "rate_limited";
           throw error;
         }
         if (key && [data.shopping_results, data.local_results, data.organic_results, data.product_results?.stores].some(items => items?.length)) {
@@ -25,7 +26,7 @@ export async function fetchJson(url, options = {}, timeoutMs = 10000) {
         return data;
       } catch (error) {
         const temporary = error.name === "AbortError" || [408, 429, 500, 502, 503, 504].includes(error.status) || /fetch failed|network|temporar|timeout/i.test(error.message);
-        if (!isSearch || attempt || !temporary || /quota|credits|run out|invalid api|unauthoriz/i.test(error.message)) throw error;
+        if (!isSearch || attempt || !temporary || error.status === 429 || /quota|credits|run out|invalid api|unauthoriz/i.test(error.message)) throw error;
       } finally { clearTimeout(timer); }
     }
   })();

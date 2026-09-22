@@ -114,8 +114,37 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("order");
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(7);
-    expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+test+local+merge+stores+near+Tel+Aviv");
+    expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=Online+Shop+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
+  });
+
+  it("finds a nearby branch by the product merchant even when its store category is unrelated", async () => {
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      const request = new URL(String(url)), engine = request.searchParams.get("engine");
+      if (request.hostname === "shop.super-pharm.co.il") return new Response('<script type="application/ld+json">{"@type":"Product","name":"Motorcycle helmet","image":"/helmet.jpg","offers":{"price":149,"priceCurrency":"ILS"}}</script>', { headers: { "Content-Type": "text/html" } });
+      if (engine === "google_shopping") return Response.json({ shopping_results: [{ title: "Motorcycle helmet", source: "Super-Pharm", extracted_price: 149, price: "₪149", product_link: "https://shop.super-pharm.co.il/product/helmet", thumbnail: "https://images.example/helmet.jpg" }] });
+      if (engine === "google_maps") return Response.json({ local_results: request.searchParams.get("q")?.startsWith("Super-Pharm near") ? [{ title: "Super-Pharm Kiryat Ono", type: "Pharmacy", website: "https://www.super-pharm.co.il/", gps_coordinates: { latitude: 32.061, longitude: 34.856 } }] : [] });
+      return Response.json({ organic_results: [] });
+    }));
+    const result = await searchCatalog("Motorcycle helmet", "Kiryat Ono, Israel", "merchant-branch-fixture", { lat: 32.06, lon: 34.855 });
+    expect(result.offers.find(offer => offer.category === "local")).toMatchObject({ merchant: "Super-Pharm", itemPrice: 149, imageUrl: "https://shop.super-pharm.co.il/helmet.jpg", destinationUrl: "https://shop.super-pharm.co.il/product/helmet", pickupVerified: false, linkLabel: "View product" });
+    expect(result.offers.some(offer => offer.potentialStore || offer.linkLabel === "View store")).toBe(false);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(String(url)).searchParams.get("engine") === "google_maps")).toHaveLength(1);
+  });
+
+  it("keeps a priced nearby product when Maps quota is exhausted but a named branch is found", async () => {
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      const request = new URL(String(url)), engine = request.searchParams.get("engine");
+      if (request.hostname === "ksp.co.il") return new Response('<script type="application/ld+json">{"@type":"Product","name":"Bedside lamp","image":"/lamp.jpg","offers":{"price":99,"priceCurrency":"ILS"}}</script>', { headers: { "Content-Type": "text/html" } });
+      if (request.hostname === "photon.komoot.io") return Response.json({ features: [{ properties: { name: "KSP", osm_type: "N", osm_id: 123, osm_value: "electronics", city: "Kiryat Ono" }, geometry: { coordinates: [34.856, 32.059] } }] });
+      if (request.hostname === "overpass-api.de") return Response.json({ elements: Array.from({ length: 80 }, (_, index) => ({ type: "node", id: index + 1000, lat: 32.059, lon: 34.856, tags: { name: `Unrelated store ${index}`, shop: "retail" } })) });
+      if (engine === "google_shopping") return Response.json({ shopping_results: [{ title: "Bedside lamp", source: "KSP", extracted_price: 99, price: "₪99", product_link: "https://ksp.co.il/web/item/123", thumbnail: "https://images.example/lamp.jpg" }] });
+      if (engine === "google_maps" || (engine === "google" && request.searchParams.get("q")?.startsWith("KSP near"))) return Response.json({ error: "Your account has run out of searches." }, { status: 429 });
+      return Response.json({ organic_results: [] });
+    }));
+    const result = await searchCatalog("Bedside lamp", "Kiryat Ono, Israel", "photon-quota-fixture", { lat: 32.059, lon: 34.856 });
+    expect(result.offers.find(offer => offer.category === "local")).toMatchObject({ merchant: "KSP", itemPrice: 99, imageUrl: "https://ksp.co.il/lamp.jpg", destinationUrl: "https://ksp.co.il/web/item/123" });
+    expect(result.warnings).toEqual([]);
   });
 
   it("builds useful dining-table facets and concise retailer names", async () => {
