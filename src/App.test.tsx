@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { searchProducts, searchProductScope } from "./services/productSearch";
+import { searchProducts } from "./services/productSearch";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { clockShowcase } from "./data/showcase";
@@ -15,16 +15,16 @@ vi.mock("./services/productSearch", () => ({
 }));
 
 describe("App", () => {
-  it("resumes an accepted search automatically instead of showing no matching offers", async () => {
-    vi.mocked(searchProducts).mockResolvedValueOnce({ query: "clock", offers: [], facets: [], resultCount: 0, source: "live", pendingSearch: { continuation: "signed-job", nextPollAt: Date.now() } });
-    vi.mocked(searchProductScope).mockResolvedValueOnce({ ...clockShowcase, source: "live" });
+  it("keeps offers hidden until the complete search resolves", async () => {
+    let finish!: (value: typeof clockShowcase) => void;
+    vi.mocked(searchProducts).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     render(<App />);
     fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "clock" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText(/Additional products are still being collected/)).toBeVisible();
+    await waitFor(() => expect(finish).toBeDefined());
     expect(screen.queryByText("No matching offers")).not.toBeInTheDocument();
-    await waitFor(() => expect(searchProductScope).toHaveBeenCalledWith("clock", expect.any(String), "all", expect.any(AbortSignal), undefined, "signed-job"), { timeout: 2500 });
-    await waitFor(() => expect(screen.queryByText(/Additional products are still being collected/)).not.toBeInTheDocument());
+    expect(screen.queryByRole("textbox", { name: "Minimum price" })).not.toBeInTheDocument();
+    await act(async () => finish(clockShowcase));
     expect(screen.getByRole("textbox", { name: "Minimum price" })).toBeVisible();
   });
 
@@ -42,7 +42,9 @@ describe("App", () => {
     render(<App />);
     fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "hooks" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText(/Location permission is blocked/)).toBeVisible();
+    await screen.findByText(/Location permission is blocked/);
+    fireEvent.click(screen.getByText("Search details"));
+    expect(screen.getByText(/Location permission is blocked/)).toBeVisible();
     expect(screen.queryByText("Choose a location to include nearby products.")).not.toBeInTheDocument();
     expect(screen.getByText("Provider blocked")).toBeVisible();
   });
@@ -64,6 +66,7 @@ describe("App", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "battery" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByRole("heading", { name: "Search incomplete" })).toBeVisible();
+    fireEvent.click(screen.getByText("Some stores could not be searched — details"));
     expect(screen.getByText("Provider blocked")).toBeVisible();
     expect(screen.queryByText("Clear a filter or try a broader search.")).not.toBeInTheDocument();
   });

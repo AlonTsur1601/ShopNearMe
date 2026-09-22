@@ -1,4 +1,5 @@
 const translations = [
+  [/מנור(?:ות|ת|ה)\s+(?:שולחן|לילה|ליד המיטה)/gu, "table lamp"], [/מנורות|מנורה|מנורת/gu, "lamp"],
   [/לעכברים|לעכבר/gu, "for mouse"], [/עכברים|עכבר/gu, "mouse"], [/מטענים|מטען/gu, "charger"],
   [/סוללות|סוללה/gu, "battery"], [/נטענות|נטענים|נטענת|נטען/gu, "rechargeable"],
   [/אוזניות/gu, "headphones"], [/אלחוטיות|אלחוטיים|אלחוטי/gu, "wireless"], [/חוטיות|חוטיים|חוטי/gu, "wired"],
@@ -9,7 +10,7 @@ const translations = [
 export function productWords(value) {
   let text = String(value ?? "").toLowerCase();
   for (const [pattern, word] of translations) text = text.replace(pattern, word);
-  return text.replace(/\bbatteries\b/g, "battery").replace(/\bnotebooks?\b/g, "laptop").replace(/\bdocking station\b/g, "dock");
+  return text.replace(/\b(?:bedside|desk) lamps?\b/g, "table lamp").replace(/\bbatteries\b/g, "battery").replace(/\bnotebooks?\b/g, "laptop").replace(/\bdocking station\b/g, "dock");
 }
 function normalized(value) { return productWords(value).replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }
 function models(value) {

@@ -68,7 +68,7 @@ it("uses only one backup for empty successful responses", async () => {
 it("integrates real merchant evidence into local and online offers without map placeholder rows", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url, init) => {
     if (String(url).includes("api.brightdata.com")) return Response.json(organic(["https://local.example/product/lamp", "https://online.example/product/lamp"]));
-    if (String(url).includes("overpass-api.de")) return Response.json({ elements: [{ type: "node", id: 1, lat: 32.06, lon: 34.85, tags: { name: "Local", shop: "houseware", website: "https://local.example" } }] });
+    if (String(url).includes("overpass-api.de")) return Response.json({ elements: [{ type: "node", id: 1, lat: 32.06, lon: 34.85, tags: { name: "Local", shop: "pharmacy", website: "https://local.example" } }] });
     const host = new URL(url).hostname;
     if (host === "local.example" || host === "online.example") return new Response(`<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Desk lamp", image: `https://${host}/lamp.jpg`, offers: { price: 39, priceCurrency: "ILS", availability: "https://schema.org/InStock" } })}</script>`, { headers: { "content-type": "text/html" } });
     throw new Error("Unexpected request to " + new URL(url).hostname + " " + (init?.method || "GET"));
@@ -77,6 +77,9 @@ it("integrates real merchant evidence into local and online offers without map p
   expect(result.offers.filter(item => item.category === "order")).toHaveLength(2);
   const local = result.offers.filter(item => item.category === "local");
   expect(local).toHaveLength(1);
+  const osmRequest = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("overpass-api.de"));
+  expect(new URL(osmRequest[0]).searchParams.get("data")).toContain('["shop"]');
+  expect(new URL(osmRequest[0]).searchParams.get("data")).not.toContain('["shop"~');
   expect(local[0]).toMatchObject({ merchant: "local.example", itemPrice: 39, imageUrl: "https://local.example/lamp.jpg", destinationUrl: "https://local.example/product/lamp", pickupVerified: false });
   expect(result.offers.every(item => !item.potentialStore)).toBe(true);
   expect(result.sourceStatus.every(source => source.status === "completed")).toBe(true);

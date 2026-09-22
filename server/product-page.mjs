@@ -149,6 +149,7 @@ export function extractProductData(html, baseUrl = "") {
     brand: typeof product.brand === "string" ? product.brand : product.brand?.name,
     specifications: [...extractNamedSpecifications(scope + dom.specificationsHtml, product), ...dom.namedProperties],
     specificationText: [product.model, product.mpn, product.description, dom.description, ...[product.additionalProperty ?? []].flat().map((property) => `${property.name ?? ""} ${property.value ?? ""} ${property.unitText ?? ""}`)].filter(Boolean).join(" ").replace(/<[^>]*>/g, " ").slice(0, 18000),
+    categoryText: [product.category, dom.categoryText].filter(Boolean).join(" "),
     imageUrl: imageUrls[0] ?? "",
     imageUrls,
     destinationUrl: baseUrl,

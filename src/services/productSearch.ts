@@ -40,10 +40,30 @@ export async function searchProductScope(query: string, location: string, scope:
   return { ...result, source: "live" };
 }
 
+function waitForProvider(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const abort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, milliseconds);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
 export async function searchProducts(query: string, location: string, signal?: AbortSignal, place?: LocationPlace): Promise<ShowcaseSearch> {
   const normalized = query.trim();
-  try { return await searchProductScope(normalized, location, "all", signal, place); }
-  catch (error) { if (signal?.aborted && signal.reason?.name !== "TimeoutError") throw error; return genericFallback(normalized, signal?.reason?.name === "TimeoutError" ? "The search time limit was reached. Please try again." : error instanceof Error ? error.message : undefined); }
+  const budget = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(300000)]);
+  let result: ShowcaseSearch | undefined;
+  try {
+    do {
+      if (result?.pendingSearch) await waitForProvider(Math.max(1000, result.pendingSearch.nextPollAt - Date.now()), budget);
+      result = await searchProductScope(normalized, location, "all", AbortSignal.any([budget, AbortSignal.timeout(20000)]), place, result?.pendingSearch?.continuation);
+    } while (result.pendingSearch);
+    return result;
+  } catch (error) {
+    if (signal?.aborted && signal.reason?.name !== "TimeoutError") throw error;
+    const warning = budget.aborted || (error instanceof DOMException && error.name === "TimeoutError") ? "Some stores did not finish searching in time. Results are incomplete." : error instanceof Error ? error.message : "Search unavailable.";
+    return result ? { ...result, pendingSearch: undefined, partialFailure: true, warnings: [...(result.warnings ?? []), warning] } : genericFallback(normalized, warning);
+  }
 }
 
 export { genericFallback };

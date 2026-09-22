@@ -9,6 +9,12 @@ function providerError(code = "search_unavailable") {
   return Object.assign(new Error("Octoparse request could not be completed"), { code });
 }
 
+function failureCode(message) {
+  if (/task_quantity_limit_reached|task quantity limit reached/i.test(message)) return "task_limit_reached";
+  if (/quota|allowance|insufficient.*(?:credit|record)|credit.*exhaust/i.test(message)) return "quota_exhausted";
+  return "search_unavailable";
+}
+
 export function decodeRpc(body, id) {
   const messages = body.trim().startsWith("{") ? [JSON.parse(body)] : body.split(/\r?\n\r?\n/).flatMap(event => {
     const data = event.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
@@ -17,11 +23,11 @@ export function decodeRpc(body, id) {
   const message = messages.find(item => item.id === id);
   if (!message || message.error || message.result?.isError) {
     const failure = JSON.stringify(message?.error ?? message?.result ?? {});
-    throw providerError(/quota|allowance|insufficient.*(?:credit|record)|credit.*exhaust/i.test(failure) ? "quota_exhausted" : "search_unavailable");
+    throw providerError(failureCode(failure));
   }
   const result = message.result;
   const value = result?.structuredContent ?? (result?.content?.find(item => item.type === "text") ? JSON.parse(result.content.find(item => item.type === "text").text) : result);
-  if (value?.success === false) throw providerError(/quota|allowance|insufficient.*(?:credit|record)|credit.*exhaust/i.test(JSON.stringify(value)) ? "quota_exhausted" : "search_unavailable");
+  if (value?.success === false) throw providerError(failureCode(JSON.stringify(value)));
   return value;
 }
 
@@ -63,7 +69,7 @@ export async function startOctoparseTask(templateName, parameters, taskName, api
   });
   const body = await response.json();
   const data = body.data;
-  if (!response.ok || !data?.success || !data.taskId || !data.lotNo) throw providerError(/quota|allowance|insufficient/i.test(`${data?.error} ${data?.message}`) ? "quota_exhausted" : "search_unavailable");
+  if (!response.ok || !data?.success || !data.taskId || !data.lotNo) throw providerError(failureCode(`${data?.error} ${data?.message}`));
   // Preserve the lot as a string: it exceeds JavaScript's safe integer range.
   if (typeof data.lotNo !== "string" || !/^[1-9]\d{0,18}$/.test(data.lotNo)) throw providerError();
   return { taskId: data.taskId, lotNo: data.lotNo, status: "pending", nextPollAt: Date.now() + Math.max(1, data.retryGuidance?.waitSecondsMin ?? 60) * 1000 };

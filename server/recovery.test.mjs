@@ -145,15 +145,15 @@ describe("bounded source recovery", () => {
     expect(isRelevantProduct("GPC70 motherboard for HP Pavilion Gaming Laptop", "Gaming Laptop")).toBe(false);
     expect(isRelevantProduct("HP Victus 16 Gaming Laptop 16GB RAM", "Gaming Laptop")).toBe(true);
   });
-  it("tries a related local-store category when the primary Maps search is empty", async () => {
+  it("searches for the requested product without substituting a store category", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const params = new URL(url).searchParams;
       if (params.get("engine") !== "google_maps") return { ok: true, json: async () => ({}) };
-      return { ok: true, json: async () => ({ local_results: params.get("q")?.startsWith("watch stores") ? [{ place_id: "watch-shop", title: "Watch and Clock Shop", type: "Watch store", gps_coordinates: { latitude: 32.08, longitude: 34.78 } }] : [] }) };
+      return { ok: true, json: async () => ({ local_results: params.get("q")?.startsWith("clock empty maps fixture stores") ? [{ place_id: "watch-shop", title: "Watch and Clock Shop", type: "Watch store", gps_coordinates: { latitude: 32.08, longitude: 34.78 } }] : [] }) };
     }));
     const r = await searchCatalog("clock empty maps fixture", "Tel Aviv, Israel", "empty-maps-fixture", { lat: 32.08, lon: 34.78 }, undefined, "local");
     expect(r.offers).toEqual([]);
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).searchParams.get("engine") === "google_maps")).toHaveLength(1);
-    expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(url).searchParams.get("q")?.startsWith("watch stores"))).toBe(true);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(url).searchParams.get("q")?.startsWith("clock empty maps fixture stores"))).toBe(true);
   });
 });

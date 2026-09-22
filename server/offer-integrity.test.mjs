@@ -169,7 +169,7 @@ it("returns only product rows with a price, image, and direct product link", asy
     ] }) };
     return { ok: true, json: async () => ({ organic_results: [] }) };
   }));
-  const result = await searchCatalog("desk lamp product contract fixture", "Israel", "product-contract-fixture", undefined, undefined, "online");
+  const result = await searchCatalog("desk lamp", "Israel", "product-contract-fixture", undefined, undefined, "online");
   expect(result.offers).toHaveLength(1);
   expect(result.offers[0]).toMatchObject({ merchant: "Complete", itemPrice: 99, imageUrl: "https://img.example/lamp.jpg", destinationUrl: "https://complete.example/product/lamp", linkLabel: "View product" });
   expect(result.offers.every(offer => !offer.potentialStore && offer.itemPrice != null && offer.imageUrl && offer.linkLabel === "View product")).toBe(true);
@@ -189,20 +189,19 @@ it("shares manufacturer-part specifications across merchants, not different part
   expect(shareProductSpecs([{ ...donor, mpn: "138003" }, { ...receiver, mpn: "138003" }])[1].attributes).toEqual({});
 });
 
-it("recovers a failed Maps query using a related store type and preserves coordinates", async () => {
+it("keeps a matching pharmacy product and searches Maps by product with coordinates", async () => {
   const mapQueries = [];
   vi.stubGlobal("fetch", vi.fn(async (url, init) => {
     if (String(url).startsWith("https://recovered.co.il/")) return new Response('<script type="application/ld+json">{"@type":"Product","name":"USB-C charger","image":"/charger.jpg","offers":{"price":49,"priceCurrency":"ILS"}}</script>', { headers: { "Content-Type": "text/html" } });
     const target = new URL(JSON.parse(init.body).url);
     if (target.pathname.startsWith("/maps/")) {
       mapQueries.push(decodeURIComponent(target.pathname));
-      if (decodeURIComponent(target.pathname).includes("cell phone")) return new Response("", { status: 503 });
-      return new Response(JSON.stringify({ organic: [{ title: "Recovered", link: "https://recovered.co.il/", category: [{ id: "electronics_store" }], latitude: 32.062, longitude: 34.855 }] }));
+      return new Response(JSON.stringify({ organic: [{ title: "Recovered", link: "https://recovered.co.il/", category: [{ id: "pharmacy" }], latitude: 32.062, longitude: 34.855 }] }));
     }
     return new Response(JSON.stringify({ organic: [{ title: "USB-C charger", link: "https://recovered.co.il/product/charger" }] }));
   }));
   const result = await searchCatalog("USB-C charger", "Kiryat Ono, Israel", { apiKey: "maps-recovery-fixture", zone: "zone" }, { lat: 32.062, lon: 34.855 });
-  expect(mapQueries.some(query => query.includes("mobile phone stores") && query.includes("@32.062,34.855"))).toBe(true);
+  expect(mapQueries.some(query => query.includes("USB-C charger stores") && query.includes("@32.062,34.855"))).toBe(true);
   expect(result.offers.find(offer => offer.category === "local")).toMatchObject({ destinationUrl: "https://recovered.co.il/product/charger", itemPrice: 49, imageUrl: "https://recovered.co.il/charger.jpg" });
   expect(result.warnings).toEqual([]);
 });

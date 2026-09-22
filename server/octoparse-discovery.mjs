@@ -65,8 +65,9 @@ export async function readRetailRows(rows, relevant, query, readPage = enrichPro
       return (await Promise.allSettled(children.slice(0, 4).map(child => inspect(child.link, false)))).flatMap(result => result.status === "fulfilled" ? result.value : []);
     }
     const destination = httpUrl(page.destinationUrl || link);
+    const categoryPath = destination ? decodeURI(new URL(destination).pathname).replace(/[-_/]/g, " ") : "";
     if (!destination || isSearchResultsUrl(destination) || !page.isProduct || page.isCatalog || page.unavailable || page.availability === "Out of stock"
-      || !relevant(page.title || "", query) || !Number.isFinite(page.price) || page.price <= 0 || !page.imageUrl || !page.currency) return [];
+      || !relevant(`${page.title || ""} ${page.categoryText || ""} ${categoryPath}`, query) || !Number.isFinite(page.price) || page.price <= 0 || !page.imageUrl || !page.currency) return [];
     return [{ link: destination, title: page.title, id: digest(destination).slice(0, 16), page }];
   };
   // Bound concurrent merchant reads; a burst across catalogs and their children

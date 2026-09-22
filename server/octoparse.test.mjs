@@ -111,3 +111,16 @@ it("does not use the map viewport as a store's address", () => {
 it("classifies allowance errors inside structured tool results", () => {
   expect(() => decodeRpc(JSON.stringify({ id: 3, result: { structuredContent: { success: false, message: "Weekly export quota exhausted" } } }), 3)).toThrow(expect.objectContaining({ code: "quota_exhausted" }));
 });
+
+it("identifies the saved-task ceiling without retrying task creation", async () => {
+  const fetcher = vi.fn(async () => Response.json({ data: { success: false, error: "task_quantity_limit_reached", message: "Delete unused tasks; do not retry executeTask." } }));
+  await expect(startOctoparseTask("google-search-scraper", {}, "test task", "test-key", 1, fetcher)).rejects.toMatchObject({ code: "task_limit_reached" });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("uses a merchant's own category path when a product title contains only its model", async () => {
+  const product = { isProduct: true, title: "Aspen Black LED", price: 199.9, currency: "ILS", imageUrl: "https://lighting.example/lamp.jpg" };
+  const results = await readRetailRows([{ Detail_URL: "https://lighting.example/table-lamp/123" }], text => text.includes("table lamp"), "table lamp", async () => product);
+  expect(results).toHaveLength(1);
+  expect(results[0].title).toBe("Aspen Black LED");
+});

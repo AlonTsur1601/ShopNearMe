@@ -114,7 +114,7 @@ describe("searchCatalog", () => {
     expect(result.offers.some((offer) => offer.category === "order")).toBe(true);
     expect(result.offers[0].category).toBe("order");
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => new URL(url).hostname === "serpapi.com")).toHaveLength(7);
-    expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=watch+stores+near+Tel+Aviv");
+    expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("q=clock+test+local+merge+stores+near+Tel+Aviv");
     expect(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("engine=google_maps"))?.[0])).toContain("ll=%4032.08%2C34.78%2C14z");
   });
 
@@ -325,6 +325,7 @@ describe("searchCatalog", () => {
     expect(offer.attributes.storage).toBeUndefined();
     expect(offer).toMatchObject({ category: "secondHand", merchant: "eBay", itemPrice: 24, shippingPrice: 6.5, importTaxPrice: 3.2, totalPrice: 33.7, priceVerified: true, attributes: { "spec:power_source": ["Battery"] } });
     const ebayCall = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("item_summary/search"));
-    expect(String(ebayCall?.[0])).toContain("conditions%3A%7BNEW%7CUSED%7D%2CdeliveryCountry%3AIL");
+    expect(new URL(String(ebayCall?.[0])).searchParams.get("filter")).toBe("deliveryCountry:IL,conditions:{NEW}");
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("conditions%3A%7BUSED%7D"))).toBe(true);
   });
 });

@@ -85,22 +85,6 @@ const productRules = [
   { match: /jacket|shirt|dress|pants|jeans|clothing/i, rules: [{ id: "clothingSize", label: "Size", values: ["XXS", "XS", "Small", "Medium", "Large", "XL", "XXL", "3XL"] }, { id: "fit", label: "Fit", values: ["Slim fit", "Regular fit", "Relaxed fit", "Oversized"] }, { id: "material", label: "Material", values: materials }] },
   { match: /(?:office|coffee|side|console)\s+table|chair|desk|sofa|couch/i, rules: [{ id: "material", label: "Material", values: materials }, { id: "shape", label: "Shape", values: ["Rectangular", "Round", "Oval", "Square"] }] },
 ];
-const storeRules = [
-  [/tent|camping|sleeping bag|backpack/i, ["outdoor", "camping", "sporting goods", "department"]],
-  [/clock|watch/i, ["clock", "watch", "home goods", "furniture", "antique", "gift", "department", "electronics"]],
-  [/headphones?|earbuds?|speaker|audio/i, ["audio", "electronics", "computer", "department", "appliance", "music"]],
-  [/shoes?|sneakers?|boots?|sandals?/i, ["shoe", "sporting goods", "department", "clothing", "outdoor"]],
-  [/coffee|espresso|kettle|toaster|blender/i, ["appliance", "kitchen", "home goods", "department", "coffee"]],
-  [/laptop|computer|keyboard|mouse|monitor|printer/i, ["computer", "gaming", "electronics", "office supply", "department"]],
-  [/(?:power supply|\bpsu\b|graphics card|motherboard)/i, ["computer", "electronics", "hardware", "department"]],
-  [/phone|smartphone|tablet|charger/i, ["cell phone", "mobile phone", "electronics", "computer", "department"]],
-  [/camera|lens|tripod/i, ["camera", "photography", "electronics", "department"]],
-  [/vacuum|washer|dryer|refrigerator|microwave/i, ["appliance", "home goods", "department", "electronics"]],
-  [/chair|desk|table|sofa|couch|bed|mattress/i, ["furniture", "office furniture", "home goods", "department"]],
-  [/book|novel|textbook/i, ["book", "stationery", "department"]], [/toy|lego|doll|game/i, ["toy", "game", "hobby", "department"]], [/shirt|jacket|dress|jeans|clothing|pants/i, ["clothing", "fashion", "department"]],
-];
-const nonRetail = /repair service|museum|tourist attraction|consultant|contractor|school|university|doctor|clinic|hospital|hotel|lawyer|accountant|real estate|software company|manufacturer/i;
-const generalRetail = /store|shop|retailer|market|mall|department|supermarket|pharmacy|hardware|supply/i;
 const excludedHosts = /(?:amazon|ebay|etsy|facebook|pinterest|aliexpress|temu|wikipedia)\./i;
 const comparisonHosts = /(^|\.)(?:zap\.co\.il|wisebuy\.co\.il|pricez\.co\.il|pricerunner\.[a-z.]+|pricespy\.[a-z.]+|idealo\.[a-z.]+|camelcamelcamel\.com|keepa\.com|pcpartpicker\.com)$/i;
 const countries = new Map([["israel", "IL"], ["united states", "US"], ["usa", "US"], ["canada", "CA"], ["united kingdom", "GB"], ["uk", "GB"], ["germany", "DE"], ["france", "FR"], ["italy", "IT"], ["spain", "ES"], ["australia", "AU"]]);
@@ -209,7 +193,7 @@ function used(item) { return /used|pre.?owned|refurb|renewed|open box|vintage|se
 function local(item) { return /(?:store|curbside|local)\s+pickup|pick\s*up\s+(?:today|in store)|in-store pickup/i.test(`${item.delivery ?? ""} ${(item.extensions ?? []).join(" ")}`); }
 function validCoordinates(value) { const lat = Number(value?.lat), lon = Number(value?.lon); return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null; }
 function distanceMiles(origin, point) { const destination = validCoordinates(point); if (!origin || !destination) return undefined; const rad = (value) => value * Math.PI / 180, dLat = rad(destination.lat - origin.lat), dLon = rad(destination.lon - origin.lon); const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(origin.lat)) * Math.cos(rad(destination.lat)) * Math.sin(dLon / 2) ** 2; return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); }
-function relevance(place, query, origin) { const type = String(place.type ?? "").toLowerCase(), text = `${place.title ?? ""} ${type}`.toLowerCase(), distance = distanceMiles(origin, place.gps_coordinates ? { lat: place.gps_coordinates.latitude, lon: place.gps_coordinates.longitude } : null); if ((distance !== undefined && distance > 50) || (nonRetail.test(type) && !generalRetail.test(type))) return -Infinity; let score = generalRetail.test(type) ? 2 : 0; const rule = storeRules.find(([match]) => match.test(query)); if (rule) { const matches = rule[1].filter((value) => text.includes(value)).length; if (!matches) return -Infinity; score += matches * 4; } return score + (place.website ? 1 : 0) + (distance === undefined ? 0 : Math.max(0, 2 - distance / 10)); }
+function relevance(place, _query, origin) { const distance = distanceMiles(origin, place.gps_coordinates ? { lat: place.gps_coordinates.latitude, lon: place.gps_coordinates.longitude } : null); if (distance !== undefined && distance > 50) return -Infinity; return 2 + (place.website ? 1 : 0) + (distance === undefined ? 0 : Math.max(0, 2 - distance / 10)); }
 function shippingFor(item, itemPrice) { const text = `${item.delivery ?? ""} ${(item.extensions ?? []).join(" ")}`; if (/free (delivery|shipping)/i.test(text)) return { shippingPrice: 0, totalPrice: itemPrice, shippingEstimated: false }; const match = text.match(/(?:shipping|delivery)[^$]*\$([0-9]+(?:\.[0-9]{1,2})?)/i); const shippingPrice = match ? number(match[1]) : null; return { shippingPrice, totalPrice: itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice, shippingEstimated: shippingPrice !== null }; }
 function countryCode(location) { const text = String(location ?? "").toLowerCase(); for (const [name, code] of countries) if (text.includes(name)) return code; return null; }
 function searchLocation(location, coordinates) {
@@ -221,16 +205,30 @@ function searchLocation(location, coordinates) {
 function isLocalResult(url, item, location) { const code = countryCode(location); if (!code || code === "US") return true; const tld = countryTlds.get(code), text = `${item.title ?? ""} ${item.snippet ?? ""} ${item.price ?? ""} ${item.displayed_link ?? ""}`; if (tld && url.hostname.endsWith(tld)) return true; if (code === "IL") return /[\u0590-\u05ff]|₪|\bILS\b|\bIsrael\b/i.test(text); return String(location).toLowerCase().split(/[,\s]+/).filter((part) => part.length > 3).some((part) => text.toLowerCase().includes(part)); }
 
 async function ebayAccess(credentials) { if (!credentials?.clientId || !credentials?.clientSecret) return null; if (ebayToken?.expiresAt > Date.now() + 60000) return ebayToken.value; const basic = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64"); const data = await fetchJson("https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "https://api.ebay.com/oauth/api_scope" }) }, 2500); ebayToken = { value: data.access_token, expiresAt: Date.now() + (number(data.expires_in) ?? 7200) * 1000 }; return data.access_token; }
+const ebayCache = new Map();
 async function ebaySearch(query, location, credentials) {
+  const key = JSON.stringify([query, location, credentials?.clientId]);
+  const cached = ebayCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.value;
+  const value = fetchEbayOffers(query, location, credentials).catch(error => { ebayCache.delete(key); throw error; });
+  ebayCache.set(key, { value, expires: Date.now() + 900000 });
+  if (ebayCache.size > 100) ebayCache.delete(ebayCache.keys().next().value);
+  return value;
+}
+async function fetchEbayOffers(query, location, credentials) {
   const token = await ebayAccess(credentials);
   if (!token) return [];
-  const country = countryCode(location), filters = ["conditions:{NEW|USED}"];
+  const country = countryCode(location), filters = [];
   if (country) filters.push(`deliveryCountry:${country}`);
-  const params = new URLSearchParams({ q: query, limit: "15", filter: filters.join(",") });
+
   const headers = { Authorization: `Bearer ${token}`, "X-EBAY-C-MARKETPLACE-ID": "EBAY_US" };
   if (country) headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=country=${country}`;
-  const data = await fetchJson(`https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`, { headers }, 3500);
-  const items = (data.itemSummaries ?? []).filter((item) => isRelevantProduct(item.title, query));
+  const groups = await Promise.all(["NEW", "USED"].map(async searchCondition => {
+    const params = new URLSearchParams({ q: query, limit: "8", filter: [...filters, `conditions:{${searchCondition}}`].join(",") });
+    const data = await fetchJson(`https://api.ebay.com/buy/browse/v1/item_summary/search?${params}`, { headers }, 3500);
+    return (data.itemSummaries ?? []).map(item => ({ ...item, searchCondition }));
+  }));
+  const items = [...new Map(groups.flat().filter(item => isRelevantProduct(item.title, query)).map(item => [item.itemId, item])).values()];
   await mapConcurrent(items, 8, async item => {
     if (!item.itemId) return;
     try {
@@ -252,7 +250,7 @@ async function ebaySearch(query, location, credentials) {
     const itemPrice = number(price?.convertedFromCurrency === "USD" ? price.convertedFromValue : price?.value);
     const shippingPrice = number(shipping?.convertedFromCurrency === "USD" ? shipping.convertedFromValue : shipping?.value);
     const totalPrice = itemPrice !== null && shippingPrice !== null ? itemPrice + shippingPrice : itemPrice;
-    const condition = item.condition || "Used", merchant = "eBay", category = String(item.conditionId) === "1000" || /^new(?:\b|$)/i.test(condition) ? "order" : "secondHand";
+    const condition = item.condition || (item.searchCondition === "NEW" ? "New" : "Used"), merchant = "eBay", category = String(item.conditionId) === "1000" || /^new(?:\b|$)/i.test(condition) ? "order" : "secondHand";
     return { id: `ebay-${item.itemId ?? index}`, gtin: item.gtin, mpn: item.mpn, productBrand: item.productBrand, category, merchant, merchantLogoUrl: "/ebay.svg", title: item.title || "Pre-owned eBay listing", subtitle: [condition, item.itemLocation?.country].filter(Boolean).join(" · "), imageUrl: safeHttpUrl(item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl), rating: number(item.seller?.feedbackPercentage) ? Math.min(5, number(item.seller.feedbackPercentage) / 20) : 0, reviewCount: number(item.seller?.feedbackScore) ?? 0, itemPrice, shippingPrice, totalPrice, currency: price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD", ...costBreakdown({ itemPrice, shippingPrice, importTaxPrice: amountInCurrency(item.shippingOptions?.[0]?.importCharges ?? item.importCharges, price?.convertedFromCurrency === "USD" ? "USD" : price?.currency || "USD"), crossBorder: !!country && !!item.itemLocation?.country && item.itemLocation.country !== country }), priceVerified: totalPrice !== null, availability: "Available on eBay", condition, attributes: attributesFor(query, item.title || "", condition, merchant, item), attributeLabels: attributeLabelsFor(query, item.title || "", item), destinationUrl: safeHttpUrl(item.itemWebUrl), linkLabel: "View product" };
   }).filter((offer) => offer.destinationUrl);
 }
@@ -627,24 +625,11 @@ async function shoppingSearch(query, location, key, retailerPages) {
   }).filter(Boolean);
   return (await mapConcurrent(offers, 20, (offer, index) => index < 50 ? enrichOffer(offer, query) : offer)).filter(Boolean);
 }
-function osmShopTypes(query) {
-  const related = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
-  const words = related.join(" ");
-  return /computer|gaming|electronics|audio|music|office|mobile phone|cell phone/.test(words) ? ["computer", "electronics", "hifi", "music", "mobile_phone", "department_store"]
-    : /outdoor|camping|sporting goods|shoe/.test(words) ? ["outdoor", "sports", "shoes", "department_store"]
-    : /clothing|fashion/.test(words) ? ["clothes", "shoes", "department_store"]
-    : /furniture|home goods|appliance|kitchen/.test(words) ? ["furniture", "houseware", "appliance", "electronics", "department_store"]
-    : /book|stationery/.test(words) ? ["books", "stationery", "department_store"]
-    : /toy|game|hobby/.test(words) ? ["toys", "games", "hobby", "department_store"]
-    : /camera|photography/.test(words) ? ["photo", "electronics", "department_store"]
-    : /clock|watch|gift|antique/.test(words) ? ["watches", "jewelry", "gift", "antiques", "department_store"] : ["department_store", "general"];
-}
-
 async function osmStores(query, location, origin) {
   if (!origin) return [];
-  const types = osmShopTypes(query), cacheKey = `${origin.lat.toFixed(3)},${origin.lon.toFixed(3)}|${types.join("|")}`, cached = osmStoreCache.get(cacheKey);
+  const cacheKey = `${origin.lat.toFixed(3)},${origin.lon.toFixed(3)}|all-shops`, cached = osmStoreCache.get(cacheKey);
   if (cached && Date.now() - cached.at < 60 * 60 * 1000) return cached.value;
-  const queryText = `[out:json][timeout:12];(nwr(around:15000,${origin.lat},${origin.lon})["shop"~"^(${types.join("|")})$"];);out center tags 80;`;
+  const queryText = `[out:json][timeout:12];(nwr(around:15000,${origin.lat},${origin.lon})["shop"];);out center tags 80;`;
   const response = await fetchJson(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(queryText)}`, { headers: { "User-Agent": "ShopNearMe/0.1 (local retailer lookup)", Accept: "application/json" } }, 4000);
   const labels = { hifi: "audio", sports: "sporting goods", clothes: "clothing", houseware: "home goods", books: "book", toys: "toy", games: "game", photo: "photography", mobile_phone: "mobile phone", department_store: "department" };
   const places = (response.elements ?? []).filter(element => element.tags?.name).map(element => {
@@ -678,9 +663,7 @@ async function namedLocationCoordinates(location) {
 async function mapsSearch(query, location, key, coordinates) {
   let origin = validCoordinates(coordinates);
   if (!origin && (!location || location === "Current location")) return [];
-  const storeTypes = storeRules.find(([match]) => match.test(query))?.[1] ?? [];
-  const storeType = storeTypes[0];
-  const target = storeType ? storeType + " stores" : "where to buy " + query;
+  const target = query + " stores";
   const place = location && location !== "Current location" ? providerLocation(location) : "";
   const params = new URLSearchParams({ engine: "google_maps", type: "search", q: target + (place ? " near " + place : " near me"), api_key: key, hl: "en" });
   if (origin) params.set("ll", "@" + origin.lat + "," + origin.lon + ",14z");
@@ -692,8 +675,6 @@ async function mapsSearch(query, location, key, coordinates) {
   const code = countryCode(searchLocation(location, coordinates));
   if (code) packParams.set("gl", code.toLowerCase());
   if (typeof key === "string") packParams.set("api_key", key);
-  const relatedType = storeTypes.find(type => type !== storeType);
-  if (relatedType) params.set("q", relatedType + " stores" + (place ? " near " + place : " near me"));
   const attempts = [packParams, params];
   const [settled, openStreetMapPlaces] = await Promise.all([
     Promise.allSettled(attempts.map((attempt, index) => searchProvider(attempt, key, index === 0 ? 8000 : 4000))),
@@ -827,7 +808,6 @@ async function runScope(scope, query, location, key, coordinates, credentials) {
       : " could not be searched. Please try again.")] : []);
   result.partialFailure = settled.some(entry => entry.status === "rejected");
   if (result.warnings.some(warning => warning.includes("(CAPTCHA)"))) result.warnings = [...result.warnings.filter(warning => !warning.includes("(CAPTCHA)")), "Google product and retailer search was blocked (CAPTCHA). Other available sources are shown; results are incomplete."];
-  if (!result.attributesComplete) result.warnings.push("Some product specifications could not be verified. Filters match only confirmed values.");
   if (searchContext()?.backupQuota) result.warnings.push("Backup search allowance has been used up." + (searchContext().backupQuota.reset ? ` It renews on ${searchContext().backupQuota.reset}.` : ""));
   if ((!location || location === "Current location") && !coordinates && scope !== "online") result.warnings.push("Choose a location to include nearby products.");
   return result;
@@ -865,7 +845,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const localizedQuery = /[\u0590-\u05ff]/.test(translated) && !/[a-z]{3,}/i.test(translated) ? translated : query;
     const tld = countryTlds.get(country);
     const retailQuery = country ? `${localizedQuery} ${country === "IL" ? "מחיר" : "price"}${tld ? ` site:${tld}` : ` ${country}`}` : `${query} price`;
-    const nearbyQuery = scope !== "online" && scope !== "local-products" && (point || (location && location !== "Current location")) ? `${storeRules.find(([match]) => match.test(query))?.[1][0] || query} stores near ${providerLocation(productLocation)}` : undefined;
+    const nearbyQuery = scope !== "online" && scope !== "local-products" && (point || (location && location !== "Current location")) ? `${query} stores near ${providerLocation(productLocation)}` : undefined;
     const discoveryJob = (config.provider === "octoparse" ? discoverOctoparseProducts : discoverRetailProducts)({ query, country, localizedQuery, retailQuery, nearbyQuery, config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline });
     const marketplaceJob = scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);
     const placesJob = config.provider === "octoparse" || scope === "online" || scope === "local-products" || (!point && (!location || location === "Current location")) ? Promise.resolve([]) : (async () => {
@@ -902,7 +882,6 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     result.partialFailure = result.sourceStatus.some(source => source.status === "failed");
     result.warnings = result.sourceStatus.filter(source => source.status === "failed").map(source => source.source + " could not be searched. Please try again.");
     if (discovery.sourceStatus.some(source => source.code === "quota_exhausted")) result.warnings.push("Search provider quota has been used up. The provider did not supply a reset time.");
-    if (!result.attributesComplete) result.warnings.push("Some product specifications could not be verified. Filters match only confirmed values.");
     if ((!location || location === "Current location") && !point && scope !== "online") result.warnings.push("Choose a location to include nearby products.");
     if (searchContext().backupQuota) result.warnings.push("Backup search allowance has been used up." + (searchContext().backupQuota.reset ? ` It renews on ${searchContext().backupQuota.reset}.` : ""));
     console.info("retail_search", { ...discovery.diagnostics, sources: discovery.sourceStatus, online: online.length, local: localOffers.length });

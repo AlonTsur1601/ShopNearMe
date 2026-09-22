@@ -8,7 +8,7 @@ import { OfferSection } from "./components/OfferSection";
 import { SearchBar } from "./components/SearchBar";
 import { SortMenu } from "./components/SortMenu";
 import { getShowcase } from "./data/showcase";
-import { searchProducts, searchProductScope } from "./services/productSearch";
+import { searchProducts } from "./services/productSearch";
 import { recommendationsFor } from "./services/recommendations";
 import { distanceUnitFor } from "./services/distance";
 import { matchesFacets } from "./services/facetValues";
@@ -67,13 +67,13 @@ export function App() {
     searchController.current?.abort(); const controller = new AbortController(); searchController.current = controller;
     setQuery(normalized); setActiveQuery(normalized); setSelected({}); setDistance(50); setPriceMin(""); setPriceMax(""); setLoading(true); setSearchResult(null);
     setRecentSearches((current) => { const next = [normalized, ...current.filter((value) => value.toLowerCase() !== normalized.toLowerCase())].slice(0, 5); localStorage.setItem("shopnearme:recent", JSON.stringify(next)); return next; });
-    const totalSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]);
+    const totalSignal = controller.signal;
     try {
       let place = nextLocation === location ? locationPlace : undefined;
       let locationWarning: string | undefined;
       if (nextLocation === "Current location" && !place) {
         setLocating(true);
-        try { place = await getSearchLocation(totalSignal); if (!controller.signal.aborted) setLocationPlace(place); }
+        try { place = await getSearchLocation(AbortSignal.any([totalSignal, AbortSignal.timeout(20000)])); if (!controller.signal.aborted) setLocationPlace(place); }
         catch (error) { locationWarning = error instanceof Error ? error.message : "Your location could not be determined."; }
         finally { if (!controller.signal.aborted) setLocating(false); }
       }
@@ -84,22 +84,6 @@ export function App() {
       return result;
     } finally { if (!controller.signal.aborted) { setLoading(false); setLocating(false); } }
   }, [location, locationPlace]);
-  useEffect(() => {
-    const pending = searchResult?.pendingSearch;
-    if (!pending || !activeQuery) return;
-    const controller = new AbortController();
-    const parent = searchController.current;
-    const timer = setTimeout(async () => {
-      try {
-        const signal = AbortSignal.any([controller.signal, ...(parent ? [parent.signal] : []), AbortSignal.timeout(20000)]);
-        const result = await searchProductScope(activeQuery, locationPlace?.label ?? location, "all", signal, locationPlace, pending.continuation);
-        if (!controller.signal.aborted && !parent?.signal.aborted) setSearchResult(result);
-      } catch {
-        if (!controller.signal.aborted && !parent?.signal.aborted) setSearchResult(current => current ? { ...current, pendingSearch: undefined, partialFailure: true, warnings: [...(current.warnings ?? []), "Could not retrieve the remaining products. Please try the search again."] } : current);
-      }
-    }, Math.max(1000, pending.nextPollAt - Date.now()));
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [searchResult, activeQuery, location, locationPlace]);
   const visibleResult = searchResult ? { ...searchResult, offers: visibleOffers, resultCount: visibleOffers.length } : null;
   const webMcpState = useRef({ location, performSearch, searchResult: visibleResult });
   webMcpState.current = { location, performSearch, searchResult: visibleResult };
@@ -147,7 +131,7 @@ export function App() {
           </div>
           <div className="offers-scroll">
             {!loading && showcase.pendingSearch && <p role="status">Additional products are still being collected. Results will update automatically.</p>}
-            {!loading && showcase.warnings?.map((warning) => <p className="search-warning" role="status" key={warning}>{warning}</p>)}
+            {!loading && showcase.warnings?.length ? <details className="search-details"><summary>{showcase.partialFailure ? "Some stores could not be searched — details" : "Search details"}</summary>{showcase.warnings.map(warning => <p key={warning}>{warning}</p>)}</details> : null}
             {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} distanceUnit={distanceUnit} />)}
             {loading && <div className="search-loading" aria-live="polite"><span /><strong>{locating ? "Finding your current location…" : "Searching stores and delivery sites…"}</strong></div>}
             {!loading && !showcase.pendingSearch && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" || showcase.partialFailure ? "Search incomplete" : "No matching offers"}</h2><p>{showcase.source === "fallback" || showcase.partialFailure ? "Some sources could not be searched. See the message above for details." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}

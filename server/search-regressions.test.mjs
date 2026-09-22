@@ -59,7 +59,7 @@ it("returns new marketplace offers even while Google is blocked and counts multi
   vi.stubGlobal("fetch", vi.fn(async (url, options) => {
     if (String(url).includes("identity/v1")) return Response.json({ access_token: "offline-test-token", expires_in: 7200 });
     if (String(url).includes("item_summary/search")) {
-      expect(new URL(url).searchParams.get("filter")).toContain("conditions:{NEW|USED}");
+      expect(new URL(url).searchParams.get("filter")).toMatch(/conditions:\{(?:NEW|USED)\}/);
       return Response.json({ itemSummaries: [{ title: "DURACELL rechargeable batteries 1 PACK X4", condition: "New", conditionId: "1000", itemWebUrl: "https://www.ebay.com/itm/456", price: { value: "12", currency: "USD" }, image: { imageUrl: "https://i.ebayimg.com/batteries.jpg" } }] });
     }
     expect(String(url)).toBe("https://api.brightdata.com/request");

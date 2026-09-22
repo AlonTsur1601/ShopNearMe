@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { searchProducts, searchProductScope } from "./productSearch";
 
 describe("searchProducts", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
   it("resumes pending work with the original continuation instead of starting another search", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ offers: [], facets: [], pendingSearch: { continuation: "next", nextPollAt: 123 } }));
     vi.stubGlobal("fetch", fetch);
@@ -34,4 +34,17 @@ describe("searchProducts", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ offers: [], facets: [], partialFailure: true, attributesComplete: false, warnings: ["Provider blocked"] }) })));
     expect(await searchProducts("battery", "Israel")).toMatchObject({ partialFailure: true, attributesComplete: false, warnings: ["Provider blocked"] });
   });
+});
+
+it("publishes only the final set while following continuation deadlines", async () => {
+  vi.useFakeTimers();
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ offers: [], facets: [], pendingSearch: { continuation: "job", nextPollAt: Date.now()+60000 } })).mockResolvedValueOnce(Response.json({ offers: [], facets: [], resultCount: 0 }));
+  vi.stubGlobal("fetch", fetcher);
+  let resolved = false;
+  const promise = searchProducts("lamp", "Israel").then(value => { resolved = true; return value; });
+  await vi.advanceTimersByTimeAsync(59000);
+  expect(resolved).toBe(false); expect(fetcher).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1000); await promise;
+  expect(resolved).toBe(true); expect(fetcher.mock.calls[1][0]).toContain("continuation=job");
+  vi.useRealTimers(); vi.unstubAllGlobals();
 });
