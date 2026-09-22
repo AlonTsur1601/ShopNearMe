@@ -208,7 +208,7 @@ describe("searchCatalog", () => {
     expect(vi.mocked(fetch).mock.calls.some(([url]) => new URL(String(url)).searchParams.get("q")?.includes("manufacturer specifications"))).toBe(true);
   });
 
-  it("uses the local category query only when precise bilingual Shopping queries are empty", async () => {
+  it("searches the local product term first for nearby merchants", async () => {
     vi.stubGlobal("fetch", vi.fn(async url => {
       const request = new URL(String(url)), engine = request.searchParams.get("engine"), search = request.searchParams.get("q");
       if (engine === "google_shopping") return { ok: true, json: async () => ({ shopping_results: search?.includes("אוזניות") ? [{ title: "אוזניות Wireless ANC Sony", source: "Audio Store", extracted_price: 500, product_link: "https://audio.example/headphones", thumbnail: "https://img.example/audio.jpg" }] : [] }) };
@@ -217,6 +217,9 @@ describe("searchCatalog", () => {
     }));
     const result = await searchCatalog("Wireless Headphones ANC", "Israel", "local-category-fallback-fixture", undefined, undefined, "online");
     expect(result.offers.some(offer => offer.destinationUrl === "https://audio.example/headphones")).toBe(true);
+    const shoppingCalls = vi.mocked(fetch).mock.calls.filter(([url]) => new URL(String(url)).searchParams.get("engine") === "google_shopping");
+    expect(new URL(String(shoppingCalls[0][0])).searchParams.get("q")).toContain("אוזניות");
+    expect(shoppingCalls).toHaveLength(1);
   });
 
   it("makes a newly discovered product property mandatory for every product", async () => {

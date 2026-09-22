@@ -550,11 +550,14 @@ async function shoppingSearch(query, location, key, retailerPages) {
       return searchProvider(params, key, 7000);
     }
   };
-  const searches = [await Promise.resolve(searchVariant(query)).then(value => ({ status: "fulfilled", value }), reason => ({ status: "rejected", reason }))];
-  const firstRows = searches[0].status === "fulfilled" ? [...(searches[0].value.shopping_results ?? []), ...(searches[0].value.inline_shopping_results ?? [])] : [];
+  // Prefer the destination country's product term. English Shopping results in
+  // Israel are often imports, which cannot match nearby merchant websites.
   const translated = localQuery(query, code);
-  if (searches[0].status === "fulfilled" && !firstRows.some(item => isRelevantProduct(item.title, query)) && translated !== query) {
-    searches.push(await Promise.resolve(searchVariant(translated)).then(value => ({ status: "fulfilled", value }), reason => ({ status: "rejected", reason })));
+  const primary = translated !== query ? translated : query;
+  const searches = [await Promise.resolve(searchVariant(primary)).then(value => ({ status: "fulfilled", value }), reason => ({ status: "rejected", reason }))];
+  const firstRows = searches[0].status === "fulfilled" ? [...(searches[0].value.shopping_results ?? []), ...(searches[0].value.inline_shopping_results ?? [])] : [];
+  if (searches[0].status === "fulfilled" && !firstRows.some(item => isRelevantProduct(item.title, query)) && primary !== query) {
+    searches.push(await Promise.resolve(searchVariant(query)).then(value => ({ status: "fulfilled", value }), reason => ({ status: "rejected", reason })));
   }
   if (searches.every(result => result.status === "rejected")) throw searches[0].reason;
   const shoppingRows = searches.map(result => result.status === "fulfilled" ? [...(result.value.shopping_results ?? []), ...(result.value.inline_shopping_results ?? [])] : []), sourceRows = shoppingRows.find(rows => rows.some(item => isRelevantProduct(item.title, query))) ?? shoppingRows.flat();
@@ -681,7 +684,7 @@ async function mapsSearch(query, location, key, coordinates) {
   if (typeof key === "string") packParams.set("api_key", key);
   const attempts = [packParams, params];
   const [settled, openStreetMapPlaces] = await Promise.all([
-    Promise.allSettled(attempts.map((attempt, index) => searchProvider(attempt, key, index === 0 ? 8000 : 4000))),
+    Promise.allSettled(attempts.map((attempt, index) => searchProvider(attempt, key, index === 0 ? 5000 : 4000))),
     (async () => { origin ??= await namedLocationCoordinates(location); return osmStores(query, location, origin); })().catch(() => []),
   ]);
   let places = [];
