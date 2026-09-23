@@ -93,27 +93,23 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
     { engine: "google", query: localizedQuery, country, language: country === "IL" && /[\u0590-\u05ff]/.test(localizedQuery) ? "he" : "en", light: true },
     { engine: "bing", query, country, language: "en" },
     ...(retailQuery ? [{ engine: "google", query: retailQuery, country, language: country === "IL" ? "he" : "en", light: true }] : []),
-    ...(nearbyQuery ? [{ engine: "google", query: nearbyQuery, country, language: "en", light: true }] : []),
+    { engine: "google", query: nearbyQuery || localizedQuery, country, language: country === "IL" ? "he" : "en", kind: "shopping" },
   ].map(async request => {
-    const status = { source: request.engine, status: "pending", candidates: 0 };
+    const status = { source: request.kind || request.engine, status: "pending", candidates: 0 };
     sourceStatus.push(status);
     try {
-      const data = await bounded(() => search({ ...request, kind: "web", noRetry: true }, config, Math.max(1, discoveryDeadline - Date.now())), discoveryDeadline);
-      status.status = "completed"; status.candidates = candidates(data).length;
-      await consume(data);
+      const data = await bounded(() => search({ ...request, kind: request.kind || "web", noRetry: true }, config, Math.max(1, discoveryDeadline - Date.now())), discoveryDeadline);
+      if (request.kind === "shopping") {
+        const indexed = indexedShoppingProducts(data, query, relevant, isCatalog);
+        status.status = "completed"; status.candidates = indexed.length;
+        for (const item of indexed) if (!products.has(item.link)) products.set(item.link, item);
+      } else {
+        status.status = "completed"; status.candidates = candidates(data).length;
+        await consume(data);
+      }
     } catch (error) { status.status = "failed"; status.code = errorCode(error); }
   });
   await Promise.allSettled(jobs);
-  if (products.size < 3 && Date.now() + 1500 < productDeadline) {
-    const status = { source: "shopping", status: "pending", candidates: 0 };
-    sourceStatus.push(status);
-    try {
-      const data = await bounded(() => search({ query: localizedQuery, kind: "shopping", country, language: country === "IL" ? "he" : "en", noRetry: true }, config, Math.max(1, productDeadline - Date.now())), productDeadline);
-      const indexed = indexedShoppingProducts(data, query, relevant, isCatalog);
-      status.status = "completed"; status.candidates = indexed.length;
-      for (const item of indexed) if (!products.has(item.link)) products.set(item.link, item);
-    } catch (error) { status.status = "failed"; status.code = errorCode(error); }
-  }
   // A single quota-aware backup is useful for an empty response too, not just HTTP failures.
   if (!products.size && config?.fallbackApiKey && Date.now() + 3500 < productDeadline) {
     const status = { source: "serpapi", status: "pending", candidates: 0 };

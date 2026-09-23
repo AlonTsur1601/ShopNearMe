@@ -931,7 +931,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const completed = config.provider === "octoparse" ? { offers: shareProductSpecs(coalesceOffers(offers)) } : await completeFacetAttributes(offers, query, location, config, deadline);
     const result = makeResult(query, await localizeOffers(completed.offers, productLocation));
     result.sourceStatus = [
-      { source: "Retailer products", status: discovery.continuation ? "pending" : discovery.sourceStatus.some(item => item.status === "completed") ? "completed" : "failed", products: online.length },
+      { source: "Retailer products", status: discovery.continuation ? "pending" : online.length || discovery.sourceStatus.every(item => item.status === "completed") ? "completed" : "failed", products: online.length },
       ...(scope === "online" || scope === "local-products" ? [] : [{ source: "Nearby product availability", status: discovery.sourceStatus.some(source => source.source === "Nearby branches via Octoparse" && source.status === "pending") ? "pending" : placesState.status === "fulfilled" || localOffers.length ? "completed" : "failed", products: localOffers.length }]),
       ...(scope === "local" || scope === "local-products" ? [] : [{ source: "Marketplace products", status: marketplaceState.status === "fulfilled" ? "completed" : "failed", products: marketplace.length }]),
     ];
@@ -940,7 +940,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     if (config.provider === "octoparse") result.sourceStatus.push(...discovery.sourceStatus.filter(source => source.status === "failed"));
     result.partialFailure = result.sourceStatus.some(source => source.status === "failed");
     result.warnings = result.sourceStatus.filter(source => source.status === "failed").map(source => source.source + " could not be searched. Please try again.");
-    if (discovery.sourceStatus.some(source => source.code === "quota_exhausted")) result.warnings.push("Search provider quota has been used up. The provider did not supply a reset time.");
+    if (discovery.sourceStatus.some(source => source.code === "quota_exhausted")) result.warnings.push(`${config.provider === "octoparse" ? "Octoparse" : "Bright Data"} search quota has been used up. The provider did not supply a reset time.`);
     if ((!location || location === "Current location") && !point && scope !== "online") result.warnings.push("Choose a location to include nearby products.");
     if (searchContext().backupQuota) result.warnings.push("Backup search allowance has been used up." + (searchContext().backupQuota.reset ? ` It renews on ${searchContext().backupQuota.reset}.` : ""));
     console.info("retail_search", { ...discovery.diagnostics, sources: discovery.sourceStatus, online: online.length, local: localOffers.length });
