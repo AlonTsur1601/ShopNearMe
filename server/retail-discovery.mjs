@@ -22,22 +22,25 @@ function merchantUrl(value) {
 function candidates(data) {
   const rows = data.organic ?? data.organic_results ?? [];
   return (Array.isArray(rows) ? rows : []).flatMap(row => [row, ...(row.extensions ?? []).filter(extension => extension.link).map(extension => ({ ...extension, title: extension.title ?? extension.text }))])
-    .map(row => ({ link: merchantUrl(row.link ?? row.url), title: String(row.title ?? ""), snippet: String(row.description ?? row.snippet ?? ""), source: row.source }))
+    .map(row => ({ link: merchantUrl(row.link ?? row.url), title: String(row.title ?? ""), snippet: String(row.description ?? row.snippet ?? ""), source: row.source, image: row.image ?? row.thumbnail, price: row.price ?? row.rich_snippet?.top?.extensions?.find(value => /[$₪€£]/.test(value)) }))
     .filter(row => row.link);
 }
 
-function indexedShoppingProducts(data, query, relevant, isCatalog) {
-  const rows = [data.shopping, data.top_pla, data.bottom_pla].flatMap(value => Array.isArray(value) ? value : []);
-  return rows.flatMap(row => {
+function indexedProduct(row, query, relevant, isCatalog) {
     const link = merchantUrl(row.link ?? row.url ?? row.product_url);
     const title = String(row.title ?? "").trim();
     const imageUrl = productImageUrl(row.image ?? row.thumbnail);
     const priceText = String(row.price ?? "");
     const currency = /₪|\bILS\b|\bNIS\b/i.test(priceText) ? "ILS" : /\$|\bUSD\b/i.test(priceText) ? "USD" : /€|\bEUR\b/i.test(priceText) ? "EUR" : /£|\bGBP\b/i.test(priceText) ? "GBP" : "";
-    const price = Number(String(row.extracted_price ?? priceText).replace(/[^\d.]/g, ""));
-    if (!link || !title || !relevant(title, query) || isSearchResultsUrl(link) || isCatalog(title, link) || !imageUrl || !currency || !Number.isFinite(price) || price <= 0 || /out of stock|sold out|unavailable/i.test(`${row.availability ?? ""} ${row.delivery ?? ""}`)) return [];
-    return [{ link, title, id: createHash("sha256").update(link).digest("hex").slice(0, 16), page: { isProduct: true, destinationUrl: link, title, imageUrl, price, currency, availability: String(row.availability ?? ""), specificationText: `${title} ${row.description ?? ""}`, priceSource: "indexed", locations: [] } }];
-  });
+    const amounts = priceText.match(/\d[\d,.]*/g) ?? [];
+    const price = row.extracted_price != null ? Number(row.extracted_price) : amounts.length === 1 ? Number(amounts[0].replace(/,/g, "")) : NaN;
+    if (!link || !title || !relevant(title, query) || isSearchResultsUrl(link) || isCatalog(title, link) || !imageUrl || !currency || !Number.isFinite(price) || price <= 0 || /out of stock|sold out|unavailable/i.test(`${row.availability ?? ""} ${row.delivery ?? ""}`)) return null;
+    return { link, title, id: createHash("sha256").update(link).digest("hex").slice(0, 16), page: { isProduct: true, destinationUrl: link, title, imageUrl, price, currency, availability: String(row.availability ?? ""), specificationText: `${title} ${row.description ?? row.snippet ?? ""}`, priceSource: "indexed", locations: [] } };
+}
+
+function indexedShoppingProducts(data, query, relevant, isCatalog) {
+  const rows = [data.shopping, data.top_pla, data.bottom_pla].flatMap(value => Array.isArray(value) ? value : []);
+  return rows.map(indexed => indexedProduct(indexed, query, relevant, isCatalog)).filter(Boolean);
 }
 
 async function bounded(operation, deadline) {
@@ -48,7 +51,7 @@ async function bounded(operation, deadline) {
   finally { clearTimeout(timer); }
 }
 
-function errorCode(error) { return error?.code || (/Timeout|Abort/.test(error?.name) ? "search_timeout" : "search_unavailable"); }
+function errorCode(error) { return /Timeout|Abort/.test(error?.name) ? "search_timeout" : typeof error?.code === "string" ? error.code : "search_unavailable"; }
 
 export async function discoverRetailProducts({ query, country, localizedQuery = query, retailQuery, nearbyQuery, config, relevant, isCatalog, deadline = searchContext()?.deadline ?? Date.now() + 16000 }, dependencies = {}) {
   const search = dependencies.search ?? brightDataSearch;
@@ -72,6 +75,10 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
         products.set(link, { ...item, link, page, id: createHash("sha256").update(link).digest("hex").slice(0, 16) });
         diagnostics.verified = products.size;
         return;
+      }
+      if (!page.isProduct && !page.isCatalog && !page.unavailable) {
+        const indexed = indexedProduct(item, query, relevant, isCatalog);
+        if (indexed) { products.set(indexed.link, indexed); diagnostics.verified = products.size; return; }
       }
       // Catalogs can discover products but their own prices/images are never offers.
       if (followCatalog && (page.isCatalog || isCatalog(item.title, item.link)) && Date.now() + 2200 < productDeadline) {

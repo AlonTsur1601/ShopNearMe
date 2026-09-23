@@ -32,6 +32,15 @@ it("uses a priced shopping listing only when it links to an individual product",
   expect(result.products[0]).toMatchObject({ link: "https://shop.co.il/products/desk-lamp", page: { price: 99, currency: "ILS", priceSource: "indexed" } });
 });
 
+it("recovers a blocked merchant page only with a direct indexed price and image", async () => {
+  const search = async request => request.kind === "shopping" ? { shopping: [] } : { organic: [{ title: "Desk lamp", link: "https://shop.co.il/products/desk-lamp", image: "https://cdn.shop.co.il/lamp.jpg", price: "₪99" }] };
+  const blocked = await discoverRetailProducts(options(), { search, readPage: async () => ({}) });
+  expect(blocked.products).toHaveLength(1);
+  expect(blocked.products[0].page).toMatchObject({ price: 99, priceSource: "indexed" });
+  const deleted = await discoverRetailProducts(options(), { search, readPage: async () => ({ unavailable: true }) });
+  expect(deleted.products).toHaveLength(0);
+});
+
 it("keeps Google blocking isolated from Bing", async () => {
   vi.stubGlobal("fetch", vi.fn(async (_url, init) => new URL(JSON.parse(init.body).url).hostname.includes("google")
     ? Response.json({ status_code: 502, headers: { "x-brd-error-code": "captcha" } }) : Response.json({ organic: [] })));
