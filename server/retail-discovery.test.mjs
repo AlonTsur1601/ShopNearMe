@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { discoverRetailProducts } from "./retail-discovery.mjs";
 import { brightDataSearch, brightDataSearchUrl } from "./brightdata.mjs";
 import { searchRetailCatalog } from "./search.mjs";
+import { isSearchResultsUrl } from "./product-page.mjs";
 import { withSearchBudget } from "./search-budget.mjs";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -18,6 +19,19 @@ it("uses independent engine URLs and a lightweight Google response", () => {
   expect(bing.searchParams.has("udm")).toBe(false);
 });
 
+it("never treats an Amazon search listing as a product page", () => {
+  expect(isSearchResultsUrl("https://www.amazon.com/smart-light-bulbs/s?k=smart+light+bulbs")).toBe(true);
+});
+
+it("uses a priced shopping listing only when it links to an individual product", async () => {
+  const result = await discoverRetailProducts(options(), { search: async request => request.kind === "shopping" ? { shopping: [
+    { title: "Desk lamp", link: "https://shop.co.il/products/desk-lamp", image: "https://cdn.shop.co.il/lamp.jpg", price: "₪99" },
+    { title: "Desk lamp", link: "https://www.amazon.com/desk-lamps/s?k=desk+lamp", image: "https://cdn.example/list.jpg", price: "$39" },
+  ] } : { organic: [] }, readPage: async () => ({ isCatalog: true }) });
+  expect(result.products).toHaveLength(1);
+  expect(result.products[0]).toMatchObject({ link: "https://shop.co.il/products/desk-lamp", page: { price: 99, currency: "ILS", priceSource: "indexed" } });
+});
+
 it("keeps Google blocking isolated from Bing", async () => {
   vi.stubGlobal("fetch", vi.fn(async (_url, init) => new URL(JSON.parse(init.body).url).hostname.includes("google")
     ? Response.json({ status_code: 502, headers: { "x-brd-error-code": "captcha" } }) : Response.json({ organic: [] })));
@@ -31,7 +45,7 @@ it("keeps Google blocking isolated from Bing", async () => {
 it("validates fast results before the other engine settles and retains them on timeout", async () => {
   vi.useFakeTimers();
   const readPage = vi.fn(async () => product());
-  const task = discoverRetailProducts(options(), { search: ({ engine }) => engine === "bing" ? Promise.resolve(organic(["https://merchant.example/lamp"])) : new Promise(() => {}), readPage });
+  const task = discoverRetailProducts(options(), { search: ({ engine, kind }) => kind === "shopping" ? Promise.resolve({ shopping: [] }) : engine === "bing" ? Promise.resolve(organic(["https://merchant.example/lamp"])) : new Promise(() => {}), readPage });
   await vi.advanceTimersByTimeAsync(1);
   expect(readPage).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(9500);

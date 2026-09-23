@@ -873,7 +873,7 @@ function verifiedRetailOffer(record, query) {
     id: `retail-${id}`, category: "order", title: page.title || record.title, merchant,
     subtitle: page.specificationText?.slice(0, 150) || "", imageUrl: page.imageUrl, imageUrls: page.imageUrls ?? [],
     destinationUrl: link, linkLabel: "View product", itemPrice: page.price, totalPrice: page.price,
-    shippingPrice: null, currency: page.currency, totalEstimated: true, priceVerified: true,
+    shippingPrice: null, currency: page.currency, totalEstimated: true, priceVerified: page.priceSource !== "indexed",
     availability: page.availability || "", rating: 0, reviewCount: 0,
     gtin: page.gtin, mpn: page.mpn, productBrand: page.brand,
     attributes: attributesFor(query, `${page.title} ${page.specificationText ?? ""}`, undefined, merchant, page),

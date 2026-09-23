@@ -4,6 +4,7 @@ import { backupSearch } from "./backup-search.mjs";
 import { readMerchantProduct } from "./merchant-fetch.mjs";
 import { catalogProductLinks } from "./catalog-products.mjs";
 import { deadlineError, searchContext } from "./search-budget.mjs";
+import { isSearchResultsUrl, productImageUrl } from "./product-page.mjs";
 
 // Discovery yields URLs, never offers. Each URL must pass merchant-page validation.
 // Independent engines begin together; fast results start validation immediately.
@@ -23,6 +24,20 @@ function candidates(data) {
   return (Array.isArray(rows) ? rows : []).flatMap(row => [row, ...(row.extensions ?? []).filter(extension => extension.link).map(extension => ({ ...extension, title: extension.title ?? extension.text }))])
     .map(row => ({ link: merchantUrl(row.link ?? row.url), title: String(row.title ?? ""), snippet: String(row.description ?? row.snippet ?? ""), source: row.source }))
     .filter(row => row.link);
+}
+
+function indexedShoppingProducts(data, query, relevant, isCatalog) {
+  const rows = [data.shopping, data.top_pla, data.bottom_pla].flatMap(value => Array.isArray(value) ? value : []);
+  return rows.flatMap(row => {
+    const link = merchantUrl(row.link ?? row.url ?? row.product_url);
+    const title = String(row.title ?? "").trim();
+    const imageUrl = productImageUrl(row.image ?? row.thumbnail);
+    const priceText = String(row.price ?? "");
+    const currency = /₪|\bILS\b|\bNIS\b/i.test(priceText) ? "ILS" : /\$|\bUSD\b/i.test(priceText) ? "USD" : /€|\bEUR\b/i.test(priceText) ? "EUR" : /£|\bGBP\b/i.test(priceText) ? "GBP" : "";
+    const price = Number(String(row.extracted_price ?? priceText).replace(/[^\d.]/g, ""));
+    if (!link || !title || !relevant(title, query) || isSearchResultsUrl(link) || isCatalog(title, link) || !imageUrl || !currency || !Number.isFinite(price) || price <= 0 || /out of stock|sold out|unavailable/i.test(`${row.availability ?? ""} ${row.delivery ?? ""}`)) return [];
+    return [{ link, title, id: createHash("sha256").update(link).digest("hex").slice(0, 16), page: { isProduct: true, destinationUrl: link, title, imageUrl, price, currency, availability: String(row.availability ?? ""), specificationText: `${title} ${row.description ?? ""}`, priceSource: "indexed", locations: [] } }];
+  });
 }
 
 async function bounded(operation, deadline) {
@@ -89,6 +104,16 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
     } catch (error) { status.status = "failed"; status.code = errorCode(error); }
   });
   await Promise.allSettled(jobs);
+  if (products.size < 3 && Date.now() + 1500 < productDeadline) {
+    const status = { source: "shopping", status: "pending", candidates: 0 };
+    sourceStatus.push(status);
+    try {
+      const data = await bounded(() => search({ query: localizedQuery, kind: "shopping", country, language: country === "IL" ? "he" : "en", noRetry: true }, config, Math.max(1, productDeadline - Date.now())), productDeadline);
+      const indexed = indexedShoppingProducts(data, query, relevant, isCatalog);
+      status.status = "completed"; status.candidates = indexed.length;
+      for (const item of indexed) if (!products.has(item.link)) products.set(item.link, item);
+    } catch (error) { status.status = "failed"; status.code = errorCode(error); }
+  }
   // A single quota-aware backup is useful for an empty response too, not just HTTP failures.
   if (!products.size && config?.fallbackApiKey && Date.now() + 3500 < productDeadline) {
     const status = { source: "serpapi", status: "pending", candidates: 0 };

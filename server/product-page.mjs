@@ -8,6 +8,7 @@ export function isSearchResultsUrl(value) {
   try {
     const url = new URL(value), path = decodeURIComponent(url.pathname);
     return /\/(?:search|search-results|searchresults|catalogsearch|חיפוש)(?:[/.]|$)/i.test(path)
+      || /(?:^|\.)amazon\.[a-z.]+$/i.test(url.hostname) && /(?:^|\/)s\/?$/i.test(path) && url.searchParams.has("k")
       || /^\/c\/\d+(?:\/|$)/i.test(path)
       || ["s", "search", "search_query", "searchTerm", "searchterm", "keyword", "keywords", "query", "q"].some(key => url.searchParams.has(key))
       || /^(?:search|searchresults)$/i.test(url.searchParams.get("route")?.split("/").at(-1) ?? "");
