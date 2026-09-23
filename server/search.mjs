@@ -902,7 +902,14 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const marketplaceJob = scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);
     const placesJob = config.provider === "octoparse" || scope === "online" || scope === "local-products" || (!point && (!location || location === "Current location")) ? Promise.resolve([]) : (async () => {
       const origin = point || await namedLocationCoordinates(location);
-      return (await osmStores(query, productLocation, origin)).map((place, index) => mapOffer(place, index, query, origin));
+      if (!origin) return [];
+      const [osm, branches] = await Promise.allSettled([
+        osmStores(query, productLocation, origin),
+        discoveryJob.then(discovery => photonStores([...new Set(discovery.products.map(product => new URL(product.link).hostname).filter(host => host.endsWith(".il")).map(host => host.replace(/^www\./, "").split(".")[0]))].slice(0, 3), origin)),
+      ]);
+      const found = [...(osm.status === "fulfilled" ? osm.value : []), ...(branches.status === "fulfilled" ? branches.value : [])];
+      if (!found.length && osm.status === "rejected" && branches.status === "rejected") throw osm.reason;
+      return found.map((place, index) => mapOffer(place, index, query, origin));
     })();
     const [discoveryState, marketplaceState, placesState] = await Promise.allSettled([discoveryJob, marketplaceJob, placesJob]);
     const discovery = discoveryState.status === "fulfilled" ? discoveryState.value : { products: [], sourceStatus: [{ source: "retail", status: "failed", code: discoveryState.reason?.code || "search_unavailable" }], diagnostics: {} };
@@ -924,7 +931,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const completed = config.provider === "octoparse" ? { offers: shareProductSpecs(coalesceOffers(offers)) } : await completeFacetAttributes(offers, query, location, config, deadline);
     const result = makeResult(query, await localizeOffers(completed.offers, productLocation));
     result.sourceStatus = [
-      { source: "Retailer products", status: discovery.continuation ? "pending" : online.length || (discovery.sourceStatus.some(item => item.status === "completed") && !discovery.diagnostics.candidates) ? "completed" : "failed", products: online.length },
+      { source: "Retailer products", status: discovery.continuation ? "pending" : discovery.sourceStatus.some(item => item.status === "completed") ? "completed" : "failed", products: online.length },
       ...(scope === "online" || scope === "local-products" ? [] : [{ source: "Nearby product availability", status: discovery.sourceStatus.some(source => source.source === "Nearby branches via Octoparse" && source.status === "pending") ? "pending" : placesState.status === "fulfilled" || localOffers.length ? "completed" : "failed", products: localOffers.length }]),
       ...(scope === "local" || scope === "local-products" ? [] : [{ source: "Marketplace products", status: marketplaceState.status === "fulfilled" ? "completed" : "failed", products: marketplace.length }]),
     ];
