@@ -79,7 +79,7 @@ export function App() {
       }
       if (controller.signal.aborted) return { query: normalized, resultCount: 0, offers: [], facets: [] };
       const response = await searchProducts(normalized, place?.label ?? nextLocation, totalSignal, place);
-      const result = locationWarning ? { ...response, warnings: [...new Set([...(response.warnings ?? []).filter(warning => !/^Choose a location to include nearby (?:stores|products)\.$/.test(warning)), locationWarning])] } : response;
+      const result = locationWarning && !response.locationApproximate ? { ...response, warnings: [...new Set([...(response.warnings ?? []).filter(warning => !/^Choose a location to include nearby (?:stores|products)\.$/.test(warning)), locationWarning])] } : response;
       if (!controller.signal.aborted) setSearchResult(result);
       return result;
     } finally { if (!controller.signal.aborted) { setLoading(false); setLocating(false); } }
@@ -131,7 +131,7 @@ export function App() {
           </div>
           <div className="offers-scroll">
             {!loading && showcase.pendingSearch && <p role="status">Additional products are still being collected. Results will update automatically.</p>}
-            {!loading && showcase.warnings?.length ? <details className="search-details"><summary>{showcase.partialFailure ? "Some stores could not be searched — details" : "Search details"}</summary>{showcase.warnings.map(warning => <p key={warning}>{warning}</p>)}</details> : null}
+            {!loading && showcase.warnings?.length ? <div className="search-warning" role="alert">{showcase.warnings.map(warning => <p key={warning}>{warning}</p>)}</div> : null}
             {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} distanceUnit={distanceUnit} />)}
             {loading && <div className="search-loading" aria-live="polite"><span /><strong>{locating ? "Finding your current location…" : "Searching stores and delivery sites…"}</strong></div>}
             {!loading && !showcase.pendingSearch && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" || showcase.partialFailure ? "Search incomplete" : "No matching offers"}</h2><p>{showcase.source === "fallback" || showcase.partialFailure ? "Some sources could not be searched. See the message above for details." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}

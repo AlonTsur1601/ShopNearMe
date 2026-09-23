@@ -35,7 +35,7 @@ async function bounded(operation, deadline) {
 
 function errorCode(error) { return error?.code || (/Timeout|Abort/.test(error?.name) ? "search_timeout" : "search_unavailable"); }
 
-export async function discoverRetailProducts({ query, country, localizedQuery = query, config, relevant, isCatalog, deadline = searchContext()?.deadline ?? Date.now() + 16000 }, dependencies = {}) {
+export async function discoverRetailProducts({ query, country, localizedQuery = query, retailQuery, nearbyQuery, config, relevant, isCatalog, deadline = searchContext()?.deadline ?? Date.now() + 16000 }, dependencies = {}) {
   const search = dependencies.search ?? brightDataSearch;
   const readPage = dependencies.readPage ?? ((url, allowPaid) => readMerchantProduct(url, allowPaid ? config : { ...config, productZone: undefined }, deadline - 300));
   const readCatalog = dependencies.readCatalog ?? catalogProductLinks;
@@ -77,6 +77,8 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
   const jobs = [
     { engine: "google", query: localizedQuery, country, language: country === "IL" && /[\u0590-\u05ff]/.test(localizedQuery) ? "he" : "en", light: true },
     { engine: "bing", query, country, language: "en" },
+    ...(retailQuery ? [{ engine: "google", query: retailQuery, country, language: country === "IL" ? "he" : "en", light: true }] : []),
+    ...(nearbyQuery ? [{ engine: "google", query: nearbyQuery, country, language: "en", light: true }] : []),
   ].map(async request => {
     const status = { source: request.engine, status: "pending", candidates: 0 };
     sourceStatus.push(status);

@@ -43,7 +43,6 @@ describe("App", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "hooks" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await screen.findByText(/Location permission is blocked/);
-    fireEvent.click(screen.getByText("Search details"));
     expect(screen.getByText(/Location permission is blocked/)).toBeVisible();
     expect(screen.queryByText("Choose a location to include nearby products.")).not.toBeInTheDocument();
     expect(screen.getByText("Provider blocked")).toBeVisible();
@@ -66,7 +65,6 @@ describe("App", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "battery" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByRole("heading", { name: "Search incomplete" })).toBeVisible();
-    fireEvent.click(screen.getByText("Some stores could not be searched — details"));
     expect(screen.getByText("Provider blocked")).toBeVisible();
     expect(screen.queryByText("Clear a filter or try a broader search.")).not.toBeInTheDocument();
   });

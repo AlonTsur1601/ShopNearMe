@@ -897,7 +897,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const localizedQuery = /[\u0590-\u05ff]/.test(translated) && !/[a-z]{3,}/i.test(translated) ? translated : query;
     const tld = countryTlds.get(country);
     const retailQuery = country ? `${localizedQuery} ${country === "IL" ? "מחיר" : "price"}${tld ? ` site:${tld}` : ` ${country}`}` : `${query} price`;
-    const nearbyQuery = scope !== "online" && scope !== "local-products" && (point || (location && location !== "Current location")) ? `${query} stores near ${providerLocation(productLocation)}` : undefined;
+    const nearbyQuery = scope !== "online" && scope !== "local-products" && (point || (location && location !== "Current location")) ? `${localizedQuery} ${providerLocation(productLocation)} ${country === "IL" ? "מחיר" : "price"}` : undefined;
     const discoveryJob = (config.provider === "octoparse" ? discoverOctoparseProducts : discoverRetailProducts)({ query, country, localizedQuery, retailQuery, nearbyQuery, config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline });
     const marketplaceJob = scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);
     const placesJob = config.provider === "octoparse" || scope === "online" || scope === "local-products" || (!point && (!location || location === "Current location")) ? Promise.resolve([]) : (async () => {
