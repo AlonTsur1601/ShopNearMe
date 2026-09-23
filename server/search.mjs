@@ -93,6 +93,7 @@ const countryTlds = new Map([["IL", ".il"], ["GB", ".uk"], ["CA", ".ca"], ["DE",
 export function safeHttpUrl(value, fallback = "") { try { const decoded = String(value ?? "").replace(/\\u([0-9a-f]{4})/gi, (_match, code) => String.fromCharCode(Number.parseInt(code, 16))).replace(/\\\//g, "/"); const parsed = new URL(decoded); return ["https:", "http:"].includes(parsed.protocol) ? parsed.href : fallback; } catch { return fallback; } }
 function searchTokens(value) { const stop = new Set(["a", "an", "and", "at", "best", "buy", "cheap", "deals", "for", "in", "near", "of", "on", "price", "sale", "the", "to", "with"]); return [...new Set(String(value).toLowerCase().replace(/[^a-z0-9\u0590-\u05ff]+/g, " ").split(/\s+/).filter((token) => token.length > 1 && !stop.has(token)).map((token) => token.replace(/(?:ies|es|s)$/i, (ending) => ending === "ies" ? "y" : "")))]; }
 const translatedCategories = [
+  [/\b(?:smart|wifi|wi-fi)\s+(?:light\s+)?bulbs?\b|\bsmart\s+light\b/i, /נור(?:ה|ת|ות)\s+חכמ|(?:תאורה|מנורה|מנורות)\s+חכמ/, "נורה חכמה"],
   [/\bdock(?:ing station)?s?\b/i, /תחנ(?:ת|ות) עגינה/, "תחנת עגינה"],
   [/camping tent|tent/i, /אוהל/, "אוהל"],
   [/monitor|television|\btv\b/i, /מס[ךכ]/, "מסך"], [/headphones?|earbuds?/i, /אוזני[וה]ת/, "אוזניות"],
@@ -131,6 +132,8 @@ export function isRelevantProduct(title, query) {
 }
 function localQuery(query, code) {
   if (code !== "IL") return query;
+  if (/\b(?:smart|wifi|wi-fi)\s+(?:light\s+)?bulbs?\b|\bsmart\s+light\b/i.test(query)) return "נורה חכמה";
+  if (/\b(?:picture|frame)\s+hanging\s+hooks?\b/i.test(query)) return "ווים לתליית תמונות";
   if (/\b(?:rechargeable\s+)?batter(?:y|ies)\b/i.test(query)) return query.replace(/rechargeable\s+batter(?:y|ies)/ig, "סוללות נטענות").replace(/batter(?:y|ies)/ig, "סוללות");
   if (/(?:laptop|notebook)\s+(?:stand|riser|holder|tray)|(?:stand|riser|holder|tray)\s+(?:for\s+)?(?:laptop|notebook)/i.test(query)) return query;
   const translated = translatedCategories.find(([match]) => match.test(query));
@@ -931,8 +934,8 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const completed = config.provider === "octoparse" ? { offers: shareProductSpecs(coalesceOffers(offers)) } : await completeFacetAttributes(offers, query, location, config, deadline);
     const result = makeResult(query, await localizeOffers(completed.offers, productLocation));
     result.sourceStatus = [
-      { source: "Retailer products", status: discovery.continuation ? "pending" : online.length || discovery.sourceStatus.every(item => item.status === "completed") ? "completed" : "failed", products: online.length },
-      ...(scope === "online" || scope === "local-products" ? [] : [{ source: "Nearby product availability", status: discovery.sourceStatus.some(source => source.source === "Nearby branches via Octoparse" && source.status === "pending") ? "pending" : placesState.status === "fulfilled" || localOffers.length ? "completed" : "failed", products: localOffers.length }]),
+      { source: "Retailer products", status: discovery.continuation ? "pending" : online.length ? "completed" : discovery.sourceStatus.some(item => item.status === "failed") ? "failed" : "empty", products: online.length },
+      ...(scope === "online" || scope === "local-products" ? [] : [{ source: "Nearby product availability", status: discovery.sourceStatus.some(source => source.source === "Nearby branches via Octoparse" && source.status === "pending") ? "pending" : localOffers.length ? "completed" : placesState.status === "rejected" ? "failed" : "empty", products: localOffers.length }]),
       ...(scope === "local" || scope === "local-products" ? [] : [{ source: "Marketplace products", status: marketplaceState.status === "fulfilled" ? "completed" : "failed", products: marketplace.length }]),
     ];
     result.discoveryStatus = discovery.sourceStatus;
@@ -940,6 +943,8 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     if (config.provider === "octoparse") result.sourceStatus.push(...discovery.sourceStatus.filter(source => source.status === "failed"));
     result.partialFailure = result.sourceStatus.some(source => source.status === "failed");
     result.warnings = result.sourceStatus.filter(source => source.status === "failed").map(source => source.source + " could not be searched. Please try again.");
+    const failedDiscovery = discovery.sourceStatus.filter(source => source.status === "failed");
+    if (failedDiscovery.length && config.provider !== "octoparse") result.warnings.push(`Some search sources failed: ${[...new Set(failedDiscovery.map(source => `${source.source} (${source.code || "unavailable"})`))].join(", ")}.`);
     if (discovery.sourceStatus.some(source => source.code === "quota_exhausted")) result.warnings.push(`${config.provider === "octoparse" ? "Octoparse" : "Bright Data"} search quota has been used up. The provider did not supply a reset time.`);
     if ((!location || location === "Current location") && !point && scope !== "online") result.warnings.push("Choose a location to include nearby products.");
     if (searchContext().backupQuota) result.warnings.push("Backup search allowance has been used up." + (searchContext().backupQuota.reset ? ` It renews on ${searchContext().backupQuota.reset}.` : ""));

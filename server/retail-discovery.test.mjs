@@ -19,6 +19,22 @@ it("uses independent engine URLs and a lightweight Google response", () => {
   expect(bing.searchParams.has("udm")).toBe(false);
 });
 
+it("does not spend provider requests after free sources find several real merchants", async () => {
+  const search = vi.fn(async () => ({ organic: [] }));
+  const products = Array.from({ length: 6 }, (_, index) => ({
+    link: `https://store-${index % 2}.co.il/products/lamp-${index}`,
+    id: `lamp-${index}`,
+    page: product({ title: `Desk lamp ${index}` }),
+  }));
+  const result = await discoverRetailProducts({ ...options(), config: { directRetailers: true } }, {
+    directStores: async () => ({ products, sourceStatus: [{ source: "Retailer catalogs", status: "completed" }] }),
+    openSearch: async () => ({ organic: [] }),
+    search,
+  });
+  expect(result.products).toHaveLength(6);
+  expect(search).not.toHaveBeenCalled();
+});
+
 it("never treats an Amazon search listing as a product page", () => {
   expect(isSearchResultsUrl("https://www.amazon.com/smart-light-bulbs/s?k=smart+light+bulbs")).toBe(true);
 });

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { brightDataSearch } from "./brightdata.mjs";
 import { backupSearch } from "./backup-search.mjs";
 import { readMerchantProduct } from "./merchant-fetch.mjs";
+import { searchRetailerSites } from "./retailer-sites.mjs";
+import { duckduckgoProducts } from "./duckduckgo.mjs";
 import { catalogProductLinks } from "./catalog-products.mjs";
 import { deadlineError, searchContext } from "./search-budget.mjs";
 import { isSearchResultsUrl, productImageUrl } from "./product-page.mjs";
@@ -21,8 +23,8 @@ function merchantUrl(value) {
 
 function candidates(data) {
   const rows = data.organic ?? data.organic_results ?? [];
-  return (Array.isArray(rows) ? rows : []).flatMap(row => [row, ...(row.extensions ?? []).filter(extension => extension.link).map(extension => ({ ...extension, title: extension.title ?? extension.text }))])
-    .map(row => ({ link: merchantUrl(row.link ?? row.url), title: String(row.title ?? ""), snippet: String(row.description ?? row.snippet ?? ""), source: row.source, image: row.image ?? row.thumbnail, price: row.price ?? row.rich_snippet?.top?.extensions?.find(value => /[$₪€£]/.test(value)) }))
+  return (Array.isArray(rows) ? rows : []).flatMap(row => [row, ...(Array.isArray(row.extensions) ? row.extensions : []).filter(extension => extension?.link).map(extension => ({ ...extension, title: extension.title ?? extension.text }))])
+    .map(row => ({ link: merchantUrl(row.link ?? row.url), title: String(row.title ?? ""), snippet: String(row.description ?? row.snippet ?? ""), source: row.source, image: row.image ?? row.thumbnail, price: row.price ?? (Array.isArray(row.rich_snippet?.top?.extensions) ? row.rich_snippet.top.extensions.find(value => /[$₪€£]/.test(String(value))) : undefined) }))
     .filter(row => row.link);
 }
 
@@ -58,6 +60,8 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
   const readPage = dependencies.readPage ?? ((url, allowPaid) => readMerchantProduct(url, allowPaid ? config : { ...config, productZone: undefined }, deadline - 300));
   const readCatalog = dependencies.readCatalog ?? catalogProductLinks;
   const backup = dependencies.backup ?? backupSearch;
+  const directStores = dependencies.directStores ?? (config?.directRetailers && country === "IL" ? searchRetailerSites : async () => ({ products: [], sourceStatus: [] }));
+  const openSearch = dependencies.openSearch ?? (config?.directRetailers ? duckduckgoProducts : null);
   const products = new Map(), seen = new Set(), sourceStatus = [], diagnostics = { candidates: 0, rejected: 0, verified: 0 };
   // Reserve merchant reading time. A slow engine cannot discard products from the other.
   const discoveryDeadline = Math.min(deadline - 3500, Date.now() + 9500);
@@ -97,6 +101,27 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
     await Promise.allSettled(list.map(({ item }) => inspect(item)));
   };
   const jobs = [
+    Promise.resolve().then(() => directStores({ query, localizedQuery, relevant, isCatalog, deadline: productDeadline })).then(direct => {
+      sourceStatus.push(...direct.sourceStatus);
+      for (const item of direct.products) if (!products.has(item.link)) products.set(item.link, item);
+      diagnostics.verified = products.size;
+    }).catch(() => sourceStatus.push({ source: "Direct retailer catalogs", status: "failed", code: "retailer_unavailable" })),
+  ];
+  if (openSearch) jobs.push(Promise.resolve().then(async () => {
+    const status = { source: "DuckDuckGo", status: "pending", candidates: 0 };
+    sourceStatus.push(status);
+    try {
+      const data = await bounded(() => openSearch(localizedQuery, country, discoveryDeadline), discoveryDeadline);
+      status.candidates = candidates(data).length;
+      await consume(data);
+      status.status = "completed";
+    } catch (error) { status.status = "failed"; status.code = errorCode(error); }
+  }));
+  // Give fast, free merchant catalogs and open search the first chance. The
+  // paid search provider is a fallback when they cannot supply a useful cohort.
+  if (config?.directRetailers) await bounded(() => Promise.allSettled(jobs), Math.min(discoveryDeadline, Date.now() + 6500)).catch(() => {});
+  const merchantCount = new Set([...products.values()].map(item => new URL(item.link).hostname)).size;
+  const providerJobs = (!dependencies.search && (!config?.apiKey || !config?.zone)) || (products.size >= 6 && merchantCount >= 2) ? [] : [
     { engine: "google", query: localizedQuery, country, language: country === "IL" && /[\u0590-\u05ff]/.test(localizedQuery) ? "he" : "en", light: true },
     { engine: "bing", query, country, language: "en" },
     ...(retailQuery ? [{ engine: "google", query: retailQuery, country, language: country === "IL" ? "he" : "en", light: true }] : []),
@@ -116,6 +141,7 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
       }
     } catch (error) { status.status = "failed"; status.code = errorCode(error); }
   });
+  jobs.push(...providerJobs);
   await Promise.allSettled(jobs);
   // A single quota-aware backup is useful for an empty response too, not just HTTP failures.
   if (!products.size && config?.fallbackApiKey && Date.now() + 3500 < productDeadline) {

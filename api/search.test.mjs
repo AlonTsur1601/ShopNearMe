@@ -15,17 +15,18 @@ it("searches products without creating an Octoparse task", async () => {
   searchRetailCatalog.mockResolvedValue({ offers: [{ id: "merchant-product", itemPrice: 49, imageUrl: "https://shop.example/lamp.jpg" }], facets: [], warnings: [], partialFailure: false });
   const response = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis(), setHeader: vi.fn() };
   await handler({ method: "GET", query: { q: "bedside lamp", location: "Kiryat Ono, Israel", scope: "all" } }, response);
-  expect(searchRetailCatalog).toHaveBeenCalledWith("bedside lamp", "Kiryat Ono, Israel", { apiKey: "search-key", zone: "search-zone" }, undefined, expect.any(Object), "all");
+  expect(searchRetailCatalog).toHaveBeenCalledWith("bedside lamp", "Kiryat Ono, Israel", expect.objectContaining({ apiKey: "search-key", zone: "search-zone", directRetailers: true }), undefined, expect.any(Object), "all");
   expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ offers: [expect.objectContaining({ id: "merchant-product" })] }));
 });
 
-it("reports missing search configuration without creating an Octoparse task", async () => {
+it("keeps free retailer discovery available when the paid provider is not configured", async () => {
   vi.stubEnv("BRIGHTDATA_API_KEY", "");
+  searchRetailCatalog.mockResolvedValue({ offers: [{ id: "free-product", itemPrice: 49, imageUrl: "https://shop.example/lamp.jpg" }], facets: [], warnings: [], partialFailure: false });
   const response = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis(), setHeader: vi.fn() };
   await handler({ method: "GET", query: { q: "bedside lamp" } }, response);
-  expect(searchRetailCatalog).not.toHaveBeenCalled();
-  expect(response.status).toHaveBeenCalledWith(502);
-  expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ code: "provider_not_configured" }));
+  expect(searchRetailCatalog).toHaveBeenCalled();
+  expect(response.status).toHaveBeenCalledWith(200);
+  expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ offers: [expect.objectContaining({ id: "free-product" })] }));
 });
 
 it("uses approximate Vercel location if browser coordinates are unavailable", async () => {

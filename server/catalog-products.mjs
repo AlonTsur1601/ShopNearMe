@@ -11,11 +11,10 @@ export async function catalogProductLinks(url, relevant) {
     const base = new URL(response.url || url);
     const $ = load((await readProductHtml(response)).slice(0, 2000000));
     $("header, footer, nav, script, style").remove();
-    const categoryTitle = $("h1").first().text() || $("meta[property='og:title']").attr("content") || "";
     const seen = new Set(), results = [];
     for (const anchor of $("a[href]").toArray()) {
       const title = [$(anchor).text(), $(anchor).attr("title"), $(anchor).find("img").attr("alt")].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-      if (!title || !relevant(`${title} ${categoryTitle}`)) continue;
+      if (!title || !relevant(title)) continue;
       let link;
       try { link = new URL($(anchor).attr("href"), base); } catch { continue; }
       if (link.origin !== base.origin || link.pathname === base.pathname || link.pathname === "/" || seen.has(link.href)) continue;

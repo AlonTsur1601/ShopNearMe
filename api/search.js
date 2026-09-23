@@ -23,10 +23,11 @@ export default async function handler(request, response) {
       clientId: process.env.EBAY_CLIENT_ID,
       clientSecret: process.env.EBAY_CLIENT_SECRET,
     };
-    if (!process.env.BRIGHTDATA_API_KEY || !process.env.BRIGHTDATA_SERP_ZONE) throw Object.assign(new Error("Product search provider is not configured"), { code: "provider_not_configured" });
     const result = await searchRetailCatalog(query, approximateLocation, {
       apiKey: process.env.BRIGHTDATA_API_KEY,
       zone: process.env.BRIGHTDATA_SERP_ZONE,
+      productZone: process.env.BRIGHTDATA_PRODUCT_ZONE,
+      directRetailers: true,
     }, coordinates, credentials, scope);
     response.setHeader("Cache-Control", result.pendingSearch || result.partialFailure || result.warnings?.length ? "no-store" : "s-maxage=900, stale-while-revalidate=3600");
     return response.status(200).json({ ...result, ...(approximatePoint ? { locationApproximate: true } : {}) });
