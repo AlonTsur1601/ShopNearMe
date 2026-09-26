@@ -36,6 +36,13 @@ export function englishLabel(value) {
   if (!/[\p{L}]/u.test(label)) return "";
   return labels[label.toLowerCase()] ?? englishText(label);
 }
+// A short named merchant specification can contain valid technical terms not
+// present in our prose glossary. Preserve those terms instead of deleting data.
+export function specificationText(value) {
+  const text = englishText(value, true);
+  if (!text || text.length > 100 || /^(?:other|unknown|unspecified|not specified|not available|n\/?a|none|null|undefined|-)$/i.test(text) || /https?:|www\.|\b(?:ceci|produit|avec|sans|pour)\b/i.test(text)) return "";
+  return text;
+}
 for (const word of "features platform aspect printer sided device layout drive".split(" ")) vocabulary.add(word);
 for (const word of "wattage source settings dpi sensor focus focal zoom stabilizer stabilization stabilisation megapixels fps aperture pixel pixels mode thread fire retardant ventilation bag included poles stakes jack stove skirt snow seams taped double single layer layers pu pvc pe tpu polyester polycotton oxford ripstop ultralight lightweight freestanding pop instant dome tunnel geodesic footprint flysheet rainfly fiberglass fibreglass dac denier index resistance windproof breathable fabric inner outer number rooms seasons oz person sleeping headroom vestibule entrances head space carry bag hood sleeves doors door printed plain mesh net insect protection coated construction ultraviolet".split(" ")) vocabulary.add(word);
 export function englishText(value, properName = false) {
@@ -71,8 +78,8 @@ export function normalizeOfferFacets(offer) {
   const attributes = {}, attributeLabels = {};
   for (const [id, raw] of Object.entries(offer.attributes ?? {})) {
     const name = offer.attributeLabels?.[id];
-    if (name) { const label = englishLabel(name); if (!label) continue; attributeLabels[id] = label; }
-    let values = [raw].flat().map(value => englishText(value, id === "retailer" || id === "brand")).filter(Boolean);
+    if (name) { const label = englishLabel(name) || specificationText(name); if (!label) continue; attributeLabels[id] = label; }
+    let values = [raw].flat().map(value => name ? specificationText(value) : englishText(value, id === "retailer" || id === "brand")).filter(Boolean);
     if (id === "color") values = values.map(value => value.toLowerCase().replace(/\bgrey\b/g, "gray").replace(/\b[a-z]/g, char => char.toUpperCase()));
     if (id === "material") values = values.map(value => value.replace(/\baluminium\b/gi, "Aluminum").replace(/\b(?:(?:solid|engineered) wood|tempered glass|stainless steel|plastic|glass|metal|wood|leather|steel|cotton)\b/gi, word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()));
     if (id === "retailer" && !values.length) {

@@ -1,8 +1,9 @@
-import { englishLabel, englishText } from "./facet-language.mjs";
+import { englishLabel, specificationText } from "./facet-language.mjs";
 // Facets are discovered from named product properties, not a finite category list.
 // Aliases only consolidate equivalent labels; unrecognized properties remain usable.
 const aliases = [
-  ["brand", "Manufacturer", /^(brand|manufacturer|make|יצרן|מותג)$/i],
+  ["brand", "Manufacturer", /^(brand(?: name)?|manufacturer|make|יצרן|מותג)$/i],
+  ["condition", "Condition", /^(condition|item condition)$/i],
   ["screenSize", "Screen size", /^(screen size(?: in inches)?|display size|screen diagonal|display diagonal|גודל מסך|אינצ')$/i],
   ["size", "Size", /^(size|גודל)$/i],
   ["displayType", "Panel type", /^(panel type|display type|screen type|display technology|סוג פאנל|סוג הצג)$/i],
@@ -26,8 +27,8 @@ const aliases = [
   ["memory", "Memory / RAM", /^(?:(?:installed|system|total) )?(?:memory|ram|memory size|memory capacity|ram size|ram capacity|זיכרון(?: פנימי)?|זכרון(?: פנימי)?|ראם)$/i],
   ["storage", "Storage", /^(?:storage|storage capacity|internal storage|ssd|ssd capacity|solid state drive capacity|hard drive capacity|disk capacity|אחסון|נפח אחסון|כונן)$/i],
   ["weight", "Weight", /^(weight|item weight|product weight|net weight|משקל)$/i],
-  ["dimensions", "Dimensions", /^(dimensions|product dimensions|item dimensions|מידות)$/i],
-  ["material", "Material", /^(material|materials|חומר)$/i],
+  ["dimensions", "Dimensions", /^(dimensions|product dimensions|item dimensions(?: d x w x h)?|מידות)$/i],
+  ["material", "Material", /^(material(?: type)?|materials|חומר)$/i],
   ["color", "Color", /^(colou?r|צבע)$/i],
   ["capacity", "Capacity", /^(capacity|volume|נפח|קיבולת)$/i],
   ["voltage", "Voltage", /^(voltage|nominal voltage|battery voltage|מתח|מתח סוללה)$/i],
@@ -36,7 +37,8 @@ const aliases = [
   ["type", "Product type", /^(type|product type|סוג מוצר)$/i],
   ["batteryLife", "Battery life", /^(battery life|battery runtime|run time|runtime|זמן עבודה)$/i],
   ["waterResistance", "Water resistance", /^(water resistance|waterproof rating|water resistance rating|עמידות במים)$/i],
-  ["power", "Power", /^(power|power consumption|rated power|הספק)$/i],
+  ["power", "Power", /^(power|power consumption|rated power|max(?:imum)? wattage|maximum power|wattage|הספק)$/i],
+  ["packSize", "Pack size", /^(pack size|number (?:in pack|of items|of pieces)|unit count)$/i],
   ["width", "Width", /^(?:(?:item|product) )?(width|רוחב)$/i], ["height", "Height", /^(?:(?:item|product) )?(height|גובה)$/i],
   ["depth", "Depth", /^(?:(?:item|product) )?(depth|עומק)$/i], ["length", "Length", /^(?:(?:item|product) )?(length|אורך)$/i],
   ["chairsIncluded", "Chairs included", /^(chairs included|includes chairs)$/i],
@@ -47,7 +49,7 @@ const aliases = [
   ["brightness", "Brightness", /^(brightness|בהירות)(?:\s*\(.*\))?$/i],
   ["contrastRatio", "Contrast ratio", /^(contrast ratio|ניגודיות)$/i],
   ["hdr", "HDR", /^hdr$/i],
-  ["features", "Features", /^(features|תכונות|תכונות נוספות)$/i],
+  ["features", "Features", /^(features|additional features|תכונות|תכונות נוספות)$/i],
   ["viewingAngle", "Viewing angle", /^(viewing angle|זווית צפיה)$/i],
   ["powerSupply", "Power supply", /^(power supply|סוג שנאי)$/i],
   ["resolution", "Resolution", /^רזולוצית מסך$/],
@@ -72,7 +74,7 @@ const aliases = [
   ["bezelWidth", "Bezel width", /^רוחב מסגרת$/],
   ["type", "Product type", /^סוג מוצר$/],
 ];
-const nonSpecification = /(?:price|shipping|delivery|returns?|warranty|seller|retailer|review|rating|attribute name|sku|\bupc\b|\bean\b|gtin|mpn|model(?: number)?|product id|product line|unit type|unit quantity|asin|url|description|overview|about|style|מחיר|משלוח|אחריות|קטלוג|יבואן|מבצע|הערה|מק["״]?ט)/i;
+const nonSpecification = /(?:price|cost|cybersecurity|insurance|protection plan|purchase|payment|shipping|delivery|returns?|warranty|seller|retailer|review|rating|attribute name|sku|\bupc\b|\bean\b|gtin|mpn|model(?: number)?|product id|product line|unit type|unit quantity|asin|url|description|overview|about|style|מחיר|משלוח|אחריות|קטלוג|יבואן|מבצע|הערה|מק["״]?ט)/i;
 export function cleanText(value) {
   return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Math.min(Number(code), 0x10ffff))).replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/\s+/g, " ").trim();
 }
@@ -95,7 +97,7 @@ function normalizedValue(id, raw, unit = "") {
   let value = cleanText(`${valueText(raw)} ${unit}`).replace(/\b(?:inches|inch)\b|אינטש|אינץ['׳]?/gi, "in").replace(/(\d)\s*["″]/g, "$1 in").replace(/\bkilograms?\b|ק["״]ג/gi, "kg").replace(/\bcentimeters?\b|ס["״]מ/gi, "cm").replace(/\bmillimeters?\b|מ["״]מ/gi, "mm");
   if (/^(?:yes|true|supported|כן|יש|קיים)$/i.test(value)) return "Yes";
   if (/^(?:no|false|not supported|לא|אין|ללא)$/i.test(value)) return "No";
-  if (/^(?:n\/a|unknown|not specified|not available|-|null|undefined)$/i.test(value)) return "";
+  if (/^(?:n\/?a|unknown|not specified|not available|-|null|undefined)$/i.test(value)) return "";
   value = value.replace(/(\d)\s*(kg|cm|mm|hz|ms|gb|tb|mah|w|in)\b/gi, (_, n, u) => `${n} ${{hz:"Hz",gb:"GB",tb:"TB",mah:"mAh",w:"W"}[u.toLowerCase()] ?? u.toLowerCase()}`);
   if (id === "weight" && /^\d+(?:\.\d+)?\s*g$/i.test(value)) return `${parseFloat(value) / 1000} kg`;
   if (id === "brand") return value.toUpperCase();
@@ -106,6 +108,7 @@ function normalizedValue(id, raw, unit = "") {
   if (id === "ports") value = value.replace(/displayport/gi, "DisplayPort").replace(/hdmi/gi, "HDMI").replace(/usb[- ]c/gi, "USB-C");
   if (id === "voltage") value = value.replace(/(\d)\s*v(?:olts?)?\b/gi, "$1 V");
   if (id === "type" && /^rechargeable batter(?:y|ies)$/i.test(value)) value = "Battery";
+  if (id === "packSize" && /^\d+\s*(?:count|pieces?|items?|pack)?$/i.test(value)) return `${parseInt(value, 10)} pack`;
   if (id === "batteryCapacity") {
     const capacity = value.match(/^([\d.]+)\s*(m?Ah)$/i);
     if (capacity) return `${Number(capacity[1]) * (/^Ah$/i.test(capacity[2]) ? 1000 : 1)} mAh`;
@@ -137,17 +140,17 @@ export function structuredAttributes(pairs) {
     const rawName = cleanText(pair.name).replace(/\b(?:exited tooltip|opens in a new window)\b/gi, "").replace(/[:：]$/, "").replace(/[-_]/g, " ").trim();
     const unit = rawName.match(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i)?.[1];
     const sourceName = rawName.replace(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i, "").replace(/^monitor\s+/i, "").trim();
-    const name = englishLabel(sourceName) || sourceName;
+    const name = englishLabel(sourceName) || specificationText(sourceName) || sourceName;
     if (!name || name.length > 64 || /\uFFFD/.test(name) || nonSpecification.test(name) || /^(?:parameter|specification|פרמטר|דגם|מספר ספק|קישור ליצרן|זמן אספקה|תנאי תשלום|יתרון|תועלת)$/i.test(name)) continue;
     const alias = aliases.find(([, , match]) => match.test(name) || match.test(sourceName));
-    const label = alias?.[1] ?? englishLabel(name);
+    const label = alias?.[1] ?? (englishLabel(name) || specificationText(name));
     if (!label) continue;
     const id = alias?.[0] ?? `spec:${name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_")}`;
     const values = [pair.value].flat().flatMap(raw => {
       const text = valueText(raw);
       const parts = ["ports", "connectivity", "adaptiveSync", "standAdjustments", "features", "material", "color", "capacity"].includes(id) ? text.split(/,\s+|[;|]|\s+(?:and|&|\/)\s+/i) : [raw];
       return parts.map(part => normalizedValue(id, part, pair.unit || (/^\d+(?:\.\d+)?$/.test(valueText(part)) ? unit : "")));
-    }).map(value => englishText(value, id === "brand")).filter(value => value && value.length <= 100 && !/https?:|www\.|out of stock|in stock/i.test(value));
+    }).map(specificationText).filter(value => value && value.length <= 100 && !/https?:|www\.|out of stock|in stock/i.test(value));
     if (!values.length) continue;
     const basePorts = id === "ports" ? values.flatMap(value => value.match(/HDMI|DisplayPort|USB-C|Thunderbolt|DVI|VGA/gi) ?? []) : [];
     attributes[id] = [...new Set([...[attributes[id] ?? []].flat(), ...values, ...basePorts])];

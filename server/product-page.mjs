@@ -130,7 +130,7 @@ export function extractProductData(html, baseUrl = "") {
   const title = expandedTitle || product.name || dom.title || dom.pageTitle || meta(html, "og:title") || html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]*>/g, " ").trim();
   const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers ?? {};
   const specification = Array.isArray(offer.priceSpecification) ? offer.priceSpecification[0] : offer.priceSpecification ?? {};
-  const imageUrls = [...new Set([...dom.images.map(value => productImageUrl(value, baseUrl)), ...productImages(html, product, title, baseUrl)].filter(value => value && !/logo|placeholder|favicon/i.test(value)))];
+  const imageUrls = [...new Set([...dom.images.map(value => productImageUrl(value, baseUrl)), ...productImages(html, product, title, baseUrl)].filter(value => value && !/logo|placeholder|favicon|siteicons|saveshippingicon/i.test(value)))];
   const scope = htmlScope(html);
   const metaPrice = meta(html, "product:price:amount") || meta(html, "og:price:amount") || attributeValue(html, "itemprop", "price");
   const dataPrice = scope.match(/\bdata-(?:product-)?price=["']([^"']+)/i)?.[1];
@@ -144,11 +144,11 @@ export function extractProductData(html, baseUrl = "") {
   return {
     isCatalog: !product.name && (dom.isCatalog || found.length > 1 || /["']@type["']\s*:\s*["']ItemList["']/i.test(html)),
     isProduct: !!product.name || dom.isProduct || !!metaPrice || /(?:add.to.cart|הוסף.{0,12}לסל|הוספה.{0,12}לסל)/i.test(scope),
-    title,
+    title: decode(title),
     gtin: String(product.gtin ?? product.gtin13 ?? product.gtin14 ?? product.gtin12 ?? product.gtin8 ?? "").trim(),
     mpn: String(product.mpn ?? "").trim(),
     brand: typeof product.brand === "string" ? product.brand : product.brand?.name,
-    specifications: [...extractNamedSpecifications(scope + dom.specificationsHtml, product), ...dom.namedProperties],
+    specifications: [...extractNamedSpecifications(dom.specificationsHtml || scope, product), ...dom.namedProperties],
     specificationText: [product.model, product.mpn, product.description, dom.description, ...[product.additionalProperty ?? []].flat().map((property) => `${property.name ?? ""} ${property.value ?? ""} ${property.unitText ?? ""}`)].filter(Boolean).join(" ").replace(/<[^>]*>/g, " ").slice(0, 18000),
     categoryText: [product.category, dom.categoryText].filter(Boolean).join(" "),
     imageUrl: imageUrls[0] ?? "",
@@ -166,9 +166,9 @@ export function extractProductData(html, baseUrl = "") {
   };
 }
 export function productAvailability(value) {
-  const status = String(value ?? "").split(/[/#]/).pop().toLowerCase().replace(/[\s_-]/g, "");
+  const status = String(value ?? "").split(/[/#]/).pop().toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
   if (["אזלהמלאי", "חסרבמלאי", "לאבמלאי", "המוצראזלבמלאי"].includes(status)) return "Out of stock";
-  if (["outofstock", "soldout", "discontinued"].includes(status)) return "Out of stock";
+  if (["outofstock", "soldout", "discontinued", "currentlyunavailable", "temporarilyoutofstock"].includes(status)) return "Out of stock";
   return "";
 }
 export async function readProductHtml(response) {

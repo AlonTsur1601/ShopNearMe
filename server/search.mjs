@@ -2,7 +2,7 @@ import { enrichProductPage, isSearchResultsUrl, productImageUrl } from "./produc
 import { localizeOffers } from "./currency.mjs";
 import { extractNamedSpecifications, monitorAttributes, proseAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
 import { amountInCurrency, costBreakdown } from "./costs.mjs";
-import { englishLabel, normalizeOfferFacets, translateTerms } from "./facet-language.mjs";
+import { englishLabel, normalizeOfferFacets, specificationText, translateTerms } from "./facet-language.mjs";
 import { fetchJson, mapConcurrent, searchProvider } from "./providers.mjs";
 import { productWords, contradictsQuery, sameProductIdentity } from "./product-identity.mjs";
 import { budgetFetch, deadlineError, searchContext, withSearchBudget } from "./search-budget.mjs";
@@ -347,7 +347,7 @@ export function merchantWebsite(value) {
 }
 
 function nearbyProductOffers(maps, offers) {
-  return offers.filter(offer => offer.category === "order" && offer.itemPrice !== null && !!offer.imageUrl && maps.some(store => storeMatchesProduct(store, offer)))
+  return offers.filter(offer => offer.category === "order" && offer.localEligible !== false && offer.itemPrice !== null && !!offer.imageUrl && maps.some(store => storeMatchesProduct(store, offer)))
     .map(offer => ({ ...offer, id: `${offer.id}-pickup`, category: "local", totalPrice: offer.itemPrice, shippingPrice: null, importTaxPrice: null, taxPrice: null, otherFeesPrice: 0, importTaxUnknown: false, totalEstimated: true, pickupVerified: false, availability: "Branch stock not verified" }));
 }
 
@@ -370,7 +370,7 @@ function valuesForFacet(offer, id) {
 function facetDefinitions(offers, query) {
   const specificIds = new Set((productRules.find((group) => group.match.test(query))?.rules ?? []).map(({ id }) => id));
   const discovered = new Map(offers.flatMap(offer => Object.entries(offer.attributeLabels ?? {})));
-  const definitions = [["condition", "Condition"], ...rulesFor(query).map(({ id, label }) => [id, id === "brand" ? "Manufacturer" : label]), ...discovered, ["retailer", "Retailer"]].filter(([, label]) => englishLabel(label));
+  const definitions = [["condition", "Condition"], ...rulesFor(query).map(({ id, label }) => [id, id === "brand" ? "Manufacturer" : label]), ...discovered, ["retailer", "Retailer"]].filter(([, label]) => englishLabel(label) || specificationText(label));
   return { definitions: definitions.filter(([id], index) => definitions.findIndex(([other]) => other === id) === index), discovered, specificIds };
 }
 
@@ -877,9 +877,9 @@ function verifiedRetailOffer(record, query) {
     subtitle: page.specificationText?.slice(0, 150) || "", imageUrl: page.imageUrl, imageUrls: page.imageUrls ?? [],
     destinationUrl: link, linkLabel: "View product", itemPrice: page.price, totalPrice: page.price,
     shippingPrice: null, currency: page.currency, totalEstimated: true, priceVerified: page.priceSource !== "indexed",
-    availability: page.availability || "", rating: 0, reviewCount: 0,
+    availability: page.availability || "", condition: page.condition, localEligible: page.localEligible, inStoreOnly: page.inStoreOnly, rating: 0, reviewCount: 0,
     gtin: page.gtin, mpn: page.mpn, productBrand: page.brand,
-    attributes: attributesFor(query, `${page.title} ${page.specificationText ?? ""}`, undefined, merchant, page),
+    attributes: attributesFor(query, `${page.title} ${page.specificationText ?? ""}`, page.condition, merchant, page),
     attributeLabels: attributeLabelsFor(query, page.title || record.title, page),
   };
 }
@@ -901,14 +901,15 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const tld = countryTlds.get(country);
     const retailQuery = country ? `${localizedQuery} ${country === "IL" ? "מחיר" : "price"}${tld ? ` site:${tld}` : ` ${country}`}` : `${query} price`;
     const nearbyQuery = scope !== "online" && scope !== "local-products" && (point || (location && location !== "Current location")) ? `${localizedQuery} ${providerLocation(productLocation)} ${country === "IL" ? "מחיר" : "price"}` : undefined;
+    const originJob = Promise.resolve(point || (scope !== "online" && location && location !== "Current location" ? namedLocationCoordinates(location) : undefined));
     const discoveryJob = (config.provider === "octoparse" ? discoverOctoparseProducts : discoverRetailProducts)({ query, country, localizedQuery, retailQuery, nearbyQuery, config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline });
     const marketplaceJob = scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);
     const placesJob = config.provider === "octoparse" || scope === "online" || scope === "local-products" || (!point && (!location || location === "Current location")) ? Promise.resolve([]) : (async () => {
-      const origin = point || await namedLocationCoordinates(location);
+      const origin = await originJob;
       if (!origin) return [];
       const [osm, branches] = await Promise.allSettled([
         osmStores(query, productLocation, origin),
-        discoveryJob.then(discovery => photonStores([...new Set(discovery.products.map(product => new URL(product.link).hostname).filter(host => host.endsWith(".il")).map(host => host.replace(/^www\./, "").split(".")[0]))].slice(0, 3), origin)),
+        discoveryJob.then(discovery => photonStores([...new Set(discovery.products.filter(product => product.page.localEligible !== false).map(product => new URL(product.link).hostname).filter(host => host.endsWith(".il") || host === "www.ikea.com").map(host => host.replace(/^www\./, "").split(".")[0]))].slice(0, 5), origin)),
       ]);
       const found = [...(osm.status === "fulfilled" ? osm.value : []), ...(branches.status === "fulfilled" ? branches.value : [])];
       if (!found.length && osm.status === "rejected" && branches.status === "rejected") throw osm.reason;
@@ -916,15 +917,16 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     })();
     const [discoveryState, marketplaceState, placesState] = await Promise.allSettled([discoveryJob, marketplaceJob, placesJob]);
     const discovery = discoveryState.status === "fulfilled" ? discoveryState.value : { products: [], sourceStatus: [{ source: "retail", status: "failed", code: discoveryState.reason?.code || "search_unavailable" }], diagnostics: {} };
-    const online = discovery.products.map(record => verifiedRetailOffer(record, query));
-    const origin = point || (nearbyQuery && discovery.places?.length ? await namedLocationCoordinates(location) : undefined);
+    const retailOffers = discovery.products.map(record => verifiedRetailOffer(record, query));
+    const online = retailOffers.filter(offer => !offer.inStoreOnly);
+    const origin = await originJob;
     const places = [...(placesState.status === "fulfilled" ? placesState.value : []), ...(discovery.places ?? []).map((place, index) => mapOffer(place, index, query, origin))];
-    const localOffers = scope === "online" || scope === "local-products" ? [] : mergeLocalProducts(places, nearbyProductOffers(places, online));
+    const localOffers = scope === "online" || scope === "local-products" ? [] : mergeLocalProducts(places, nearbyProductOffers(places, retailOffers));
     // A merchant can publish its own store coordinates even when the map index has no entry.
-    if (point && scope !== "online" && scope !== "local-products") for (const record of discovery.products) {
-      const offer = online.find(item => item.id === `retail-${record.id}`);
-      if (!offer || localOffers.some(item => item.destinationUrl === offer.destinationUrl)) continue;
-      const branch = (record.page.locations ?? []).map(place => ({ ...place, distance: distanceMiles(point, place) })).filter(place => place.distance <= 50).sort((a, b) => a.distance - b.distance)[0];
+    if (origin && scope !== "online" && scope !== "local-products") for (const record of discovery.products) {
+      const offer = retailOffers.find(item => item.id === `retail-${record.id}`);
+      if (!offer || offer.localEligible === false || localOffers.some(item => item.destinationUrl === offer.destinationUrl)) continue;
+      const branch = (record.page.locations ?? []).map(place => ({ ...place, distance: distanceMiles(origin, place) })).filter(place => place.distance <= 50).sort((a, b) => a.distance - b.distance)[0];
       if (branch) localOffers.push({ ...offer, id: `${offer.id}-pickup`, category: "local", distanceMiles: branch.distance, pickupVerified: false, subtitle: branch.address || offer.subtitle });
     }
     const marketplace = marketplaceState.status === "fulfilled" ? marketplaceState.value : [];

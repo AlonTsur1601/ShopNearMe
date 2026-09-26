@@ -2,9 +2,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractProductData } from "./product-page.mjs";
 import { buildFacets, searchCatalog } from "./search.mjs";
 import { monitorAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
+import { normalizeOfferFacets } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("specification-driven facets", () => {
+  it("preserves source-backed technical vocabulary across extraction, normalization and facet building", () => {
+    const specs = structuredAttributes([{ name: "Material type", value: "Borosilicate" }, { name: "Magnet composition", value: "Neodymium" }, { name: "Additional features", value: "Dimmable" }, { name: "Brand name", value: "Maker" }, { name: "One-time purchase", value: "$99" }, { name: "Color", value: "Other" }]);
+    const offer = normalizeOfferFacets({ attributes: specs.attributes, attributeLabels: specs.labels });
+    expect(offer.attributes).toMatchObject({ material: ["Borosilicate"], "spec:magnet_composition": ["Neodymium"], features: ["Dimmable"], brand: ["MAKER"] });
+    expect(offer.attributes.color).toBeUndefined();
+    expect(offer.attributes["spec:one_time_purchase"]).toBeUndefined();
+    expect(buildFacets([offer], "glass bowl").find(facet => facet.id === "spec:magnet_composition")?.options).toEqual([{ value: "Neodymium", count: 1 }]);
+  });
   it("rejects storage-sized values mislabeled as laptop memory", () => {
     expect(structuredAttributes([{ name: "Memory", value: "2 TB" }]).attributes.memory).toBeUndefined();
     expect(structuredAttributes([{ name: "Memory", value: "32 GB DDR5" }]).attributes.memory).toEqual(["32 GB"]);

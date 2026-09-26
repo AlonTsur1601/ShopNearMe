@@ -16,7 +16,7 @@ function providerError(status, headers = {}, message = "Bright Data search faile
 }
 
 // This client is server-only. A zone must be explicitly configured, never guessed.
-export function brightDataSearchUrl({ query, kind = "web", country, language = "en", location, coordinates, start = 0, engine = "google", light = false }) {
+export function brightDataSearchUrl({ query, kind = "web", country, language = "en", location, coordinates, start = 0, engine = "google" }) {
   if (!["web", "shopping", "maps"].includes(kind)) throw new Error("Unsupported search kind");
   if (!String(query ?? "").trim()) throw new Error("A search query is required");
   if (!["google", "bing"].includes(engine) || (engine === "bing" && kind !== "web")) throw new Error("Unsupported search engine");
@@ -29,7 +29,8 @@ export function brightDataSearchUrl({ query, kind = "web", country, language = "
     return url.href;
   }
   url.searchParams.set("hl", /^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(language) ? language : "en");
-  url.searchParams.set("brd_json", light ? "parsed_light" : "1");
+  // parsed_light is a proxy request header, not a brd_json URL value.
+  url.searchParams.set("brd_json", "1");
   url.searchParams.set("brd_browser", "chrome");
   if (/^[a-z]{2}$/i.test(country ?? "")) url.searchParams.set("gl", country.toLowerCase());
   if (Number.isInteger(start) && start > 0) url.searchParams.set("start", String(start));
@@ -66,7 +67,7 @@ export async function brightDataSearch(request, config, timeoutMs = 20000) {
         const response = await budgetFetch("https://api.brightdata.com/request", {
           method: "POST",
           headers: { Authorization: "Bearer " + config.apiKey, "Content-Type": "application/json" },
-          body: JSON.stringify({ zone: config.zone, url, format: "json" }),
+          body: JSON.stringify({ zone: config.zone, url, format: "json", ...(/^[a-z]{2}$/i.test(request.country ?? "") ? { country: request.country.toLowerCase() } : {}) }),
           signal: AbortSignal.timeout(attempt ? Math.min(timeoutMs, 1500) : timeoutMs),
         });
         // Never expose upstream error text: it may echo request credentials.

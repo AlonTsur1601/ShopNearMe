@@ -60,11 +60,11 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
   const readPage = dependencies.readPage ?? ((url, allowPaid) => readMerchantProduct(url, allowPaid ? config : { ...config, productZone: undefined }, deadline - 300));
   const readCatalog = dependencies.readCatalog ?? catalogProductLinks;
   const backup = dependencies.backup ?? backupSearch;
-  const directStores = dependencies.directStores ?? (config?.directRetailers && country === "IL" ? searchRetailerSites : async () => ({ products: [], sourceStatus: [] }));
+  const directStores = dependencies.directStores ?? (config?.directRetailers ? searchRetailerSites : async () => ({ products: [], sourceStatus: [] }));
   const openSearch = dependencies.openSearch ?? (config?.directRetailers ? duckduckgoProducts : null);
   const products = new Map(), seen = new Set(), sourceStatus = [], diagnostics = { candidates: 0, rejected: 0, verified: 0 };
   // Reserve merchant reading time. A slow engine cannot discard products from the other.
-  const discoveryDeadline = Math.min(deadline - 3500, Date.now() + 9500);
+  const discoveryDeadline = Math.min(deadline - 3500, Date.now() + 11500);
   const productDeadline = deadline - 300;
   const inspect = async (item, followCatalog = true) => {
     if (seen.has(item.link) || Date.now() >= productDeadline) return;
@@ -101,7 +101,7 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
     await Promise.allSettled(list.map(({ item }) => inspect(item)));
   };
   const jobs = [
-    Promise.resolve().then(() => directStores({ query, localizedQuery, relevant, isCatalog, deadline: productDeadline })).then(direct => {
+    Promise.resolve().then(() => directStores({ query, country, localizedQuery, relevant, isCatalog, deadline: productDeadline })).then(direct => {
       sourceStatus.push(...direct.sourceStatus);
       for (const item of direct.products) if (!products.has(item.link)) products.set(item.link, item);
       diagnostics.verified = products.size;
@@ -119,14 +119,19 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
   }));
   // Give fast, free merchant catalogs and open search the first chance. The
   // paid search provider is a fallback when they cannot supply a useful cohort.
-  if (config?.directRetailers) await bounded(() => Promise.allSettled(jobs), Math.min(discoveryDeadline, Date.now() + 6500)).catch(() => {});
+  if (config?.directRetailers) await bounded(() => Promise.allSettled(jobs), Math.min(discoveryDeadline, Date.now() + 400)).catch(() => {});
   const merchantCount = new Set([...products.values()].map(item => new URL(item.link).hostname)).size;
-  const providerJobs = (!dependencies.search && (!config?.apiKey || !config?.zone)) || (products.size >= 6 && merchantCount >= 2) ? [] : [
+  const requests = config?.directRetailers ? [
+    // One general retailer lookup, with enough time left to read the returned
+    // merchant pages. Four late parallel requests used up both time and quota.
+    { engine: "google", query: retailQuery || localizedQuery, country, language: country === "IL" && /[\u0590-\u05ff]/.test(localizedQuery) ? "he" : "en" },
+  ] : [
     { engine: "google", query: localizedQuery, country, language: country === "IL" && /[\u0590-\u05ff]/.test(localizedQuery) ? "he" : "en", light: true },
     { engine: "bing", query, country, language: "en" },
     ...(retailQuery ? [{ engine: "google", query: retailQuery, country, language: country === "IL" ? "he" : "en", light: true }] : []),
     { engine: "google", query: nearbyQuery || localizedQuery, country, language: country === "IL" ? "he" : "en", kind: "shopping" },
-  ].map(async request => {
+  ];
+  const providerJobs = (!dependencies.search && (!config?.apiKey || !config?.zone)) || (products.size >= 6 && merchantCount >= 2) ? [] : requests.map(async request => {
     const status = { source: request.kind || request.engine, status: "pending", candidates: 0 };
     sourceStatus.push(status);
     try {

@@ -10,10 +10,10 @@ const options = () => ({ query: "desk lamp", country: "IL", config: {}, relevant
 const product = (changes = {}) => ({ isProduct: true, title: "Desk lamp", price: 39, currency: "ILS", imageUrl: "https://merchant.example/lamp.jpg", ...changes });
 const organic = links => ({ organic: links.map(link => ({ title: "Desk lamp", link })) });
 
-it("uses independent engine URLs and a lightweight Google response", () => {
+it("uses independent engine URLs and the documented parsed Google response", () => {
   const google = new URL(brightDataSearchUrl({ query: "desk lamp", light: true }));
   const bing = new URL(brightDataSearchUrl({ query: "desk lamp", engine: "bing", country: "IL" }));
-  expect(google.searchParams.get("brd_json")).toBe("parsed_light");
+  expect(google.searchParams.get("brd_json")).toBe("1");
   expect(bing.hostname).toBe("www.bing.com");
   expect(bing.searchParams.get("cc")).toBe("il");
   expect(bing.searchParams.has("udm")).toBe(false);
@@ -73,7 +73,7 @@ it("validates fast results before the other engine settles and retains them on t
   const task = discoverRetailProducts(options(), { search: ({ engine, kind }) => kind === "shopping" ? Promise.resolve({ shopping: [] }) : engine === "bing" ? Promise.resolve(organic(["https://merchant.example/lamp"])) : new Promise(() => {}), readPage });
   await vi.advanceTimersByTimeAsync(1);
   expect(readPage).toHaveBeenCalledTimes(1);
-  await vi.advanceTimersByTimeAsync(9500);
+  await vi.advanceTimersByTimeAsync(16000);
   const result = await task;
   expect(result.products).toHaveLength(1);
   expect(result.sourceStatus).toContainEqual(expect.objectContaining({ source: "google", status: "failed", code: "search_timeout" }));
@@ -123,4 +123,13 @@ it("integrates real merchant evidence into local and online offers without map p
   expect(result.offers.every(item => !item.potentialStore)).toBe(true);
   expect(result.sourceStatus.every(source => source.status === "completed")).toBe(true);
   expect(result.facets.some(facet => facet.id === "retailer" && facet.options.length === 2)).toBe(true);
+});
+
+it("sends the documented proxy country alongside the Google country parameter", async () => {
+  let body;
+  vi.stubGlobal("fetch", vi.fn(async (_url, init) => { body = JSON.parse(init.body); return Response.json({ organic: [] }); }));
+  await brightDataSearch({ query: "country targeting verification", country: "IL", noRetry: true }, { apiKey: "country-test", zone: "test" });
+  expect(body.country).toBe("il");
+  expect(new URL(body.url).searchParams.get("gl")).toBe("il");
+  expect(new URL(body.url).searchParams.get("brd_json")).toBe("1");
 });

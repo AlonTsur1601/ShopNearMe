@@ -5,6 +5,15 @@ import { proseAttributes } from "./specifications.mjs";
 import { translateTerms } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
+it("reads Amazon product details and excludes recommendation prices and specifications", () => {
+  const html = '<div class="a-price"><span class="a-offscreen">$2.00</span></div><div id="dp-container"><h1 id="productTitle">Desk lamp Black</h1><div id="corePrice_feature_div"><span class="a-price a-text-price"><span class="a-offscreen">$99.00</span></span><span class="a-price"><span class="a-offscreen">$29.95</span></span></div><img id="landingImage" src="https://m.media-amazon.com/lamp.jpg"><div id="feature-bullets">Black Metal lamp.</div><table id="productDetails_techSpec_section_1"><tr><th>Material</th><td>Metal</td></tr><tr><th>Color</th><td>Black</td></tr></table><table><tr><th>Trusted cybersecurity</th><td>Digital security</td></tr></table><div id="sims-recommendations"><table><tr><th>Color</th><td>Pink</td></tr></table></div><div id="availability">Currently unavailable.</div></div>';
+  const page = extractProductData(html, "https://www.amazon.com/dp/B012345678");
+  expect(page).toMatchObject({ isProduct: true, title: "Desk lamp Black", price: 29.95, imageUrl: "https://m.media-amazon.com/lamp.jpg" });
+  expect(page.specifications).toContainEqual(expect.objectContaining({ name: "Material", value: "Metal" }));
+  expect(page.specifications).not.toContainEqual(expect.objectContaining({ value: "Pink" }));
+  expect(page.specifications).not.toContainEqual(expect.objectContaining({ name: "Trusted cybersecurity" }));
+  expect(page.availability).toBe("Out of stock");
+});
 it("uses the product's price and gallery instead of earlier promotional cards", () => {
   const page = extractProductData('<div class="price">789 ₪</div><img src="/promotion.jpg"><div id="product-page" class="single-product"><h1>Wireless mouse</h1><div class="single-price"><span class="price">99 ₪</span><div id="eilat-price">83 ₪</div></div><div class="single-gallery"><img src="/mouse.jpg"></div><button>Add to cart</button></div>', "https://merchant.co.il/product/mouse");
   expect(page).toMatchObject({ isProduct: true, price: 99, imageUrl: "https://merchant.co.il/mouse.jpg" });
