@@ -194,11 +194,11 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
       try {
         let state = states[request.key];
         if (state?.status === "failed" && !config.continuation && state.retryAt <= Date.now()) state = undefined;
-        if (!state || state.deferred) {
+        if (!state || state.deferred && !(state.nextPollAt > Date.now())) {
           // Parsing/export may use most of this request's deadline. Start the
           // next phase in a fresh request instead of losing an accepted run.
           if (searchContext()?.deadline - Date.now() < 8000) {
-            state = { status: "pending", deferred: true, rows: [], nextPollAt: Date.now() + 1000 };
+            state = { ...state, status: "pending", deferred: true, rows: [], nextPollAt: Date.now() + 1000 };
           } else state = { ...await start(request.role, request.template, request.values, apiKey), ...(request.template === 1395 ? { requestedUrls: request.values["URLs (up to 10,000 per run)"] } : {}) };
         }
         states[request.key] = state;
@@ -227,8 +227,10 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
           return;
         }
         const transient = /Timeout|Abort/.test(error.name) || error.code === "search_timeout" || error.code === "incomplete_export";
-        if (existing?.taskId && transient && (existing.attempts || 0) < 2) {
-          states[request.key] = { ...existing, ...(["completed", "empty", "failed"].includes(existing.status) ? { exportStatus: existing.status } : {}), status: "pending", rows: [], attempts: (existing.attempts || 0) + 1, nextPollAt: Date.now() + 15000 };
+        if (transient && (existing?.attempts || 0) < 2) {
+          // The start acknowledgement can time out after Octoparse accepts it.
+          // Resume through the pool lookup, which reuses a matching running lot.
+          states[request.key] = { ...existing, ...(!existing?.taskId ? { deferred: true } : ["completed", "empty", "failed"].includes(existing.status) ? { exportStatus: existing.status } : {}), status: "pending", rows: [], attempts: (existing?.attempts || 0) + 1, nextPollAt: Date.now() + 15000 };
           sourceStatus.push({ source: `${request.key} via Octoparse`, status: "pending" });
         } else {
           states[request.key] = { ...existing, status: "failed", rows: [], code: typeof error.code === "string" ? error.code : transient ? "search_timeout" : "search_unavailable", retryAt: Date.now() + 30000 };
@@ -276,7 +278,7 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
         const branchLinks = [...new Set([...detailPages.branchUrls, ...htmlData("children").branchUrls])].filter(link => !links.includes(link)).slice(0,5);
         if (nearbyQuery && branchLinks.length) await collect({ key: "branchPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": branchLinks, "Wait Before Extraction (seconds)": "3" } });
       }
-      if (nearbyQuery && [...baseProducts, ...detailProducts].length) {
+      if (nearbyQuery && states.children?.status !== "pending" && states.pages?.status !== "pending" && [...baseProducts, ...detailProducts].length) {
         const merchants = [...new Set([...baseProducts, ...detailProducts].filter(product => !/amazon\.|ebay\./.test(product.link)).map(product => new URL(product.link).hostname.replace(/^www\./,"")))].slice(0,5);
         if (merchants.length) await collect({ key: "branches", role: "branches", template: 686, values: { MainKeys: merchants.map(merchant => `${merchant} ${nearbyLocation || ""}`), PageSize: "1" } });
       }
@@ -293,9 +295,18 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     if (![...requests.map(request => request.key), "retailBing", "pages", "children", "branches", "branchPages"].some(key => states[key]?.status === "pending") && products.length && specificationRequests) {
       const searches = specificationRequests(products);
       if (searches.length) {
-        await collect({ key: "content", role: "content", template: 2113, values: { MainKeys: products.map(product => product.link).slice(0,20), Depth: "0", Total_num: "1", Format: "markdown", Output_Field_Name: "content" } });
-        products = recoverOctoparseContent(products, rows.content || []);
-        if (states.content?.status !== "pending" && specificationRequests(products).length) {
+        // Every product gets a source-page recovery attempt. Reuse the content
+        // slot sequentially in bounded batches; the former slice(0,20) skipped
+        // the remaining products permanently when a marketplace returned more.
+        let contentPending = false, contentQuotaExhausted = false;
+        for (let first = 0; first < products.length; first += 20) {
+          const key = first ? `content${first / 20}` : "content";
+          await collect({ key, role: "content", template: 2113, values: { MainKeys: products.slice(first, first + 20).map(product => product.link), Depth: "0", Total_num: "1", Format: "markdown", Output_Field_Name: "content" } });
+          products = recoverOctoparseContent(products, rows[key] || []);
+          if (states[key]?.status === "pending") { contentPending = true; break; }
+          if (states[key]?.code === "quota_exhausted") { contentQuotaExhausted = true; break; }
+        }
+        if (!contentPending && !contentQuotaExhausted && specificationRequests(products).length) {
         await collect({ key: "specSearch", role: "retail", template: 15, values: { MainKeys: searches, Pagination_times: "1" } });
         if (states.specSearch.status !== "pending") {
           const links = [...new Set((rows.specSearch || []).map(row => url(row.Detail_URL)).filter(link => link && !isSearchResultsUrl(link)))].slice(0,20);

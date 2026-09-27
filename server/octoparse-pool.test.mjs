@@ -27,18 +27,21 @@ it("reuses a saved task without creating one and waits for a new exact lot", asy
 });
 
 it("defers a new phase before its deadline and starts it once on continuation", async () => {
+  vi.useFakeTimers();
   const start = vi.fn(async () => ({ taskId: "deferred-test", status: "pending", nextPollAt: Date.now() + 15000 }));
   const read = vi.fn(async task => ({ ...task, status: "empty", rows: [] }));
   const options = { query: "deadline product", country: "IL", relevant: () => true, config: { octoparseApiKey: "deadline-test" } };
   const first = await withSearchBudget(() => discoverOctoparseCatalog(options, { start, read }), 1000);
   expect(first.continuation).toBeTruthy();
   expect(start).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled();
+  vi.setSystemTime(first.nextPollAt + 1);
   await withSearchBudget(() => discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read }));
   expect(start.mock.calls.filter(args => args[0] === "amazon-classic" && args[1] === 1153)).toHaveLength(1);
   expect(start.mock.calls.filter(args => args[0] === "marketplace")).toHaveLength(1);
 });
 
 it("waits for an occupied shared pool slot and resumes without reporting a final failure", async () => {
+  vi.useFakeTimers();
   let busy = true, serial = 0;
   const start = vi.fn(async role => {
     if (role === "amazon-classic" && busy) throw Object.assign(new Error("Occupied"), { code: "provider_busy" });
@@ -50,9 +53,48 @@ it("waits for an occupied shared pool slot and resumes without reporting a final
   expect(first.continuation).toBeTruthy();
   expect(first.sourceStatus.find(source => source.source === "amazon via Octoparse")).toMatchObject({ status: "pending" });
   busy = false;
+  const early = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read });
+  expect(start.mock.calls.filter(args => args[0] === "amazon-classic")).toHaveLength(1);
+  vi.setSystemTime(early.nextPollAt + 1);
   const result = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read });
   expect(result.continuation).toBeUndefined();
   expect(result.sourceStatus.find(source => source.source === "amazon via Octoparse")).toMatchObject({ status: "empty" });
+});
+
+it("resumes an accepted start after an acknowledgement timeout without starting another run", async () => {
+  vi.useFakeTimers();
+  let accepted = false;
+  const request = vi.fn(async path => path.includes("searchTaskList")
+    ? { dataList: [{ taskId: "accepted-start", taskName: "ShopNearMe pool amazon-classic", templateId: 9002 }] }
+    : { userInputParameters: mapping });
+  const call = vi.fn(async name => {
+    if (name === "start_or_stop_task") { accepted = true; throw Object.assign(new Error("Acknowledgement timeout"), { name: "AbortError" }); }
+    return { status: accepted ? "running" : "completed", lotNo: accepted ? "939260363630236299" : "939260363630236298" };
+  });
+  const start = async role => role === "amazon-classic"
+    ? reuseOctoparseTask(role, 9002, { URLs: ["https://merchant.example/product"] }, "accepted-start-test", { request, call, fetcher: async () => Response.json({ data: template }) })
+    : { status: "empty", rows: [] };
+  const read = vi.fn(async task => ({ ...task, status: "empty", rows: [] }));
+  const options = { query: "accepted-start lamp", country: "US", relevant: () => true, config: { octoparseApiKey: "accepted-start-test" } };
+  const first = await discoverOctoparseCatalog(options, { start, read });
+  expect(first.sourceStatus.find(source => source.source === "amazon via Octoparse").status).toBe("pending");
+  vi.setSystemTime(first.nextPollAt + 1);
+  const resumed = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read });
+  expect(resumed.continuation).toBeUndefined();
+  expect(call.mock.calls.filter(args => args[0] === "start_or_stop_task")).toHaveLength(1);
+  expect(read.mock.calls.some(args => args[0].lotNo === "939260363630236299")).toBe(true);
+});
+
+it("recovers source-page specifications for products beyond the first twenty", async () => {
+  let serial = 0;
+  const start = vi.fn(async (role, _id, values) => ({ taskId: String(++serial), status: "pending", role, values }));
+  const read = async task => ({ ...task, status: "completed", rows: task.role === "amazon-classic"
+    ? Array.from({ length: 21 }, (_, index) => ({ Product_URL_clean: `https://www.amazon.com/dp/B${String(index).padStart(9,"0")}`, Product_name: "Studio lamp", Image_link: "https://images.example/lamp.jpg", Current_price: "$40" }))
+    : task.role === "content" ? task.values.MainKeys.map(link => ({ url: link, title: "Studio lamp", content: "Source-backed specification details" })) : [] });
+  const result = await discoverOctoparseCatalog({ query: "all-products lamp", country: "US", relevant: () => true, specificationRequests: () => ["missing specifications"], config: { octoparseApiKey: "all-product-content-test" } }, { start, read });
+  expect(result.products).toHaveLength(21);
+  expect(result.products.every(product => product.page.specificationText.includes("Source-backed specification details"))).toBe(true);
+  expect(start.mock.calls.filter(args => args[0] === "content").map(args => args[2].MainKeys.length)).toEqual([20,1]);
 });
 
 it("exports small pages in order without rounding the run identity", async () => {
