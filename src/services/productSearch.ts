@@ -54,10 +54,21 @@ export async function searchProducts(query: string, location: string, signal?: A
   const normalized = query.trim();
   const budget = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(300000)]);
   let result: ShowcaseSearch | undefined;
+  let retries = 0;
   try {
     do {
       if (result?.pendingSearch) await waitForProvider(Math.max(1000, result.pendingSearch.nextPollAt - Date.now()), budget);
-      result = await searchProductScope(normalized, location, "all", AbortSignal.any([budget, AbortSignal.timeout(20000)]), place, result?.pendingSearch?.continuation);
+      try {
+        result = await searchProductScope(normalized, location, "all", AbortSignal.any([budget, AbortSignal.timeout(20000)]), place, result?.pendingSearch?.continuation);
+        retries = 0;
+      } catch (error) {
+        // A continuation reads the same accepted jobs. A brief network failure
+        // must not drop the products still being exported or start new jobs.
+        const transient = error instanceof TypeError || error instanceof DOMException && error.name === "TimeoutError";
+        if (!result?.pendingSearch || budget.aborted || !transient || retries++ >= 2) throw error;
+        await waitForProvider(1000 * retries, budget);
+        continue;
+      }
     } while (result.pendingSearch);
     return result;
   } catch (error) {

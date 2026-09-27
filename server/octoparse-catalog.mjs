@@ -57,6 +57,9 @@ function htmlSnapshot(result) {
 function restoreHtmlSnapshot(snapshot) {
   return { ...snapshot, locations: new Map(snapshot.locations), observations: new Map(snapshot.observations) };
 }
+function mergeLocations(...groups) {
+  return [...new Map(groups.flat().map(place => [JSON.stringify([place.address, place.name, place.lat, place.lon]), place])).values()];
+}
 function appendHtmlSnapshot(previous, next) {
   if (!previous) return htmlSnapshot(next);
   const before = restoreHtmlSnapshot(previous);
@@ -66,7 +69,7 @@ function appendHtmlSnapshot(previous, next) {
     branchUrls: [...new Set([...before.branchUrls, ...next.branchUrls])],
     blocked: [...new Set([...before.blocked, ...next.blocked])],
     observations: new Map([...before.observations, ...next.observations]),
-    locations: new Map([...before.locations, ...next.locations]),
+    locations: new Map([...new Set([...before.locations.keys(), ...next.locations.keys()])].map(host => [host, mergeLocations(before.locations.get(host) ?? [], next.locations.get(host) ?? [])])),
   });
 }
 function validProduct(page, link, relevant, query) {
@@ -166,7 +169,8 @@ export function productsFromOctoparseHtml(rows, relevant, query) {
       const node = $(anchor), href = url(node.attr("href"), link);
       if (!href) continue;
       const text = [node.text(),node.attr("title"),node.find("img").attr("alt")].filter(Boolean).join(" ").replace(/\s+/g," ").trim();
-      const branchPath = decodeURIComponent(new URL(href).pathname);
+      let branchPath = new URL(href).pathname;
+      try { branchPath = decodeURIComponent(branchPath); } catch { /* One malformed navigation escape cannot discard the merchant's products. */ }
       if (new URL(href).origin === new URL(link).origin && (/(?:^|[\s/_-])(?:stores?|branches|branchs|סניפים|סניף)(?:$|[\s/_-])/i.test(branchPath) || /^(?:our stores|store locator|find a store|branches|הסניפים שלנו|סניפים|איתור סניף)$/i.test(text)) && !/cart|account|privacy/.test(href)) branchUrls.add(href);
       if (/waze\.com|maps\.google|google\.com\/maps/.test(href)) {
         const map = new URL(href), target = map.searchParams.get("ll") || map.searchParams.get("query") || map.searchParams.get("q") || "";
@@ -365,8 +369,8 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     const pages = htmlData("pages", "children", "branchPages");
     let products = recoverOctoparseSpecifications([...new Map([...baseProducts, ...pages.products].map(product => [product.link, product])).values()], pages);
     for (const product of products) {
-      const found = catalogs.locations.get(new URL(product.link).hostname) ?? pages.locations.get(new URL(product.link).hostname);
-      if (found) {
+      const found = mergeLocations(product.page.locations ?? [], catalogs.locations.get(new URL(product.link).hostname) ?? [], pages.locations.get(new URL(product.link).hostname) ?? []);
+      if (found.length) {
         const located = states.branchCoordinates?.byHost?.[new URL(product.link).hostname] ?? [];
         product.page.locations = found.map(place => located.find(saved => saved.address === place.address && saved.name === place.name) ?? place);
       }

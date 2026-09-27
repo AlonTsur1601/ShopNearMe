@@ -66,6 +66,34 @@ it("reuses a saved task without creating one and waits for a new exact lot", asy
   expect(request.mock.calls.some(args => /executeTask|createTask/.test(args[0]))).toBe(false);
 });
 
+it("retains the real UTC start of an existing cloud run across cold requests", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-27T18:44:07Z"));
+  const request = async path => path.includes("searchTaskList") ? { dataList: [{ taskId: "real-start", taskName: "ShopNearMe pool real-start", templateId: 9010, startExecuteDate: "2026-09-27T18:40:07.197" }] } : { userInputParameters: mapping };
+  const call = vi.fn(async () => ({ status: "running", lotNo: "939260363630236301", collectedRows: 2 }));
+  const task = await reuseOctoparseTask("real-start", 9010, { URLs: ["https://merchant.example/product"] }, "real-start-key", { request, call, fetcher: async () => Response.json({ data: template }) });
+  expect(task.startedAt).toBe(Date.parse("2026-09-27T18:40:07.197Z"));
+  expect(call.mock.calls.map(([name]) => name)).toEqual(["get_task_status"]);
+});
+
+it("keeps branch addresses from every exported page and from the catalog", async () => {
+  let serial = 0;
+  const start = async (role, _id, values) => ({ taskId: String(++serial), role, values, status: "pending" });
+  const read = async (task, _key, options = {}) => {
+    if (task.role !== "pages") return { ...task, status: "empty", rows: [] };
+    const catalog = task.values["URLs (up to 10,000 per run)"].includes("https://www.ace.co.il/stores");
+    const chunks = catalog ? [[{ Original_URL: row.Original_URL, Source_code: '<address>First Street, City</address>' }]]
+      : [[{ ...row, Source_code: row.Source_code.replace('</body>', '<address>Second Street, City</address></body>') }], [{ Original_URL: 'https://merchant.example/contact', Source_code: '<address>Third Street, City</address>' }]];
+    let state = task;
+    for (const chunk of chunks) state = { ...state, ...options.consume(chunk, state) };
+    return { ...state, status: "completed", rows: [] };
+  };
+  // Retail indexing supplies the product URL; later HTML chunks supply two
+  // additional branches for the same merchant rather than replacing the first.
+  const readIndexed = (task, key, options) => task.role === "retail" ? Promise.resolve({ ...task, status: "completed", rows: [{ Detail_URL: row.Original_URL }] }) : read(task, key, options);
+  const result = await discoverOctoparseCatalog({ query: "merged-branches lamp", country: "IL", relevant: () => true, config: { octoparseApiKey: "merged-branches-key" } }, { start, read: readIndexed });
+  expect(result.products[0].page.locations.map(place => place.address).sort()).toEqual(["First Street, City", "Second Street, City", "Third Street, City"]);
+});
+
 it("defers a new phase before its deadline and starts it once on continuation", async () => {
   vi.useFakeTimers();
   const start = vi.fn(async () => ({ taskId: "deferred-test", status: "pending", nextPollAt: Date.now() + 15000 }));
@@ -214,10 +242,24 @@ it("keeps a progressing run alive and stops only after it stalls", async () => {
 
 it("rejects missing export rows and oversized datasets instead of reporting success", async () => {
   const call = vi.fn(async () => ({ success: true, data: [{ n: 1 }] }));
-  await expect(readPoolTask({ taskId: "short-export", lotNo: "939260363630236284", status: "completed", collectedRows: 2 }, "key", { call })).rejects.toMatchObject({ code: "incomplete_export" });
+  expect(await readPoolTask({ taskId: "short-export", lotNo: "939260363630236284", status: "completed", collectedRows: 2 }, "key", { call })).toMatchObject({ status: "failed", code: "incomplete_export" });
   call.mockClear();
   await expect(readPoolTask({ taskId: "oversized-export", lotNo: "939260363630236285", status: "completed", collectedRows: 101 }, "key", { call })).rejects.toMatchObject({ code: "incomplete_export" });
   expect(call).not.toHaveBeenCalled();
+});
+
+it("preserves successful export pages when another concurrent page exhausts the allowance", async () => {
+  const call = async (_name, args) => {
+    if (args.page === 1) throw Object.assign(new Error("No allowance"), { code: "quota_exhausted" });
+    return { success: true, data: [{ n: args.page }] };
+  };
+  const result = await readPoolTask({ taskId: "partial-export", lotNo: "939260363630236302", status: "completed", collectedRows: 4 }, "key", { call, pageSize: 1 });
+  expect(result).toMatchObject({ status: "failed", code: "quota_exhausted", completedPages: [2,3,4], rows: [{ n: 2 },{ n: 3 },{ n: 4 }] });
+});
+
+it("keeps a merchant's valid products when an unrelated navigation URL contains malformed escapes", () => {
+  const source = row.Source_code.replace('</body>', '<a href="/unrelated/%ZZ">Account</a></body>');
+  expect(productsFromOctoparseHtml([{ ...row, Source_code: source }], () => true, "lamp").products).toHaveLength(1);
 });
 
 it("reports omitted requested pages while retaining the real products that were returned", async () => {

@@ -51,3 +51,19 @@ it("publishes only the final set while following continuation deadlines", async 
   expect(JSON.parse(fetcher.mock.calls[1][1].body).continuation).toBe("job");
   vi.useRealTimers(); vi.unstubAllGlobals();
 });
+
+it("recovers a transient continuation failure without starting or publishing another search", async () => {
+  vi.useFakeTimers();
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ offers: [], facets: [], pendingSearch: { continuation: "same-job", nextPollAt: Date.now() } }))
+    .mockRejectedValueOnce(new DOMException("Request timeout", "TimeoutError"))
+    .mockResolvedValueOnce(Response.json({ offers: [], facets: [], resultCount: 0, attributesComplete: true }));
+  vi.stubGlobal("fetch", fetcher);
+  let resolved = false;
+  const promise = searchProducts("resumed lamp", "Israel").then(value => { resolved = true; return value; });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(resolved).toBe(false);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(await promise).toMatchObject({ attributesComplete: true });
+  expect(fetcher.mock.calls.slice(1).every(([, init]) => JSON.parse(init.body).continuation === "same-job")).toBe(true);
+  vi.useRealTimers(); vi.unstubAllGlobals();
+});

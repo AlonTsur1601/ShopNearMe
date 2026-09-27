@@ -11,6 +11,12 @@ const leases = new Map();
 const hash = value => createHash("sha256").update(value).digest("hex");
 const failure = code => Object.assign(new Error("Octoparse could not complete the search"), { code });
 const inputHash = input => hash(JSON.stringify(JSON.parse(input).TemplateParameters.sort((a, b) => a.ParamName.localeCompare(b.ParamName))));
+// The task-list API uses startExecuteDate; MCP status carries the lot, not
+// its start time. Zone-less account timestamps are UTC, including on Windows.
+function taskTime(value) {
+  const text = String(value ?? "");
+  return text ? Date.parse(text + (/(?:Z|[+-]\d\d:\d\d)$/i.test(text) ? "" : "Z")) : NaN;
+}
 
 export async function octoparseAccountRequest(path, apiKey, body, fetcher = budgetFetch) {
   if (!apiKey) throw failure("provider_not_configured");
@@ -73,9 +79,9 @@ export async function reuseOctoparseTask(role, templateId, values, apiKey, depen
       const current = await request(`/api/tasks/${task.taskId}/templateMapping`, apiKey);
       const state = await call("get_task_status", { taskId: task.taskId }, apiKey);
       const sameInput = current.userInputParameters && inputHash(current.userInputParameters) === inputHash(input);
-      const ended = Date.parse(String(task.endExecuteTime ?? "") + (String(task.endExecuteTime ?? "").endsWith("Z") ? "" : "Z"));
+      const ended = taskTime(task.endExecuteTime);
       if (sameInput && state.lotNo && (state.status === "running" || (state.status === "completed" && state.collectedRows > 0 && Date.now() - ended < 900000))) {
-        return { taskId: task.taskId, lotNo: state.lotNo, status: "pending", startedAt: Date.parse(task.startExecuteTime) || Date.now(), nextPollAt: state.status === "running" ? Date.now() + 15000 : 0, inputHash: inputHash(input), poolOwner: owner };
+        return { taskId: task.taskId, lotNo: state.lotNo, status: "pending", startedAt: taskTime(task.startExecuteDate ?? task.startExecuteTime) || Date.now(), nextPollAt: state.status === "running" ? Date.now() + 15000 : 0, inputHash: inputHash(input), poolOwner: owner };
       }
       if (state.status === "running") throw failure("provider_busy");
       await request(`/api/tasks/${task.taskId}/templateMapping`, apiKey, {
@@ -150,15 +156,16 @@ export async function readPoolTask(task, apiKey, dependencies = {}) {
     if (searchContext() && searchContext().deadline - Date.now() < 4000) return { ...progress, rows: [] };
     const pages = pendingPages.slice(first, first + 4);
     const exportedPages = await Promise.allSettled(pages.map(page => call("export_data", { taskId: task.taskId, lotNo: task.lotNo, page, pageSize }, apiKey)));
-    let interrupted = false;
+    let interrupted = false, terminalError;
     for (const [index, result] of exportedPages.entries()) {
       if (result.status === "rejected") {
         if (/Timeout|Abort/.test(result.reason?.name) || result.reason?.code === "search_timeout") { interrupted = true; continue; }
-        throw result.reason;
+        terminalError ??= result.reason;
+        continue;
       }
       const exported = result.value;
-      if (!exported.success || !Array.isArray(exported.data)) throw failure("search_unavailable");
-      if (exported.data.length !== Math.min(pageSize, total - (pages[index] - 1) * pageSize)) throw failure("incomplete_export");
+      if (!exported.success || !Array.isArray(exported.data)) { terminalError ??= failure("search_unavailable"); continue; }
+      if (exported.data.length !== Math.min(pageSize, total - (pages[index] - 1) * pageSize)) { terminalError ??= failure("incomplete_export"); continue; }
       progress = dependencies.consume ? { ...progress, ...dependencies.consume(exported.data, progress) }
         : { ...progress, exportRows: [...progress.exportRows, ...exported.data] };
       progress.completedPages.push(pages[index]);
@@ -166,6 +173,10 @@ export async function readPoolTask(task, apiKey, dependencies = {}) {
     }
     // Keep every successfully read page across signed continuations. A later
     // timeout must not discard or re-export the earlier part of a finished lot.
+    if (terminalError) {
+      releaseOctoparseTask(task);
+      return { ...progress, status: "failed", code: terminalError.code || "search_unavailable", rows: progress.exportRows };
+    }
     if (interrupted) return { ...progress, rows: [] };
   }
   if (progress.exportedCount !== total) throw failure("incomplete_export");
