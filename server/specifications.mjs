@@ -148,7 +148,7 @@ export function structuredAttributes(pairs) {
     const id = alias?.[0] ?? `spec:${name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_")}`;
     const values = [pair.value].flat().flatMap(raw => {
       const text = valueText(raw);
-      const parts = ["ports", "connectivity", "adaptiveSync", "standAdjustments", "features", "material", "color", "capacity"].includes(id) ? text.split(/,\s+|[;|]|\s+(?:and|&|\/)\s+/i) : [raw];
+      const parts = ["ports", "connectivity", "adaptiveSync", "standAdjustments", "features", "material", "color", "capacity"].includes(id) ? text.split(/,\s+|[;|]|\s+(?:and|&|\/)\s+|\s*\+\s*/i) : [raw];
       return parts.map(part => normalizedValue(id, part, pair.unit || (/^\d+(?:\.\d+)?$/.test(valueText(part)) ? unit : "")));
     }).map(specificationText).filter(value => value && value.length <= 100 && !/https?:|www\.|out of stock|in stock/i.test(value));
     if (!values.length) continue;
@@ -167,10 +167,26 @@ export function extractNamedSpecifications(html, product = {}) {
   // Named rows only; never assign specifications from a whole page's prose or recommendations.
   const stripped = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "");
   for (const table of stripped.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/gi)) {
-    const rows = [...table[1].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(row => [...row[1].matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(cell => cleanText(cell[1])));
+    const rawRows = [...table[1].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(row => [...row[1].matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(cell => cell[1]));
+    const rows = rawRows.map(cells => cells.map(cleanText));
+    const cellValue = (name, source) => {
+      const id = aliases.find(([, , match]) => match.test(name))?.[0];
+      return cleanText(["material", "color", "features", "ports", "connectivity"].includes(id)
+        ? source.replace(/<\/p>\s*<p\b[^>]*>|<br\s*\/?\s*>/gi, "; ") : source);
+    };
     // Benefit/comparison tables describe marketing claims, not named specifications.
     if (rows[0]?.some(cell => /^(benefit|advantage|why it matters|יתרון|תועלת|למה זה חשוב)$/i.test(cell))) continue;
-    for (const cells of rows) if (cells.length === 2) pairs.push({ name: cells[0], value: cells[1] });
+    // Some shops transpose a specification table: property names in the first
+    // row, this product's values in the second. Multiple value rows are a
+    // comparison/variant table and cannot be assigned to the current product.
+    if (rows.length === 2 && rows[0].length > 2 && rows[1].length === rows[0].length
+      && !/\b(?:colspan|rowspan)\s*=/i.test(table[1])
+      && rows[0].every(name => name && name.length <= 64)
+      && (/<th\b/i.test(table[1]) || rows[0].filter(name => aliases.some(([, , match]) => match.test(name))).length >= 2)) {
+      rows[0].forEach((name, index) => { if (rows[1][index]) pairs.push({ name, value: cellValue(name, rawRows[1][index]) }); });
+      continue;
+    }
+    rows.forEach((cells, index) => { if (cells.length === 2) pairs.push({ name: cells[0], value: cellValue(cells[0], rawRows[index][1]) }); });
   }
   for (const row of stripped.matchAll(/<dt\b[^>]*>([\s\S]*?)<\/dt>\s*<dd\b[^>]*>([\s\S]*?)<\/dd>/gi)) pairs.push({ name: cleanText(row[1]), value: cleanText(row[2]) });
   for (const row of (stripped + " " + (product.description ?? "")).matchAll(/<(?:li|p)\b[^>]*>([\s\S]*?)<\/(?:li|p)>/gi)) {

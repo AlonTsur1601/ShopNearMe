@@ -8,7 +8,8 @@ import { productWords, contradictsQuery, sameProductIdentity } from "./product-i
 import { budgetFetch, deadlineError, searchContext, withSearchBudget } from "./search-budget.mjs";
 import { catalogProductLinks } from "./catalog-products.mjs";
 import { discoverRetailProducts } from "./retail-discovery.mjs";
-import { discoverOctoparseProducts } from "./octoparse-discovery.mjs";
+import { discoverOctoparseCatalog } from "./octoparse-catalog.mjs";
+import { publicSearchError } from "./search-errors.mjs";
 const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), photonStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map(), mapsQuotaBlockedUntil = new Map();
 const CACHE_MS = 15 * 60 * 1000;
 let ebayToken = null;
@@ -873,7 +874,7 @@ function verifiedRetailOffer(record, query) {
   const { page, link, id } = record;
   const merchant = shortRetailerName(new URL(link).hostname.replace(/^www\./, ""));
   return {
-    id: `retail-${id}`, category: "order", title: page.title || record.title, merchant,
+    id: `retail-${id}`, category: /used|refurb|pre.?owned|second.?hand|renewed|occasion|gebraucht/i.test(page.condition || "") ? "secondHand" : "order", title: page.title || record.title, merchant,
     subtitle: page.specificationText?.slice(0, 150) || "", imageUrl: page.imageUrl, imageUrls: page.imageUrls ?? [],
     destinationUrl: link, linkLabel: "View product", itemPrice: page.price, totalPrice: page.price,
     shippingPrice: null, currency: page.currency, totalEstimated: true, priceVerified: page.priceSource !== "indexed",
@@ -890,7 +891,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
   scope = ["all", "online", "local", "local-products"].includes(scope) ? scope : "all";
   query = query.trim();
   const pointKey = validCoordinates(coordinates);
-  const requestKey = `retail-v2|${scope}|${query.toLowerCase()}|${location || ""}|${pointKey ? `${pointKey.lat},${pointKey.lon}` : ""}`;
+  const requestKey = `retail-v3|${config.provider || "legacy"}|${config.continuation || ""}|${scope}|${query.toLowerCase()}|${location || ""}|${pointKey ? `${pointKey.lat},${pointKey.lon}` : ""}`;
   if (inFlight.has(requestKey)) return inFlight.get(requestKey);
   const request = withSearchBudget(async () => {
     const deadline = searchContext().deadline, point = validCoordinates(coordinates);
@@ -901,9 +902,22 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const tld = countryTlds.get(country);
     const retailQuery = country ? `${localizedQuery} ${country === "IL" ? "מחיר" : "price"}${tld ? ` site:${tld}` : ` ${country}`}` : `${query} price`;
     const nearbyQuery = scope !== "online" && scope !== "local-products" && (point || (location && location !== "Current location")) ? `${localizedQuery} ${providerLocation(productLocation)} ${country === "IL" ? "מחיר" : "price"}` : undefined;
+    // Resolving the user's city is independent of product discovery. A city
+    // supplied through WebMCP needs an origin just like the location picker.
     const originJob = Promise.resolve(point || (scope !== "online" && location && location !== "Current location" ? namedLocationCoordinates(location) : undefined));
-    const discoveryJob = (config.provider === "octoparse" ? discoverOctoparseProducts : discoverRetailProducts)({ query, country, localizedQuery, retailQuery, nearbyQuery, config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline });
-    const marketplaceJob = scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);
+    const specificationRequests = records => {
+      const result = makeResult(query, shareProductSpecs(records.map(record => verifiedRetailOffer(record, query))));
+      const labels = new Map(result.facets.map(facet => [facet.id, facet.label]));
+      const missing = result.offers.filter(offer => offer.missingAttributes.length);
+      return Array.from({ length: Math.ceil(missing.length / 8) }, (_, index) => {
+        const group = missing.slice(index * 8, (index + 1) * 8);
+        const lookups = group.map(offer => offer.gtin || (offer.productBrand && offer.mpn ? `${offer.productBrand} ${offer.mpn}` : offer.title));
+        const properties = [...new Set(group.flatMap(offer => offer.missingAttributes.map(id => labels.get(id))))];
+        return `(${lookups.map(value => `"${value.replaceAll('"', '')}"`).join(" OR ")}) specifications ${properties.join(" ")}`;
+      });
+    };
+    const discoveryJob = (config.provider === "octoparse" ? discoverOctoparseCatalog : discoverRetailProducts)({ query, country, localizedQuery, retailQuery, nearbyQuery, nearbyLocation: providerLocation(productLocation), config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline, specificationRequests });
+    const marketplaceJob = config.provider === "octoparse" || scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);
     const placesJob = config.provider === "octoparse" || scope === "online" || scope === "local-products" || (!point && (!location || location === "Current location")) ? Promise.resolve([]) : (async () => {
       const origin = await originJob;
       if (!origin) return [];
@@ -918,8 +932,18 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const [discoveryState, marketplaceState, placesState] = await Promise.allSettled([discoveryJob, marketplaceJob, placesJob]);
     const discovery = discoveryState.status === "fulfilled" ? discoveryState.value : { products: [], sourceStatus: [{ source: "retail", status: "failed", code: discoveryState.reason?.code || "search_unavailable" }], diagnostics: {} };
     const retailOffers = discovery.products.map(record => verifiedRetailOffer(record, query));
-    const online = retailOffers.filter(offer => !offer.inStoreOnly);
+    const online = retailOffers.filter(offer => !offer.inStoreOnly && offer.category !== "secondHand");
+    const scrapedUsed = retailOffers.filter(offer => offer.category === "secondHand");
     const origin = await originJob;
+    if (config.provider === "octoparse" && origin && !discovery.continuation && scope !== "online" && scope !== "local-products") {
+      const addresses = [...new Set(discovery.products.flatMap(record => record.page.locations ?? []).filter(place => !validCoordinates(place) && place.address).map(place => [place.address, place.name, country].filter(Boolean).join(", ")))].slice(0,4);
+      const resolved = new Map();
+      await Promise.all(addresses.map(async address => { const point = await namedLocationCoordinates(address).catch(() => undefined); if (point) resolved.set(address, point); }));
+      for (const record of discovery.products) record.page.locations = (record.page.locations ?? []).flatMap(place => {
+        const point = validCoordinates(place) || resolved.get([place.address, place.name, country].filter(Boolean).join(", "));
+        return point ? [{ ...place, ...point }] : [];
+      });
+    }
     const places = [...(placesState.status === "fulfilled" ? placesState.value : []), ...(discovery.places ?? []).map((place, index) => mapOffer(place, index, query, origin))];
     const localOffers = scope === "online" || scope === "local-products" ? [] : mergeLocalProducts(places, nearbyProductOffers(places, retailOffers));
     // A merchant can publish its own store coordinates even when the map index has no entry.
@@ -929,22 +953,25 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
       const branch = (record.page.locations ?? []).map(place => ({ ...place, distance: distanceMiles(origin, place) })).filter(place => place.distance <= 50).sort((a, b) => a.distance - b.distance)[0];
       if (branch) localOffers.push({ ...offer, id: `${offer.id}-pickup`, category: "local", distanceMiles: branch.distance, pickupVerified: false, subtitle: branch.address || offer.subtitle });
     }
-    const marketplace = marketplaceState.status === "fulfilled" ? marketplaceState.value : [];
+    const marketplace = [...scrapedUsed, ...(marketplaceState.status === "fulfilled" ? marketplaceState.value : [])];
     const offers = scope === "local" ? localOffers : [...localOffers, ...online, ...marketplace];
     // Legacy specification recovery calls the old SERP provider. The Octoparse
     // path extracts source-backed attributes without silently calling Bright Data.
     const completed = config.provider === "octoparse" ? { offers: shareProductSpecs(coalesceOffers(offers)) } : await completeFacetAttributes(offers, query, location, config, deadline);
-    const result = makeResult(query, await localizeOffers(completed.offers, productLocation));
+    const result = makeResult(query, config.provider === "octoparse" ? completed.offers : await localizeOffers(completed.offers, productLocation));
     result.sourceStatus = [
       { source: "Retailer products", status: discovery.continuation ? "pending" : online.length ? "completed" : discovery.sourceStatus.some(item => item.status === "failed") ? "failed" : "empty", products: online.length },
       ...(scope === "online" || scope === "local-products" ? [] : [{ source: "Nearby product availability", status: discovery.sourceStatus.some(source => source.source === "Nearby branches via Octoparse" && source.status === "pending") ? "pending" : localOffers.length ? "completed" : placesState.status === "rejected" ? "failed" : "empty", products: localOffers.length }]),
-      ...(scope === "local" || scope === "local-products" ? [] : [{ source: "Marketplace products", status: marketplaceState.status === "fulfilled" ? "completed" : "failed", products: marketplace.length }]),
+      ...(scope === "local" || scope === "local-products" ? [] : [{ source: "Marketplace products", status: config.provider === "octoparse"
+        ? discovery.sourceStatus.find(source => source.source === "marketplace via Octoparse")?.status === "pending" ? "pending" : marketplace.length ? "completed" : discovery.sourceStatus.find(source => source.source === "marketplace via Octoparse")?.status === "failed" ? "failed" : "empty"
+        : marketplaceState.status === "fulfilled" ? marketplace.length ? "completed" : "empty" : "failed", products: marketplace.length }]),
     ];
     result.discoveryStatus = discovery.sourceStatus;
     if (discovery.continuation) result.pendingSearch = { continuation: discovery.continuation, nextPollAt: discovery.nextPollAt };
     if (config.provider === "octoparse") result.sourceStatus.push(...discovery.sourceStatus.filter(source => source.status === "failed"));
     result.partialFailure = result.sourceStatus.some(source => source.status === "failed");
-    result.warnings = result.sourceStatus.filter(source => source.status === "failed").map(source => source.source + " could not be searched. Please try again.");
+    result.warnings = [...new Set(result.sourceStatus.filter(source => source.status === "failed").map(source => source.code ? publicSearchError({ code: source.code }).error : source.source + " could not be searched. Please try again."))];
+    if (!result.attributesComplete) result.warnings.push("Some product specifications could not be verified. Filters match only confirmed values.");
     const failedDiscovery = discovery.sourceStatus.filter(source => source.status === "failed");
     if (failedDiscovery.length && config.provider !== "octoparse") result.warnings.push(`Some search sources failed: ${[...new Set(failedDiscovery.map(source => `${source.source} (${source.code || "unavailable"})`))].join(", ")}.`);
     if (discovery.sourceStatus.some(source => source.code === "quota_exhausted")) result.warnings.push(`${config.provider === "octoparse" ? "Octoparse" : "Bright Data"} search quota has been used up. The provider did not supply a reset time.`);

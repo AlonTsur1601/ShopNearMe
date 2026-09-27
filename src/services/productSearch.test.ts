@@ -7,7 +7,9 @@ describe("searchProducts", () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ offers: [], facets: [], pendingSearch: { continuation: "next", nextPollAt: 123 } }));
     vi.stubGlobal("fetch", fetch);
     expect((await searchProductScope("mouse", "Israel", "all", undefined, undefined, "signed.token")).pendingSearch?.continuation).toBe("next");
-    expect(fetch.mock.calls[0][0]).toContain("continuation=signed.token");
+    expect(fetch.mock.calls[0][0]).toBe("/api/search");
+    expect(fetch.mock.calls[0][1]).toMatchObject({ method: "POST" });
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toMatchObject({ q: "mouse", continuation: "signed.token" });
   });
 
   it("searches real providers for headphones and Sony instead of substituting demo offers", async () => {
@@ -45,6 +47,7 @@ it("publishes only the final set while following continuation deadlines", async 
   await vi.advanceTimersByTimeAsync(59000);
   expect(resolved).toBe(false); expect(fetcher).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(1000); await promise;
-  expect(resolved).toBe(true); expect(fetcher.mock.calls[1][0]).toContain("continuation=job");
+  expect(resolved).toBe(true); expect(fetcher.mock.calls[1][0]).toBe("/api/search");
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).continuation).toBe("job");
   vi.useRealTimers(); vi.unstubAllGlobals();
 });

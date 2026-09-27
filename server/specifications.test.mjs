@@ -49,6 +49,15 @@ describe("specification-driven facets", () => {
     expect(Object.keys(data.attributes).some(key => /shipping/.test(key))).toBe(false);
   });
 
+  it("reads transposed specification tables without assigning comparison rows to a product", () => {
+    const page = extractProductData('<table><tr><td>צבע</td><td>הספק</td><td>חומר</td><td>מידות</td></tr><tr><td>שחור+לבן</td><td>7W</td><td><p>Glass</p><p>Metal</p></td><td><p>180 x 450</p><p>mm</p></td></tr></table>');
+    expect(structuredAttributes(page.specifications).attributes).toMatchObject({ color: ["Black", "White"], power: ["7 W"], material: ["Glass", "Metal"], dimensions: ["180 x 450 mm"] });
+    const custom = extractProductData('<table><tr><th>Aperture</th><th>Focal length</th><th>Optical design</th></tr><tr><td>130 mm</td><td>650 mm</td><td>Reflector</td></tr></table>');
+    expect(structuredAttributes(custom.specifications).attributes["spec:aperture"]).toEqual(["130 mm"]);
+    const variants = extractProductData('<table><tr><th>Color</th><th>Power</th><th>Material</th></tr><tr><td>Red</td><td>7 W</td><td>Glass</td></tr><tr><td>Blue</td><td>10 W</td><td>Metal</td></tr></table>');
+    expect(variants.specifications).toEqual([]);
+  });
+
   it("normalizes requested monitor specs, multivalues, weights and equivalent labels", () => {
     const specs = structuredAttributes(specificationPairs({
       "Display diagonal": "27 inches", "Screen surface": "anti-glare", "VESA mount": "100 x 100 mm",

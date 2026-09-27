@@ -36,9 +36,10 @@ Read-only tools use `readOnlyHint: true`, and tools that return retailer content
 
 ## Data and request efficiency
 
-- Live web, Shopping and Maps discovery uses Bright Data SERP API. Merchant product pages supply prices, specifications and product images; a Google product-group link is never used as a purchase destination. Used listings also come directly from eBay's Browse API. Credentials stay behind the server-side endpoint.
-- Maps-only businesses are labelled potential retailers, not confirmed product listings. Stock, inaccessible product-page prices and unreported delivery/import charges cannot be guaranteed. Filters include only attributes supported by the retrieved product data; untranslated values are omitted.
-- eBay uses a cached application OAuth token, requests used items deliverable to the detected destination country, and includes item price plus shipping in the displayed total.
+- The active search endpoint uses only Octoparse for product discovery, retailer HTML, marketplace listings, specifications and branch lookup. Credentials stay behind the server-side endpoint. Legacy provider modules remain for regression coverage and are not selected by the endpoint.
+- Listings require an individual product destination, a price and a product image. A Maps directory entry alone is not a product. Local offers require a matching retailer and a nearby branch; branch stock remains unconfirmed unless the source reports it.
+- Filters use source-backed attributes. Missing properties trigger same-product specification recovery; failed recovery remains visible in the results warning rather than introducing invented values.
+- Saved Octoparse tasks are reused by template and role. Cloud acknowledgements are not treated as results; continuations preserve exact run identities and parsed data across serverless workers. The interface waits for the final batch and sends continuations in POST bodies.
 - Identical searches are cached in memory for 15 minutes.
 - Simultaneous identical searches share one in-flight promise.
 - The deployed endpoint sends CDN cache headers (`s-maxage=900`, `stale-while-revalidate=3600`).
@@ -53,7 +54,7 @@ Requirements: Node.js 20+ and npm.
 ```bash
 npm install
 copy .env.example .env.local
-# Add BRIGHTDATA_API_KEY and BRIGHTDATA_SERP_ZONE to .env.local
+# Add OCTOPARSE_API_KEY to .env.local
 npm run dev
 ```
 
@@ -71,7 +72,9 @@ The app is responsive at desktop and phone breakpoints, keyboard-operable, and u
 
 ## Deploy
 
-The repository includes a Vercel serverless endpoint at `api/search.js`, a `vercel.json` deployment config, and a GitHub Actions workflow that runs type checking, tests, and the production build. Add `BRIGHTDATA_API_KEY` and `BRIGHTDATA_SERP_ZONE` as server-side environment variables in the deployment dashboard, then deploy normally. Never prefix secrets with `VITE_`. The production address remains https://shopnearme-webmcp.vercel.app/. Bright Data requests use a 15-minute bounded cache, in-flight deduplication and at most one retry; they consume the configured account's quota. No automatic plan upgrade is performed.
+The repository includes a Vercel serverless endpoint at `api/search.js`, a `vercel.json` deployment config, and a GitHub Actions workflow that runs type checking, tests, and the production build. Add `OCTOPARSE_API_KEY` as a server-side environment variable. Never prefix secrets with `VITE_`. The updated testing address is https://shopnearme-webmcp-testing.vercel.app/. The frozen submission address https://shopnearme-webmcp.vercel.app/ must remain pinned while judging continues.
+
+The account needs saved tasks named `ShopNearMe pool pages` (HTML template 1395), `retail` (Google search 15), `amazon-classic` (1153, one page per query), `marketplace` (eBay 1063), `branches` (Maps 686), `content` (2113), and `retail-bing` (1471), each with the same name prefix. The endpoint never creates a new task per search or upgrades a plan. Template compatibility and site blocking must be verified against the account; available record credits do not guarantee that a website can be scraped. Octoparse cloud runs can take longer than an individual request deadline.
 
 ## Gallery
 

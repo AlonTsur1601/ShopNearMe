@@ -5,6 +5,14 @@ export function publicSearchError(error) {
     quota_exhausted: "Search provider quota has been used up.",
     search_timeout: "The search time limit was reached. Results are incomplete.",
     search_unavailable: "Product search is temporarily unavailable.",
+    provider_not_configured: "Octoparse product search is not configured.",
+    provider_authentication_failed: "Octoparse could not authenticate the search.",
+    provider_busy: "Octoparse is processing another search. Please try again shortly.",
+    task_pool_unavailable: "The reusable Octoparse search tasks are unavailable.",
+    retailer_blocked: "Some retailers blocked product retrieval through Octoparse. Results are incomplete.",
+    incomplete_export: "Octoparse did not return the complete collected dataset. Results are incomplete.",
+    incomplete_retrieval: "Octoparse did not return some requested product pages. Results are incomplete.",
+    provider_rate_limited: "Octoparse temporarily limited search requests. Please try again shortly.",
   };
   return { error: messages[code] || messages.search_unavailable, code, ...(error?.resetAt && !Number.isNaN(Date.parse(error.resetAt)) ? { resetAt: error.resetAt } : {}) };
 }

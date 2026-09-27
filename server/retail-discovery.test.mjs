@@ -121,7 +121,11 @@ it("integrates real merchant evidence into local and online offers without map p
   expect(new URL(osmRequest[0]).searchParams.get("data")).not.toContain('["shop"~');
   expect(local[0]).toMatchObject({ merchant: "local.example", itemPrice: 39, imageUrl: "https://local.example/lamp.jpg", destinationUrl: "https://local.example/product/lamp", pickupVerified: false });
   expect(result.offers.every(item => !item.potentialStore)).toBe(true);
-  expect(result.sourceStatus.every(source => source.status === "completed")).toBe(true);
+  expect(result.sourceStatus).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: "Retailer products", status: "completed", products: 2 }),
+    expect.objectContaining({ source: "Nearby product availability", status: "completed", products: 1 }),
+    expect.objectContaining({ source: "Marketplace products", status: "empty", products: 0 }),
+  ]));
   expect(result.facets.some(facet => facet.id === "retailer" && facet.options.length === 2)).toBe(true);
 });
 

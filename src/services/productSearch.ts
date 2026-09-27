@@ -29,8 +29,9 @@ export function mergeSearchResults(query: string, results: ShowcaseSearch[]): Sh
 export async function searchProductScope(query: string, location: string, scope: SearchScope, signal?: AbortSignal, place?: LocationPlace, continuation?: string): Promise<ShowcaseSearch> {
   const params = new URLSearchParams({ q: query.trim(), location, scope });
   if (place) { params.set("lat", String(place.lat)); params.set("lon", String(place.lon)); }
-  if (continuation) params.set("continuation", continuation);
-  const response = await fetch(`/api/search?${params}`, { signal });
+  const response = continuation
+    ? await fetch("/api/search", { signal, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...Object.fromEntries(params), continuation }) })
+    : await fetch(`/api/search?${params}`, { signal });
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
     throw new Error(typeof failure.error === "string" ? failure.error + (failure.resetAt ? ` It will reset ${failure.resetAt}.` : "") : `Search request failed (${response.status})`);

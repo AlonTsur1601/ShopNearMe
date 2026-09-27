@@ -17,7 +17,14 @@ export function merchantDom(html, baseUrl = "") {
   let currentPrice;
   for (const selector of ["#corePrice_feature_div .a-price .a-offscreen", "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen", "[data-price-type='finalPrice']", ".special-price .price", ".single-price .price", "#pricetotalitemjs", "#our_price_display", ".product-price", "[itemprop='price']"]) {
     const element = scope.find(selector).first();
-    const amount = element.attr("data-price-amount") || element.attr("content") || text(element);
+    const visiblePrice = element.clone();
+    visiblePrice.find("[hidden],[aria-hidden='true']").remove();
+    // Supercents are a fractional part, not another two integer digits.
+    visiblePrice.find("sup").each((_index, node) => {
+      const fraction = text($(node)).match(/^(\d{2})(\s*(?:₪|\$|€|£|ILS|USD|EUR|GBP))?$/);
+      if (fraction) $(node).replaceWith(`.${fraction[1]}${fraction[2] || ""}`);
+    });
+    const amount = element.attr("data-price-amount") || element.attr("content") || text(visiblePrice);
     // Never concatenate a sale price, instalment count and previous price.
     if (amount && (amount.match(/\d[\d.,]*/g) ?? []).length === 1) { currentPrice = amount; break; }
   }
