@@ -87,7 +87,7 @@ export function octoparsePlaces(rows) {
   return rows.flatMap(row => {
     const latitude = Number(row.Latitude), longitude = Number(row.Longitude);
     const website = httpUrl(row.Website);
-    if (!row.Title || !website || !row.Latitude || !row.Longitude
+    if (!row.Title || row.Latitude == null || row.Latitude === "" || row.Longitude == null || row.Longitude === ""
       || !Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180 || /permanently closed/i.test(row.Current_Status || "")) return [];
     return [{ title: row.Title, website, address: row.Address || "", type: row.Category || "store", gps_coordinates: { latitude, longitude }, place_id: row.Place_id || digest(website + latitude + longitude) }];
   });

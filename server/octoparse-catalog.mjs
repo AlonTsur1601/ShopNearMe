@@ -12,7 +12,31 @@ const active = new Map();
 const digest = value => createHash("sha256").update(value).digest("hex");
 function url(value, base) {
   if (typeof value !== "string" || !value.trim() || /^(?:undefined|null)$/i.test(value.trim())) return "";
-  try { const link = new URL(value, base); return /^https?:$/.test(link.protocol) && !link.username && !link.password ? link.href : ""; } catch { return ""; }
+  try {
+    const link = new URL(value, base);
+    link.hash = "";
+    for (const key of [...link.searchParams.keys()]) if (/^(?:utm_.+|srsltid|gclid|fbclid)$/i.test(key)) link.searchParams.delete(key);
+    return /^https?:$/.test(link.protocol) && !link.username && !link.password ? link.href : "";
+  } catch { return ""; }
+}
+// Round-robin merchants before applying a request budget. A large first catalog
+// must not consume every detail/branch slot and hide the other stores.
+export function merchantBalancedLinks(links, limit, perMerchant = Infinity) {
+  const groups = new Map();
+  for (const value of links) {
+    const link = url(value); if (!link) continue;
+    const host = new URL(link).hostname.replace(/^www\./, "");
+    const group = groups.get(host) ?? [];
+    if (!group.includes(link) && group.length < perMerchant) group.push(link);
+    groups.set(host, group);
+  }
+  const result = [];
+  for (let index = 0; result.length < limit; index++) {
+    const next = [...groups.values()].flatMap(group => group[index] ? [group[index]] : []);
+    if (!next.length) break;
+    result.push(...next.slice(0, limit - result.length));
+  }
+  return result;
 }
 function priced(value) {
   const text = String(value ?? "").trim();
@@ -116,14 +140,18 @@ export function productsFromOctoparseHtml(rows, relevant, query) {
       const branchPath = decodeURIComponent(new URL(href).pathname);
       if (new URL(href).origin === new URL(link).origin && (/(?:^|[\s/_-])(?:stores?|branches|branchs|סניפים|סניף)(?:$|[\s/_-])/i.test(branchPath) || /^(?:our stores|store locator|find a store|branches|הסניפים שלנו|סניפים|איתור סניף)$/i.test(text)) && !/cart|account|privacy/.test(href)) branchUrls.add(href);
       if (/waze\.com|maps\.google|google\.com\/maps/.test(href)) {
-        const map = new URL(href), coordinates = (map.searchParams.get("ll") || map.searchParams.get("q") || "").split(",").map(Number);
+        const map = new URL(href), target = map.searchParams.get("ll") || map.searchParams.get("query") || map.searchParams.get("q") || "";
+        const coordinates = /^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/.test(target) ? target.split(",").map(Number) : [];
+        const card = node.closest(".store-item, article, li, [itemscope], .branch, .store, [class$='-card'], [class$='_card']");
+        const address = card.find("[itemprop=address], .address, [class$='-address'], [class$='_address']").first().text().trim() || card.children("p").first().text().trim();
+        const places = locations.get(new URL(link).hostname) ?? [];
         if (coordinates.length === 2 && coordinates.every(Number.isFinite) && Math.abs(coordinates[0]) <= 90 && Math.abs(coordinates[1]) <= 180) {
-          const card = node.closest(".store-item, article, li, [itemscope]");
-          const address = card.find("[itemprop=address], .address").text().trim() || card.children("p").first().text().trim();
-          const places = locations.get(new URL(link).hostname) ?? [];
-          places.push({ lat: coordinates[0], lon: coordinates[1], address, name: card.find("h2,h3").first().text().trim() });
-          locations.set(new URL(link).hostname, places);
+          if (!places.some(place => place.lat === coordinates[0] && place.lon === coordinates[1])) places.push({ lat: coordinates[0], lon: coordinates[1], address, name: card.find("h2,h3").first().text().trim() });
+        } else if (target.trim() && target.length <= 250 && !/^place_id:/.test(target)) {
+          const branchAddress = address || target.trim();
+          if (!places.some(place => place.address === branchAddress)) places.push({ address: branchAddress, name: card.find("h2,h3").first().text().trim() });
         }
+        if (places.length) locations.set(new URL(link).hostname, places);
       }
       if (href === link || new URL(href).pathname === "/" || isSearchResultsUrl(href) || !relevant(text, query)) continue;
       if (/\.(?:jpg|png|webp|gif|svg|pdf)(?:$|\?)/i.test(href)) continue;
@@ -170,7 +198,7 @@ export function recoverOctoparseContent(products, rows) {
 export async function discoverOctoparseCatalog({ query, country, localizedQuery = query, retailQuery, nearbyQuery, nearbyLocation, config, relevant, isCatalog = () => false, specificationRequests }, dependencies = {}) {
   const apiKey = config.octoparseApiKey;
   if (!apiKey) throw Object.assign(new Error("Octoparse is not configured"), { code: "provider_not_configured" });
-  const queryKey = digest(`octoparse-pool-v1|${country}|${query}|${nearbyQuery || ""}`), cacheKey = digest(apiKey) + queryKey;
+  const queryKey = digest(`octoparse-pool-v2|${country}|${query}|${nearbyQuery || ""}`), cacheKey = digest(apiKey) + queryKey;
   const cached = cache.get(cacheKey);
   if (cached?.expires > Date.now()) return cached.value;
   if (active.has(cacheKey)) return active.get(cacheKey);
@@ -186,7 +214,7 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     ] : [];
     const requests = [
       { key: "catalogs", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": catalogUrls.length ? catalogUrls : [`https://www.amazon.com/s?k=${encodeURIComponent(query)}`], "Wait Before Extraction (seconds)": "3" } },
-      { key: "retail", role: "retail", template: 15, values: { MainKeys: [...new Set([retailQuery || `${query} price`, country === "IL" ? `${query} price site:.il` : `${query} price`])], Pagination_times: "1" } },
+      { key: "retail", role: "retail", template: 15, values: { MainKeys: [...new Set([retailQuery || `${query} price`, country === "IL" ? `${query} price site:.il` : `${query} price`, ...(nearbyQuery ? [nearbyQuery] : [])])], Pagination_times: "1" } },
       { key: "amazon", role: "amazon-classic", template: 1153, values: { Site: "United States", "Confirm your site": ["https://www.amazon.com/"], "Keywords (up to 100,000)": [query], "Number of Pages to Scrape": "1" } },
       { key: "marketplace", role: "marketplace", template: 1063, values: { "123": "United States", "6tutxf6k2ik.List": ["https://www.ebay.com"], "1x7v90yy9yr.List": [query], "j4s3pig01g.ExecutedTimesLimitation": "1" } },
     ];
@@ -262,24 +290,20 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     const baseProducts = [...catalogs.products, ...amazonProducts, ...marketplaceProducts];
     if (states.catalogs?.status !== "pending" && states.retail?.status !== "pending" && states.retailBing?.status !== "pending") {
       const alreadyPriced = new Set(baseProducts.map(product => product.link));
-      const links = [...new Set([...catalogs.candidates, ...indexedLinks, ...catalogs.branchUrls])].filter(link => !alreadyPriced.has(link) && !/\/(?:cart|checkout|account)\b|(^|\.)google\.[a-z.]+\//.test(link)).slice(0,20);
+      const links = merchantBalancedLinks([...indexedLinks, ...catalogs.candidates].filter(link => !alreadyPriced.has(link) && !/\/(?:cart|checkout|account)\b|(^|\.)google\.[a-z.]+\//.test(link)), 30, 5);
       if (links.length) await collect({ key: "pages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": links, "Wait Before Extraction (seconds)": "3" } });
       const detailPages = htmlData("pages");
       if (states.pages && states.pages.status !== "pending") {
-        const hosts = new Map();
-        const children = detailPages.candidates.filter(link => !links.includes(link) && !alreadyPriced.has(link) && !detailPages.products.some(product => product.link === link) && !isCatalog("",link)).filter(link => {
-          const host = new URL(link).hostname, count = hosts.get(host) || 0;
-          hosts.set(host,count+1); return count < 3;
-        }).slice(0,12);
+        const children = merchantBalancedLinks(detailPages.candidates.filter(link => !links.includes(link) && !alreadyPriced.has(link) && !detailPages.products.some(product => product.link === link) && !isCatalog("",link)), 24, 4);
         if (children.length) await collect({ key: "children", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": children, "Wait Before Extraction (seconds)": "3" } });
       }
       const detailProducts = htmlData("pages", "children").products;
       if (states.children?.status !== "pending" && states.pages?.status !== "pending") {
-        const branchLinks = [...new Set([...detailPages.branchUrls, ...htmlData("children").branchUrls])].filter(link => !links.includes(link)).slice(0,5);
+        const branchLinks = merchantBalancedLinks([...catalogs.branchUrls, ...detailPages.branchUrls, ...htmlData("children").branchUrls].filter(link => !links.includes(link)), 20, 3);
         if (nearbyQuery && branchLinks.length) await collect({ key: "branchPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": branchLinks, "Wait Before Extraction (seconds)": "3" } });
       }
       if (nearbyQuery && states.children?.status !== "pending" && states.pages?.status !== "pending" && [...baseProducts, ...detailProducts].length) {
-        const merchants = [...new Set([...baseProducts, ...detailProducts].filter(product => !/amazon\.|ebay\./.test(product.link)).map(product => new URL(product.link).hostname.replace(/^www\./,"")))].slice(0,5);
+        const merchants = [...new Set([...baseProducts, ...detailProducts].filter(product => !/amazon\.|ebay\./.test(product.link)).map(product => new URL(product.link).hostname.replace(/^www\./,"")))];
         if (merchants.length) await collect({ key: "branches", role: "branches", template: 686, values: { MainKeys: merchants.map(merchant => `${merchant} ${nearbyLocation || ""}`), PageSize: "1" } });
       }
     }
@@ -294,29 +318,44 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     // Completion of discovery alone does not establish complete filter values.
     // Branch coordinates do not change product identity or specifications.
     // Recover the specs alongside Maps instead of adding another cloud wait.
-    if (![...requests.map(request => request.key), "retailBing", "pages", "children", "branchPages"].some(key => states[key]?.status === "pending") && products.length && specificationRequests) {
-      const searches = specificationRequests(products);
-      if (searches.length) {
-        // Every product gets a source-page recovery attempt. Reuse the content
-        // slot sequentially in bounded batches; the former slice(0,20) skipped
-        // the remaining products permanently when a marketplace returned more.
-        let contentPending = false, contentQuotaExhausted = false;
-        for (let first = 0; first < products.length; first += 20) {
-          const key = first ? `content${first / 20}` : "content";
-          await collect({ key, role: "content", template: 2113, values: { MainKeys: products.slice(first, first + 20).map(product => product.link), Depth: "0", Total_num: "1", Format: "markdown", Output_Field_Name: "content" } });
+    if (products.length && specificationRequests) {
+      const contentKeys = Object.keys(states).filter(key => /^content\d*$/.test(key)).sort((a,b) => Number(a.slice(7) || 0)-Number(b.slice(7) || 0));
+      let contentPending = false, contentQuotaExhausted = false;
+      const attempted = new Set();
+      // The discovery cohort can grow while a slow source is running. Persist
+      // each recovery batch by URL, rather than by its position in that cohort.
+      for (const key of contentKeys) {
+        const targets = states[key].requestedUrls || [];
+        if (!targets.length) continue;
+        await collect({ key, role: "content", template: 2113, values: { MainKeys: targets, Depth: "0", Total_num: "1", Format: "markdown", Output_Field_Name: "content" } });
+        states[key].requestedUrls = targets;
+        targets.forEach(link => attempted.add(link));
+        products = recoverOctoparseContent(products, rows[key] || []);
+        contentPending ||= states[key].status === "pending";
+        contentQuotaExhausted ||= states[key].code === "quota_exhausted";
+      }
+      if (!contentPending && !contentQuotaExhausted && specificationRequests(products).length) {
+        const remaining = products.filter(product => !attempted.has(product.link));
+        let batchIndex = contentKeys.length;
+        for (let first = 0; first < remaining.length; first += 20) {
+          const index = batchIndex++, key = index ? `content${index}` : "content";
+          const targets = remaining.slice(first, first + 20).map(product => product.link);
+          await collect({ key, role: "content", template: 2113, values: { MainKeys: targets, Depth: "0", Total_num: "1", Format: "markdown", Output_Field_Name: "content" } });
+          states[key].requestedUrls = targets;
           products = recoverOctoparseContent(products, rows[key] || []);
-          if (states[key]?.status === "pending") { contentPending = true; break; }
-          if (states[key]?.code === "quota_exhausted") { contentQuotaExhausted = true; break; }
+          if (states[key].status === "pending") { contentPending = true; break; }
+          if (states[key].code === "quota_exhausted") { contentQuotaExhausted = true; break; }
         }
-        const remainingSearches = contentPending || contentQuotaExhausted ? [] : specificationRequests(products);
-        if (remainingSearches.length) {
-          await collect({ key: "specSearch", role: "retail", template: 15, values: { MainKeys: remainingSearches, Pagination_times: "1" } });
-          if (states.specSearch.status !== "pending") {
-            const links = [...new Set((rows.specSearch || []).map(row => url(row.Detail_URL)).filter(link => link && !isSearchResultsUrl(link)))].slice(0,20);
-            if (links.length) {
-              await collect({ key: "specPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": links, "Wait Before Extraction (seconds)": "3" } });
-              products = recoverOctoparseSpecifications(products, htmlData("specPages"));
-            }
+      }
+      const discoveryPending = [...requests.map(request => request.key), "retailBing", "pages", "children", "branchPages"].some(key => states[key]?.status === "pending");
+      const remainingSearches = contentPending || contentQuotaExhausted || discoveryPending ? [] : specificationRequests(products);
+      if (remainingSearches.length) {
+        await collect({ key: "specSearch", role: "retail", template: 15, values: { MainKeys: remainingSearches, Pagination_times: "1" } });
+        if (states.specSearch.status !== "pending") {
+          const links = merchantBalancedLinks((rows.specSearch || []).map(row => url(row.Detail_URL)).filter(link => link && !isSearchResultsUrl(link)), 30);
+          if (links.length) {
+            await collect({ key: "specPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": links, "Wait Before Extraction (seconds)": "3" } });
+            products = recoverOctoparseSpecifications(products, htmlData("specPages"));
           }
         }
       }

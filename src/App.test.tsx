@@ -15,6 +15,16 @@ vi.mock("./services/productSearch", () => ({
 }));
 
 describe("App", () => {
+  it("keeps source diagnostics outside results while preserving the quota notice", async () => {
+    const diagnostics = ["Marketplace products could not be searched. Please try again.", "Octoparse did not return some requested product pages. Results are incomplete.", "The search time limit was reached. Results are incomplete.", "Some retailers blocked product retrieval through Octoparse. Results are incomplete.", "Some product specifications could not be verified. Filters match only confirmed values.", "Some stores did not finish searching in time. Results are incomplete."];
+    vi.mocked(searchProducts).mockResolvedValueOnce({ ...clockShowcase, warnings: [...diagnostics, "Octoparse search quota has been used up."] });
+    render(<App />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "clock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("Octoparse search quota has been used up.");
+    for (const diagnostic of diagnostics) expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveClass("search-warning");
+  });
   it("keeps offers hidden until the complete search resolves", async () => {
     let finish!: (value: typeof clockShowcase) => void;
     vi.mocked(searchProducts).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
@@ -45,7 +55,7 @@ describe("App", () => {
     await screen.findByText(/Location permission is blocked/);
     expect(screen.getByText(/Location permission is blocked/)).toBeVisible();
     expect(screen.queryByText("Choose a location to include nearby products.")).not.toBeInTheDocument();
-    expect(screen.getByText("Provider blocked")).toBeVisible();
+    expect(screen.queryByText("Provider blocked")).not.toBeInTheDocument();
   });
   it("clears previous price and distance restrictions on a new product search", async () => {
     render(<App />);
@@ -65,7 +75,7 @@ describe("App", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Search for a product" }), { target: { value: "battery" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByRole("heading", { name: "Search incomplete" })).toBeVisible();
-    expect(screen.getByText("Provider blocked")).toBeVisible();
+    expect(screen.queryByText("Provider blocked")).not.toBeInTheDocument();
     expect(screen.queryByText("Clear a filter or try a broader search.")).not.toBeInTheDocument();
   });
   it("marks an out-of-stock notice for the red status style", () => {

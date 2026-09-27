@@ -36,6 +36,7 @@ export function App() {
   const searchController = useRef<AbortController | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(readRecent);
   const showcase: ShowcaseSearch = searchResult ?? { query: activeQuery ?? "", offers: [], facets: [], resultCount: 0 };
+  const visibleWarnings = (showcase.warnings ?? []).filter(warning => /quota|allowance|permission|enter a city|choose a location/i.test(warning));
 
   const visibleOffers = useMemo(() => {
     const offers = showcase.offers.filter((offer) => {
@@ -130,11 +131,10 @@ export function App() {
             <div className="results-meta"><span>{loading ? "Searching…" : visibleResultLabel}</span><div className="sort-control"><span>Sort by</span><SortMenu value={sort} onChange={setSort} /></div></div>
           </div>
           <div className="offers-scroll">
-            {!loading && showcase.pendingSearch && <p role="status">Additional products are still being collected. Results will update automatically.</p>}
-            {!loading && showcase.warnings?.length ? <div className="search-warning" role="alert">{showcase.warnings.map(warning => <p key={warning}>{warning}</p>)}</div> : null}
+            {!loading && visibleWarnings.length ? <div className="search-warning" role="alert">{visibleWarnings.map(warning => <p key={warning}>{warning}</p>)}</div> : null}
             {!loading && categories.map((category) => <OfferSection key={category} category={category} offers={visibleOffers.filter((offer) => offer.category === category)} distanceUnit={distanceUnit} />)}
             {loading && <div className="search-loading" aria-live="polite"><span /><strong>{locating ? "Finding your current location…" : "Searching stores and delivery sites…"}</strong></div>}
-            {!loading && !showcase.pendingSearch && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" || showcase.partialFailure ? "Search incomplete" : "No matching offers"}</h2><p>{showcase.source === "fallback" || showcase.partialFailure ? "Some sources could not be searched. See the message above for details." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}
+            {!loading && !showcase.pendingSearch && !visibleOffers.length && <div className="empty-results"><h2>{showcase.source === "fallback" || showcase.partialFailure ? "Search incomplete" : "No matching offers"}</h2><p>{showcase.source === "fallback" || showcase.partialFailure ? "Products could not be loaded. Please try again." : "Clear a filter or try a broader search."}</p>{showcase.source !== "fallback" && <button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}
           </div>
         </div>
       </div>

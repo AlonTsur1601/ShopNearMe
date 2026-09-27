@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { readPoolTask, reuseOctoparseTask, templateParameters } from "./octoparse-pool.mjs";
-import { discoverOctoparseCatalog, productsFromOctoparseHtml, recoverOctoparseSpecifications } from "./octoparse-catalog.mjs";
+import { discoverOctoparseCatalog, merchantBalancedLinks, productsFromOctoparseHtml, recoverOctoparseSpecifications } from "./octoparse-catalog.mjs";
 import { withSearchBudget } from "./search-budget.mjs";
 
 afterEach(() => vi.useRealTimers());
@@ -9,6 +9,19 @@ const template = { id: 1, parameters: JSON.stringify([{ Id: "urls-id", ParamName
 const product = { "@type": "Product", name: "Studio LED lamp Model L100", image: "https://merchant.example/lamp.jpg", offers: { price: "49.99", priceCurrency: "USD" }, additionalProperty: [{ name: "Color", value: "Red" }] };
 const html = item => `<html><body><script type="application/ld+json">${JSON.stringify(item)}</script></body></html>`;
 const row = { Original_URL: "https://merchant.example/product", Source_code: html(product) };
+
+it("keeps every merchant in the page budget and deduplicates navigation fragments", () => {
+  const links = [...Array.from({ length: 12 }, (_, i) => `https://first.example/products/${i}`), "https://second.example/branches#main", "https://second.example/branches#", "https://third.example/product?srsltid=tracking"];
+  expect(merchantBalancedLinks(links, 4)).toEqual(["https://first.example/products/0", "https://second.example/branches", "https://third.example/product", "https://first.example/products/1"]);
+  expect(merchantBalancedLinks(["https://shop.example/product?id=123", "https://shop.example/product?id=456"], 2)).toHaveLength(2);
+});
+
+it("recovers address navigation targets and deduplicates coordinates", () => {
+  const source = '<a href="https://waze.com/ul?q=32%20Main%20St%2C%20City">Directions</a><a href="https://www.google.com/maps/search/?query=32%20Main%20St%2C%20City">Map</a><a href="https://waze.com/ul?ll=32.06,34.85">Coordinates</a><a href="https://waze.com/ul?ll=32.06,34.85">Duplicate</a>';
+  const found = productsFromOctoparseHtml([{ Original_URL: "https://merchant.example/branches#main", Source_code: source }], () => true, "lamp");
+  expect(found.locations.get("merchant.example")).toEqual([{ address: "32 Main St, City", name: "" }, { lat: 32.06, lon: 34.85, address: "", name: "" }]);
+  expect(found.products).toEqual([]);
+});
 
 it("rejects empty required arrays and accepts the provider's display labels", () => {
   expect(() => templateParameters(template, { URLs: [] })).toThrow();
@@ -110,6 +123,27 @@ it("recovers product facts while branch lookup is pending and searches only unre
   expect(result.products[0].page.specificationText).toContain("Confirmed dimensions");
   expect(start.mock.calls.some(args => args[0] === "content")).toBe(true);
   expect(start.mock.calls.some(args => args[2].MainKeys?.includes("missing dimensions"))).toBe(false);
+});
+
+it("recovers facts before a stalled marketplace ends and keeps batches tied to their product URLs", async () => {
+  vi.useFakeTimers();
+  let expanded = false;
+  const extra = { Product_URL: "https://www.ebay.com/itm/123456789012", Title: "Other lamp Model L200", Image_URL: "https://images.example/l200.jpg", Pricing: "$30", Condition: "New" };
+  const start = vi.fn(async (role, _id, values) => ({ taskId: role, role, values, status: "pending" }));
+  const read = async task => task.role === "marketplace" && !expanded ? { ...task, rows: [], nextPollAt: Date.now() + 15000 }
+    : { ...task, status: "completed", rows: task.role === "pages" ? [row] : task.role === "marketplace" ? [extra]
+      : task.role === "content" ? task.values.MainKeys.map(link => ({ url: link, title: link === row.Original_URL ? product.name : "Other lamp Model L200", content: "Confirmed product facts" })) : [] };
+  const options = { query: "early-recovery lamp", country: "US", relevant: () => true, specificationRequests: () => ["missing facts"], config: { octoparseApiKey: "early-recovery-key" } };
+  const first = await discoverOctoparseCatalog(options, { start, read });
+  expect(first.products[0].page.specificationText).toContain("Confirmed product facts");
+  expect(start.mock.calls.filter(args => args[0] === "content").map(args => args[2].MainKeys)).toEqual([[row.Original_URL]]);
+  expect(first.sourceStatus.find(source => source.source === "marketplace via Octoparse").status).toBe("pending");
+  expanded = true; vi.setSystemTime(first.nextPollAt + 1);
+  const result = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read });
+  expect(result.products[0].page.specificationText).toContain("Confirmed product facts");
+  expect(result.products).toHaveLength(2);
+  expect(result.products.every(product => product.page.specificationText.includes("Confirmed product facts"))).toBe(true);
+  expect(start.mock.calls.filter(args => args[0] === "content").map(args => args[2].MainKeys)).toEqual([[row.Original_URL], [extra.Product_URL]]);
 });
 
 it("exports small pages in order without rounding the run identity", async () => {

@@ -935,13 +935,13 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const online = retailOffers.filter(offer => !offer.inStoreOnly && offer.category !== "secondHand");
     const scrapedUsed = retailOffers.filter(offer => offer.category === "secondHand");
     const origin = await originJob;
-    if (config.provider === "octoparse" && origin && !discovery.continuation && scope !== "online" && scope !== "local-products") {
-      const addresses = [...new Set(discovery.products.flatMap(record => record.page.locations ?? []).filter(place => !validCoordinates(place) && place.address).map(place => [place.address, place.name, country].filter(Boolean).join(", ")))].slice(0,4);
+    if (config.provider === "octoparse" && origin && scope !== "online" && scope !== "local-products") {
+      const addresses = [...new Set(discovery.products.flatMap(record => record.page.locations ?? []).filter(place => !validCoordinates(place) && place.address).map(place => [place.address, place.name, country].filter(Boolean).join(", ")))];
       const resolved = new Map();
-      await Promise.all(addresses.map(async address => { const point = await namedLocationCoordinates(address).catch(() => undefined); if (point) resolved.set(address, point); }));
+      await mapConcurrent(addresses, 4, async address => { const point = await namedLocationCoordinates(address).catch(() => undefined); if (point) resolved.set(address, point); });
       for (const record of discovery.products) record.page.locations = (record.page.locations ?? []).flatMap(place => {
         const point = validCoordinates(place) || resolved.get([place.address, place.name, country].filter(Boolean).join(", "));
-        return point ? [{ ...place, ...point }] : [];
+        return point ? [{ ...place, ...point }] : [place];
       });
     }
     const places = [...(placesState.status === "fulfilled" ? placesState.value : []), ...(discovery.places ?? []).map((place, index) => mapOffer(place, index, query, origin))];

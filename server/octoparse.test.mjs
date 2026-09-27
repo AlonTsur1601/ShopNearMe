@@ -108,6 +108,9 @@ it("uses unique RPC ids when parallel tasks share a session", async () => {
 it("does not use the map viewport as a store's address", () => {
   expect(octoparsePlaces([{ Title: "Store", Website: "https://store.example", Latitude_backup: "32", Longitude_backup: "34" }])).toEqual([]);
 });
+it("preserves a located branch without a website for exact merchant matching", () => {
+  expect(octoparsePlaces([{ Title: "Exact Merchant", Latitude: "32.06", Longitude: "34.85", Address: "City" }])[0]).toMatchObject({ title: "Exact Merchant", website: "", address: "City" });
+});
 it("classifies allowance errors inside structured tool results", () => {
   expect(() => decodeRpc(JSON.stringify({ id: 3, result: { structuredContent: { success: false, message: "Weekly export quota exhausted" } } }), 3)).toThrow(expect.objectContaining({ code: "quota_exhausted" }));
 });
