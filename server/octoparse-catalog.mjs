@@ -231,6 +231,20 @@ export function recoverOctoparseContent(products, rows) {
   });
 }
 
+export function recoverIndexedSpecifications(products, rows) {
+  return products.map(product => {
+    // An indexed excerpt from this exact product page remains source evidence
+    // when its subsequent HTML fetch is blocked. Never transfer a sibling's
+    // facts, or use excerpt prices/images to manufacture a product offer.
+    const content = rows.filter(row => url(row.Detail_URL) === product.link && sameProductIdentity(product.title, row.Title))
+      .map(row => String(row.Descriptipn || row.Description || "").trim()).filter(Boolean).join("\n");
+    return content ? { ...product, page: { ...product.page,
+      specifications: [...(product.page.specifications ?? []), ...extractMarkdownSpecifications(content)],
+      specificationText: [product.page.specificationText, content].filter(Boolean).join("\n"),
+    } } : product;
+  });
+}
+
 export function persistOctoparseLocations(discovery, apiKey) {
   if (!discovery.continuation || !discovery.queryKey) return discovery.continuation;
   const states = readContinuation(discovery.continuation, discovery.queryKey, apiKey);
@@ -352,6 +366,18 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
       if (status && ["completed", "empty"].includes(status.status)) status.status = found.length ? "completed" : "empty";
     }
     const baseProducts = [...catalogs.products, ...amazonProducts, ...marketplaceProducts];
+    if (nearbyQuery && states.retail?.status !== "pending" && states.retailBing?.status !== "pending") {
+      // Map discovery can run while HTML is collected. These entries are
+      // lookup candidates only; the result layer joins them solely to actual
+      // priced, pictured products from the same merchant.
+      const hosts = [...new Set([...indexedLinks, ...[...baseProducts, ...htmlData("pages", "children").products].filter(product => product.page.localEligible !== false).map(product => product.link)]
+        .map(link => new URL(link).hostname.replace(/^www\./, "")).filter(host => !/(^|\.)(?:amazon\.[a-z.]+|ebay\.[a-z.]+|google\.[a-z.]+)$/.test(host)))];
+      const merchants = states.branches?.requestedHosts ?? hosts;
+      if (merchants.length) {
+        await collect({ key: "branches", role: "branches", template: 686, values: { MainKeys: merchants.map(merchant => `${merchant} ${nearbyLocation || ""}`), PageSize: "1" } });
+        states.branches.requestedHosts = merchants;
+      }
+    }
     if (states.catalogs?.status !== "pending" && states.retail?.status !== "pending" && states.retailBing?.status !== "pending") {
       const alreadyPriced = new Set(baseProducts.map(product => product.link));
       const links = merchantBalancedLinks([...indexedLinks, ...catalogs.candidates].filter(link => !alreadyPriced.has(link) && !/\/(?:cart|checkout|account)\b|(^|\.)google\.[a-z.]+\//.test(link)), 30, 5);
@@ -368,14 +394,10 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
           if (children.length) await collect({ key: "children", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": children, "Wait Before Extraction (seconds)": "3" } });
         }
       }
-      const detailProducts = htmlData("pages", "children").products;
-      if (nearbyQuery && states.pages?.status !== "pending" && [...baseProducts, ...detailProducts].length) {
-        const merchants = [...new Set([...baseProducts, ...detailProducts].filter(product => !/amazon\.|ebay\./.test(product.link)).map(product => new URL(product.link).hostname.replace(/^www\./,"")))];
-        if (merchants.length) await collect({ key: "branches", role: "branches", template: 686, values: { MainKeys: merchants.map(merchant => `${merchant} ${nearbyLocation || ""}`), PageSize: "1" } });
-      }
     }
     const pages = htmlData("pages", "children", "branchPages");
     let products = recoverOctoparseSpecifications([...new Map([...baseProducts, ...pages.products].map(product => [product.link, product])).values()], pages);
+    products = recoverIndexedSpecifications(products, [...(rows.retail ?? []), ...(rows.retailBing ?? [])]);
     for (const product of products) {
       const found = mergeLocations(product.page.locations ?? [], catalogs.locations.get(new URL(product.link).hostname) ?? [], pages.locations.get(new URL(product.link).hostname) ?? []);
       if (found.length) {
@@ -424,6 +446,7 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
       if (remainingSearches.length) {
         await collect({ key: "specSearch", role: "retail", template: 15, values: { MainKeys: remainingSearches, Pagination_times: "1" } });
         if (states.specSearch.status !== "pending") {
+          products = recoverIndexedSpecifications(products, rows.specSearch || []);
           const links = merchantBalancedLinks((rows.specSearch || []).map(row => url(row.Detail_URL)).filter(link => link && !isSearchResultsUrl(link)), 30);
           if (links.length) {
             await collect({ key: "specPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": links, "Wait Before Extraction (seconds)": "3" } });

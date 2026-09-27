@@ -83,7 +83,23 @@ export async function reuseOctoparseTask(role, templateId, values, apiKey, depen
       if (sameInput && state.lotNo && (state.status === "running" || (state.status === "completed" && state.collectedRows > 0 && Date.now() - ended < 900000))) {
         return { taskId: task.taskId, lotNo: state.lotNo, status: "pending", startedAt: taskTime(task.startExecuteDate ?? task.startExecuteTime) || Date.now(), nextPollAt: state.status === "running" ? Date.now() + 15000 : 0, inputHash: inputHash(input), poolOwner: owner };
       }
-      if (state.status === "running") throw failure("provider_busy");
+      if (state.status === "running") {
+        // The client can finish before its last cloud task does. Apply the
+        // same five-minute run bound on subsequent pool lookup, so an orphan
+        // cannot occupy this app's named slot forever. Recheck input and lot
+        // immediately before stopping; leave any newer run untouched.
+        const startedAt = taskTime(task.startExecuteDate ?? task.startExecuteTime);
+        if (task.taskName === name && Number.isFinite(startedAt) && Date.now() - startedAt > 300000 && state.lotNo) {
+          const checked = await request(`/api/tasks/${task.taskId}/templateMapping`, apiKey);
+          const latest = await call("get_task_status", { taskId: task.taskId }, apiKey);
+          if (inputHash(checked.userInputParameters) === inputHash(current.userInputParameters) && latest.lotNo === state.lotNo && latest.status === "running") {
+            await call("start_or_stop_task", { taskId: task.taskId, action: "stop" }, apiKey);
+          }
+        }
+        // A stop acknowledgement is asynchronous; wait until the pool lookup
+        // confirms completion before rewriting the input or accepting a start.
+        throw failure("provider_busy");
+      }
       await request(`/api/tasks/${task.taskId}/templateMapping`, apiKey, {
         ...current, taskId: task.taskId, taskGroupId: task.taskGroupId, taskName: name,
         templateId, templateRegistrationId: templateId, templateVersionId: template.id,

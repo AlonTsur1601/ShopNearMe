@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { readPoolTask, reuseOctoparseTask, templateParameters } from "./octoparse-pool.mjs";
-import { discoverOctoparseCatalog, merchantBalancedLinks, persistOctoparseLocations, productsFromOctoparseHtml, recoverOctoparseContent, recoverOctoparseSpecifications } from "./octoparse-catalog.mjs";
+import { discoverOctoparseCatalog, merchantBalancedLinks, persistOctoparseLocations, productsFromOctoparseHtml, recoverOctoparseContent, recoverOctoparseSpecifications, recoverIndexedSpecifications } from "./octoparse-catalog.mjs";
 import { withSearchBudget } from "./search-budget.mjs";
 import { readContinuation } from "./octoparse-discovery.mjs";
 
@@ -15,6 +15,16 @@ it("keeps content facts attached to the exact product URL and identity", () => {
   const items = [{ link: row.Original_URL, title: product.name, page: {} }];
   const rows = [{ url: row.Original_URL, title: product.name, format: "markdown", content: '- Color: White\n- Material: Metal' }, { url: row.Original_URL, title: 'Other lamp Model L200', content: '- Color: Blue' }];
   expect(recoverOctoparseContent(items, rows)[0].page.specifications).toEqual([{ name: "Color", value: "White" }, { name: "Material", value: "Metal" }]);
+});
+
+it("recovers exact indexed product facts without replacing the price or copying sibling variants", () => {
+  const item = { link: row.Original_URL, title: product.name, page: { price: 49.99, imageUrl: "https://images.example/own.jpg" } };
+  const indexed = [{ Detail_URL: row.Original_URL, Title: product.name, Descriptipn: "Material: Metal\nColor: White" },
+    { Detail_URL: row.Original_URL, Title: "Other lamp Model L200", Descriptipn: "Color: Black" },
+    { Detail_URL: "https://merchant.example/another", Title: product.name, Descriptipn: "Color: Blue" }];
+  const result = recoverIndexedSpecifications([item], indexed)[0];
+  expect(result.page).toMatchObject({ price: 49.99, imageUrl: "https://images.example/own.jpg" });
+  expect(result.page.specifications).toEqual([{ name: "Material", value: "Metal" }, { name: "Color", value: "White" }]);
 });
 
 it("keeps every merchant in the page budget and deduplicates navigation fragments", () => {
@@ -75,6 +85,23 @@ it("retains the real UTC start of an existing cloud run across cold requests", a
   expect(call.mock.calls.map(([name]) => name)).toEqual(["get_task_status"]);
 });
 
+it("clears only an expired owned pool run and waits for its stop acknowledgement", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-27T18:44:07Z"));
+  const request = vi.fn(async path => path.includes("searchTaskList") ? { dataList: [{ taskId: "orphan", taskName: "ShopNearMe pool orphan", templateId: 9011, startExecuteDate: "2026-09-27T18:30:07.197" }] } : { userInputParameters: mapping });
+  const call = vi.fn(async () => ({ status: "running", lotNo: "939260363630236303", collectedRows: 2 }));
+  await expect(reuseOctoparseTask("orphan", 9011, { URLs: ["https://merchant.example/new"] }, "orphan-key", { request, call, fetcher: async () => Response.json({ data: template }) })).rejects.toMatchObject({ code: "provider_busy" });
+  expect(call.mock.calls.filter(([name]) => name === "start_or_stop_task").map(([, args]) => args.action)).toEqual(["stop"]);
+  expect(request.mock.calls.every(args => args.length === 2)).toBe(true);
+});
+
+it("never stops a replacement lot observed during orphan cleanup", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-27T18:44:07Z"));
+  const request = async path => path.includes("searchTaskList") ? { dataList: [{ taskId: "replacement", taskName: "ShopNearMe pool replacement", templateId: 9012, startExecuteDate: "2026-09-27T18:30:07.197" }] } : { userInputParameters: mapping };
+  const call = vi.fn().mockResolvedValueOnce({ status: "running", lotNo: "939260363630236304" }).mockResolvedValueOnce({ status: "running", lotNo: "939260363630236305" });
+  await expect(reuseOctoparseTask("replacement", 9012, { URLs: ["https://merchant.example/new"] }, "replacement-key", { request, call, fetcher: async () => Response.json({ data: template }) })).rejects.toMatchObject({ code: "provider_busy" });
+  expect(call.mock.calls.some(([name]) => name === "start_or_stop_task")).toBe(false);
+});
+
 it("keeps branch addresses from every exported page and from the catalog", async () => {
   let serial = 0;
   const start = async (role, _id, values) => ({ taskId: String(++serial), role, values, status: "pending" });
@@ -120,6 +147,19 @@ it("reads discovered merchants first and locates their branches before optional 
   expect(starts.mock.calls.some(([role]) => role === "branches")).toBe(true);
   expect(result.products).toHaveLength(1);
   expect(result.sourceStatus.find(source => source.source === "branchPages via Octoparse")?.status).toBe("pending");
+});
+
+it("starts branch discovery while merchant HTML is pending and never exposes map-only candidates as products", async () => {
+  const start = vi.fn(async (role, _id, values) => ({ taskId: role, role, values, status: "pending" }));
+  const read = async task => task.role === "retail" ? { ...task, status: "completed", rows: [{ Detail_URL: row.Original_URL }] }
+    : task.role === "pages" ? { ...task, status: "pending", nextPollAt: Date.now() + 15000, rows: [] }
+    : task.role === "branches" ? { ...task, status: "completed", rows: [{ Title: "Merchant", Website: "https://merchant.example", Latitude: "32.06", Longitude: "34.85" }] }
+    : { ...task, status: "empty", rows: [] };
+  const result = await discoverOctoparseCatalog({ query: "early-map lamp", country: "IL", nearbyQuery: "lamp City", nearbyLocation: "City", relevant: () => true, config: { octoparseApiKey: "early-map-key" } }, { start, read });
+  expect(start.mock.calls.map(([role]) => role).indexOf("branches")).toBeLessThan(start.mock.calls.map(([role]) => role).indexOf("pages"));
+  expect(result.places).toHaveLength(1);
+  expect(result.products).toEqual([]);
+  expect(result.sourceStatus.find(source => source.source === "Product pages via Octoparse")?.status).toBe("pending");
 });
 
 it("waits for an occupied shared pool slot and resumes without reporting a final failure", async () => {
