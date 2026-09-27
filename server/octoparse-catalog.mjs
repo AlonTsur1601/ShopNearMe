@@ -4,7 +4,7 @@ import { extractProductData, isSearchResultsUrl } from "./product-page.mjs";
 import { reuseOctoparseTask, readPoolTask } from "./octoparse-pool.mjs";
 import { octoparseProducts, octoparsePlaces, signContinuation, readContinuation } from "./octoparse-discovery.mjs";
 import { sameProductIdentity } from "./product-identity.mjs";
-import { extractMarkdownSpecifications } from "./specifications.mjs";
+import { extractMarkdownSpecifications, specificationPairs } from "./specifications.mjs";
 import { searchContext } from "./search-budget.mjs";
 
 const cache = new Map();
@@ -149,7 +149,17 @@ export function productsFromOctoparseHtml(rows, relevant, query) {
       const imageUrl = url(image.attr("data-src") || image.attr("data-lazy-src") || image.attr("src") || image.attr("srcset")?.split(",")[0].trim().split(/\s/)[0], link);
       const condition = card.find(".SECONDARY_INFO, .s-item__subtitle").first().text().trim();
       let metadata; try { metadata = JSON.parse(card.closest("[data-params]").attr("data-params") || "{}"); } catch { metadata = {}; }
-      const item = { isProduct: true, title, price, currency, imageUrl, condition, brand: metadata.brand, specificationText: title, priceSource: "catalog", localEligible: !card.find(".external_seller").length };
+      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) metadata = {};
+      if (metadata.name && !sameProductIdentity(title, metadata.name)) metadata = {};
+      const specifications = specificationPairs(metadata).filter(pair => !/^(?:id(?:_pr)?|name|price|category|subCategory|variant|list|position)$/i.test(pair.name));
+      // The merchant's own selected-product slug and image alt often retain
+      // variant facts omitted from a short display title. Exclude ancestors,
+      // query strings and neighboring cards from this evidence.
+      let slug = new URL(itemLink).pathname.split("/").filter(Boolean).at(-1) ?? "";
+      try { slug = decodeURIComponent(slug); } catch { /* Keep a malformed source escape isolated to its slug. */ }
+      slug = slug.replace(/[-_]/g, " ");
+      const item = { isProduct: true, title, price, currency, imageUrl, condition, brand: metadata.brand, specifications,
+        specificationText: [title, image.attr("alt"), slug].filter(Boolean).join(" "), priceSource: "catalog", localEligible: !card.find(".external_seller").length };
       if (validProduct(item, itemLink, relevant, query) && !/out of stock|sold out|אזל המלאי/i.test(card.find(".stock, .availability").text())) products.set(itemLink, record(item, itemLink));
     }
     for (const anchor of $("a[href]").toArray()) {

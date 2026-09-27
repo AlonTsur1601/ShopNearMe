@@ -40,6 +40,16 @@ it("reads linked product cards and split currency amounts without borrowing anot
   ]);
 });
 
+it("preserves each card's named facts and variant without borrowing category or sibling metadata", () => {
+  const metadata = JSON.stringify({ name: 'Studio table lamp', brand: 'Maker', material: 'Metal', color: 'White', designer: 'Designer', id: '123', position: 1 });
+  const source = `<section data-params='${metadata}'><a class="product_box" href="/collections/blue/products/studio-lamp-white"><h2>Studio table lamp</h2><img src="/a.jpg" alt="Studio table lamp White"><span class="price">$40</span></a></section><a class="product_box" href="/products/other-lamp"><h2>Other table lamp</h2><img src="/b.jpg"><span class="price">$50</span></a>`;
+  const result = productsFromOctoparseHtml([{ Original_URL: 'https://shop.example/catalog', Source_code: source }], () => true, 'lamp');
+  expect(result.products[0].page.specifications).toEqual([{ name: 'brand', value: 'Maker' }, { name: 'material', value: 'Metal' }, { name: 'color', value: 'White' }, { name: 'designer', value: 'Designer' }]);
+  expect(result.products[0].page.specificationText).toContain('studio lamp white');
+  expect(result.products[0].page.specificationText).not.toContain('blue');
+  expect(result.products[1].page.specifications).toEqual([]);
+});
+
 it("rejects empty required arrays and accepts the provider's display labels", () => {
   expect(() => templateParameters(template, { URLs: [] })).toThrow();
   expect(() => templateParameters(template, { URLs: [" "] })).toThrow();
