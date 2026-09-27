@@ -81,7 +81,7 @@ it("keeps branch addresses from every exported page and from the catalog", async
   const read = async (task, _key, options = {}) => {
     if (task.role !== "pages") return { ...task, status: "empty", rows: [] };
     const catalog = task.values["URLs (up to 10,000 per run)"].includes("https://www.ace.co.il/stores");
-    const chunks = catalog ? [[{ Original_URL: row.Original_URL, Source_code: '<address>First Street, City</address>' }]]
+    const chunks = catalog ? [[{ Original_URL: row.Original_URL, Source_code: `<address>First Street, City</address><a href="${row.Original_URL}/details">Studio lamp</a>` }]]
       : [[{ ...row, Source_code: row.Source_code.replace('</body>', '<address>Second Street, City</address></body>') }], [{ Original_URL: 'https://merchant.example/contact', Source_code: '<address>Third Street, City</address>' }]];
     let state = task;
     for (const chunk of chunks) state = { ...state, ...options.consume(chunk, state) };
@@ -89,7 +89,7 @@ it("keeps branch addresses from every exported page and from the catalog", async
   };
   // Retail indexing supplies the product URL; later HTML chunks supply two
   // additional branches for the same merchant rather than replacing the first.
-  const readIndexed = (task, key, options) => task.role === "retail" ? Promise.resolve({ ...task, status: "completed", rows: [{ Detail_URL: row.Original_URL }] }) : read(task, key, options);
+  const readIndexed = (task, key, options) => task.role === "retail" ? Promise.resolve({ ...task, status: "empty", rows: [] }) : read(task, key, options);
   const result = await discoverOctoparseCatalog({ query: "merged-branches lamp", country: "IL", relevant: () => true, config: { octoparseApiKey: "merged-branches-key" } }, { start, read: readIndexed });
   expect(result.products[0].page.locations.map(place => place.address).sort()).toEqual(["First Street, City", "Second Street, City", "Third Street, City"]);
 });
@@ -106,6 +106,20 @@ it("defers a new phase before its deadline and starts it once on continuation", 
   await withSearchBudget(() => discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read }));
   expect(start.mock.calls.filter(args => args[0] === "amazon-classic" && args[1] === 1153)).toHaveLength(1);
   expect(start.mock.calls.filter(args => args[0] === "marketplace")).toHaveLength(1);
+});
+
+it("reads discovered merchants first and locates their branches before optional child collection", async () => {
+  const starts = vi.fn(async (role, _id, values) => ({ taskId: role, role, values, status: "pending" }));
+  const source = row.Source_code.replace('</body>', '<a href="/branches">Our stores</a><a href="/other-lamp">Studio lamp L200</a></body>');
+  const read = async task => task.role === "retail" ? { ...task, status: "completed", rows: [{ Detail_URL: row.Original_URL }] }
+    : task.role === "pages" && task.values["URLs (up to 10,000 per run)"].includes(row.Original_URL) ? { ...task, status: "completed", rows: [{ ...row, Source_code: source }] }
+    : task.role === "pages" ? { ...task, status: "pending", nextPollAt: Date.now() + 15000, rows: [] } : { ...task, status: "empty", rows: [] };
+  const result = await discoverOctoparseCatalog({ query: "merchant-first lamp", country: "IL", nearbyQuery: "lamp City", nearbyLocation: "City", relevant: () => true, config: { octoparseApiKey: "merchant-first-key" } }, { start: starts, read });
+  const pageStarts = starts.mock.calls.filter(([role]) => role === "pages").map(([, , values]) => values["URLs (up to 10,000 per run)"]);
+  expect(pageStarts).toEqual([[row.Original_URL], ["https://merchant.example/branches"]]);
+  expect(starts.mock.calls.some(([role]) => role === "branches")).toBe(true);
+  expect(result.products).toHaveLength(1);
+  expect(result.sourceStatus.find(source => source.source === "branchPages via Octoparse")?.status).toBe("pending");
 });
 
 it("waits for an occupied shared pool slot and resumes without reporting a final failure", async () => {

@@ -261,11 +261,12 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
       `https://www.ace.co.il/catalogsearch/result/?q=${encodeURIComponent(localizedQuery)}`,
       "https://www.ace.co.il/stores",
     ] : [];
+    const catalogRequest = { key: "catalogs", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": catalogUrls.length ? catalogUrls : [`https://www.amazon.com/s?k=${encodeURIComponent(query)}`], "Wait Before Extraction (seconds)": "3" } };
     const requests = [
-      { key: "catalogs", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": catalogUrls.length ? catalogUrls : [`https://www.amazon.com/s?k=${encodeURIComponent(query)}`], "Wait Before Extraction (seconds)": "3" } },
       { key: "retail", role: "retail", template: 15, values: { MainKeys: [...new Set([retailQuery || `${query} price`, country === "IL" ? `${query} price site:.il` : `${query} price`, ...(nearbyQuery ? [nearbyQuery] : [])])], Pagination_times: "1" } },
       { key: "amazon", role: "amazon-classic", template: 1153, values: { Site: "United States", "Confirm your site": ["https://www.amazon.com/"], "Keywords (up to 100,000)": [query], "Number of Pages to Scrape": "1" } },
       { key: "marketplace", role: "marketplace", template: 1063, values: { "123": "United States", "6tutxf6k2ik.List": ["https://www.ebay.com"], "1x7v90yy9yr.List": [query], "j4s3pig01g.ExecutedTimesLimitation": "1" } },
+      ...(states.catalogs ? [catalogRequest] : []),
     ];
     async function collect(request) {
       try {
@@ -336,11 +337,15 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
       return result;
     }
     await Promise.all(requests.map(collect));
-    const catalogs = htmlData("catalogs");
     // Retailer detail reads can run alongside marketplace collection. Waiting
     // for an unrelated slow marketplace before starting them serialized search.
     if (states.retail?.status !== "pending" && (states.retail?.status === "failed" || !(rows.retail || []).length)) await collect({ key: "retailBing", role: "retail-bing", template: 1471, values: { Country_Area: "United States - English", MainKeys: [retailQuery || `${query} price`], pagination: "1" } });
     const indexedLinks = [...(rows.retail || []), ...(rows.retailBing || [])].map(row => url(row.Detail_URL || row.URL || row.Url || row.Link)).filter(Boolean);
+    // Search-discovered merchants take the HTML slot first. Fixed catalog
+    // seeds are a fallback, rather than an extra cloud run before every real
+    // merchant. Keep reading an already accepted catalog run on continuation.
+    if (!states.catalogs && states.retail?.status !== "pending" && states.retailBing?.status !== "pending" && !indexedLinks.length) await collect(catalogRequest);
+    const catalogs = htmlData("catalogs");
     const amazonProducts = octoparseProducts(rows.amazon || [], relevant, query), marketplaceProducts = octoparseMarketplaceRows(rows.marketplace || [], relevant, query);
     for (const [key, found] of [["amazon", amazonProducts], ["marketplace", marketplaceProducts]]) {
       const status = sourceStatus.find(source => source.source === `${key} via Octoparse`);
@@ -353,15 +358,18 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
       if (links.length) await collect({ key: "pages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": links, "Wait Before Extraction (seconds)": "3" } });
       const detailPages = htmlData("pages");
       if (states.pages && states.pages.status !== "pending") {
-        const children = merchantBalancedLinks(detailPages.candidates.filter(link => !links.includes(link) && !alreadyPriced.has(link) && !detailPages.products.some(product => product.link === link) && !isCatalog("",link)), 24, 4);
-        if (children.length) await collect({ key: "children", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": children, "Wait Before Extraction (seconds)": "3" } });
+        const merchantHosts = new Set([...baseProducts, ...detailPages.products].filter(product => product.page.localEligible !== false && !/amazon\.|ebay\./.test(product.link)).map(product => new URL(product.link).hostname));
+        const branchLinks = nearbyQuery ? merchantBalancedLinks([...catalogs.branchUrls, ...detailPages.branchUrls, ...htmlData("children").branchUrls].filter(link => !links.includes(link) && merchantHosts.has(new URL(link).hostname)), 20, 3) : [];
+        if (branchLinks.length) await collect({ key: "branchPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": branchLinks, "Wait Before Extraction (seconds)": "3" } });
+        // Own branch facts complete the existing product cohort. Give them
+        // priority over optional child products sharing the same HTML task.
+        if (states.branchPages?.status !== "pending") {
+          const children = merchantBalancedLinks(detailPages.candidates.filter(link => !links.includes(link) && !alreadyPriced.has(link) && !detailPages.products.some(product => product.link === link) && !isCatalog("",link)), 24, 4);
+          if (children.length) await collect({ key: "children", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": children, "Wait Before Extraction (seconds)": "3" } });
+        }
       }
       const detailProducts = htmlData("pages", "children").products;
-      if (states.children?.status !== "pending" && states.pages?.status !== "pending") {
-        const branchLinks = merchantBalancedLinks([...catalogs.branchUrls, ...detailPages.branchUrls, ...htmlData("children").branchUrls].filter(link => !links.includes(link)), 20, 3);
-        if (nearbyQuery && branchLinks.length) await collect({ key: "branchPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": branchLinks, "Wait Before Extraction (seconds)": "3" } });
-      }
-      if (nearbyQuery && states.children?.status !== "pending" && states.pages?.status !== "pending" && [...baseProducts, ...detailProducts].length) {
+      if (nearbyQuery && states.pages?.status !== "pending" && [...baseProducts, ...detailProducts].length) {
         const merchants = [...new Set([...baseProducts, ...detailProducts].filter(product => !/amazon\.|ebay\./.test(product.link)).map(product => new URL(product.link).hostname.replace(/^www\./,"")))];
         if (merchants.length) await collect({ key: "branches", role: "branches", template: 686, values: { MainKeys: merchants.map(merchant => `${merchant} ${nearbyLocation || ""}`), PageSize: "1" } });
       }
