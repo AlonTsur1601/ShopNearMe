@@ -4,6 +4,7 @@ import { extractProductData, isSearchResultsUrl } from "./product-page.mjs";
 import { reuseOctoparseTask, readPoolTask } from "./octoparse-pool.mjs";
 import { octoparseProducts, octoparsePlaces, signContinuation, readContinuation } from "./octoparse-discovery.mjs";
 import { sameProductIdentity } from "./product-identity.mjs";
+import { extractMarkdownSpecifications } from "./specifications.mjs";
 import { searchContext } from "./search-budget.mjs";
 
 const cache = new Map();
@@ -55,6 +56,18 @@ function htmlSnapshot(result) {
 }
 function restoreHtmlSnapshot(snapshot) {
   return { ...snapshot, locations: new Map(snapshot.locations), observations: new Map(snapshot.observations) };
+}
+function appendHtmlSnapshot(previous, next) {
+  if (!previous) return htmlSnapshot(next);
+  const before = restoreHtmlSnapshot(previous);
+  return htmlSnapshot({
+    products: [...new Map([...before.products, ...next.products].map(product => [product.link, product])).values()],
+    candidates: [...new Set([...before.candidates, ...next.candidates])],
+    branchUrls: [...new Set([...before.branchUrls, ...next.branchUrls])],
+    blocked: [...new Set([...before.blocked, ...next.blocked])],
+    observations: new Map([...before.observations, ...next.observations]),
+    locations: new Map([...before.locations, ...next.locations]),
+  });
 }
 function validProduct(page, link, relevant, query) {
   return link && !isSearchResultsUrl(link) && !/(^|\.)google\.[a-z.]+$/i.test(new URL(link).hostname)
@@ -197,8 +210,24 @@ export function recoverOctoparseContent(products, rows) {
       if (row.format === "json") { try { return [JSON.parse(row.content).text || ""]; } catch { return []; } }
       return [String(row.content || "")];
     }).join("\n");
-    return content ? { ...product, page: { ...product.page, specificationText: [product.page.specificationText, content].filter(Boolean).join("\n") } } : product;
+    return content ? { ...product, page: { ...product.page,
+      specifications: [...(product.page.specifications ?? []), ...extractMarkdownSpecifications(content)],
+      specificationText: [product.page.specificationText, content].filter(Boolean).join("\n"),
+    } } : product;
   });
+}
+
+export function persistOctoparseLocations(discovery, apiKey) {
+  if (!discovery.continuation || !discovery.queryKey) return discovery.continuation;
+  const states = readContinuation(discovery.continuation, discovery.queryKey, apiKey);
+  const byHost = {};
+  for (const product of discovery.products) {
+    const host = new URL(product.link).hostname;
+    const located = (product.page.locations ?? []).filter(place => Number.isFinite(place.lat) && Number.isFinite(place.lon));
+    byHost[host] = [...new Map([...(byHost[host] ?? []), ...located].map(place => [JSON.stringify([place.address, place.name]), place])).values()];
+  }
+  states.branchCoordinates = { byHost };
+  return signContinuation(states, discovery.queryKey, apiKey);
 }
 
 export async function discoverOctoparseCatalog({ query, country, localizedQuery = query, retailQuery, nearbyQuery, nearbyLocation, config, relevant, isCatalog = () => false, specificationRequests }, dependencies = {}) {
@@ -238,7 +267,13 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
         states[request.key] = state;
         const local = jobs.get(cacheKey)?.[request.key];
         if (local && local.lotNo === state.lotNo && local.status !== "pending" && local.rows) state = local;
-        state = state.deferred || state.snapshot || state.savedRows || state.status !== "pending" && state.rows ? state : state.status === "failed" && !state.taskId ? { ...state, rows: [] } : await read(state, apiKey);
+        state = state.deferred || state.status !== "pending" && (state.snapshot || state.savedRows || state.rows) ? state : state.status === "failed" && !state.taskId ? { ...state, rows: [] } : await read(state, apiKey, request.template === 1395 ? {
+          pageSize: 1,
+          consume: (chunk, progress) => ({
+            snapshot: appendHtmlSnapshot(progress.snapshot, productsFromOctoparseHtml(chunk, relevant, query)),
+            returnedUrls: [...new Set([...(progress.returnedUrls ?? []), ...chunk.filter(row => row.Source_code).map(row => url(row.Original_URL))])],
+          }),
+        } : {});
         if (state.status !== "pending" && state.rows && !state.snapshot && !state.savedRows) {
           if (request.template === 1395) {
             const returned = new Set(state.rows.filter(row => row.Source_code).map(row => url(row.Original_URL)));
@@ -247,6 +282,10 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
           else state = { ...state, savedRows: state.rows };
         }
         if (state.status === "failed" && !state.retryAt) state.retryAt = Date.now() + 30000;
+        if (request.template === 1395 && state.snapshot && state.status !== "pending") {
+          const returned = new Set(state.returnedUrls ?? state.snapshot.observations.map(([link]) => link));
+          state.missingPages = (state.requestedUrls ?? []).filter(link => !returned.has(url(link)));
+        }
         states[request.key] = state;
         rows[request.key] = state.savedRows ?? state.rows ?? [];
         sourceStatus.push({ source: `${request.key === "branches" ? "Nearby branches" : request.key === "pages" ? "Product pages" : request.key} via Octoparse`, status: state.status === "pending" ? "pending" : state.status === "failed" ? "failed" : state.collectedRows || rows[request.key].length || state.snapshot?.observations.length ? "completed" : "empty", ...(state.status === "failed" ? { code: state.code || "search_unavailable" } : {}) });
@@ -317,7 +356,10 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     let products = recoverOctoparseSpecifications([...new Map([...baseProducts, ...pages.products].map(product => [product.link, product])).values()], pages);
     for (const product of products) {
       const found = catalogs.locations.get(new URL(product.link).hostname) ?? pages.locations.get(new URL(product.link).hostname);
-      if (found) product.page.locations = found;
+      if (found) {
+        const located = states.branchCoordinates?.byHost?.[new URL(product.link).hostname] ?? [];
+        product.page.locations = found.map(place => located.find(saved => saved.address === place.address && saved.name === place.name) ?? place);
+      }
       if (/amazon\.|ebay\./.test(new URL(product.link).hostname)) product.page.localEligible = false;
     }
     // Retry missing properties against source pages for the same product.
@@ -343,9 +385,11 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
       if (!contentPending && !contentQuotaExhausted && specificationRequests(products).length) {
         const remaining = products.filter(product => !attempted.has(product.link));
         let batchIndex = contentKeys.length;
-        for (let first = 0; first < remaining.length; first += 20) {
+        // The documented content template accepts URL lists. Use the same
+        // 100-record export bound in one run instead of serializing tiny runs.
+        for (let first = 0; first < remaining.length; first += 100) {
           const index = batchIndex++, key = index ? `content${index}` : "content";
-          const targets = remaining.slice(first, first + 20).map(product => product.link);
+          const targets = remaining.slice(first, first + 100).map(product => product.link);
           await collect({ key, role: "content", template: 2113, values: { MainKeys: targets, Depth: "0", Total_num: "1", Format: "markdown", Output_Field_Name: "content" } });
           states[key].requestedUrls = targets;
           products = recoverOctoparseContent(products, rows[key] || []);
@@ -370,7 +414,7 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     jobs.set(cacheKey, states);
     const pending = sourceStatus.some(source => source.status === "pending");
     const nextPollAt = pending ? Math.min(...Object.values(states).filter(state => state.status === "pending").map(state => state.nextPollAt || Date.now()+15000)) : 0;
-    const value = { products, places: octoparsePlaces(rows.branches || []), sourceStatus, diagnostics: { verified: products.length }, ...(pending ? { continuation: signContinuation(Object.fromEntries(Object.entries(states).map(([key,state]) => [key,{...state,rows:undefined}])), queryKey, apiKey), nextPollAt } : {}) };
+    const value = { products, places: octoparsePlaces(rows.branches || []), sourceStatus, diagnostics: { verified: products.length }, queryKey, ...(pending ? { continuation: signContinuation(Object.fromEntries(Object.entries(states).map(([key,state]) => [key,{...state,rows:undefined}])), queryKey, apiKey), nextPollAt } : {}) };
     if (!pending && !sourceStatus.some(source => source.status === "failed")) cache.set(cacheKey, { expires: Date.now()+900000, value });
     return value;
   })().finally(() => active.delete(cacheKey));

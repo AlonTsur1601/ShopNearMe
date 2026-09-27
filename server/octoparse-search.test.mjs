@@ -1,9 +1,32 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { discoverOctoparseCatalog } from "./octoparse-catalog.mjs";
-import { searchRetailCatalog } from "./search.mjs";
+import { geocodingAddress, searchRetailCatalog } from "./search.mjs";
+import { searchContext } from "./search-budget.mjs";
 
-vi.mock("./octoparse-catalog.mjs", () => ({ discoverOctoparseCatalog: vi.fn() }));
-afterEach(() => vi.unstubAllGlobals());
+vi.mock("./octoparse-catalog.mjs", () => ({ discoverOctoparseCatalog: vi.fn(), persistOctoparseLocations: value => value.continuation }));
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+it("cleans branch labels and country codes without dropping the street number or city", () => {
+  expect(geocodingAddress("רח' לישנסקי 3, סניף ראשון לציון, IL")).toBe("לישנסקי 3, ראשון לציון, Israel");
+});
+
+it("geocodes a branch even when product retrieval has exhausted its deadline", async () => {
+  vi.useFakeTimers();
+  let discoverySignal;
+  vi.mocked(discoverOctoparseCatalog).mockImplementationOnce(async () => {
+    discoverySignal = searchContext().signal;
+    await new Promise(resolve => setTimeout(resolve, 12001));
+    return { products: [record([{ address: "Recovery Street 17", name: "City" }])], places: [], sourceStatus: [] };
+  });
+  const fetcher = vi.fn(async () => Response.json([{ lat: "32.062", lon: "34.855", addresstype: "house" }]));
+  vi.stubGlobal("fetch", fetcher);
+  const job = searchRetailCatalog("deadline table lamp", "City", { provider: "octoparse", octoparseApiKey: "deadline-key" }, { lat: 32.062, lon: 34.855 });
+  await vi.advanceTimersByTimeAsync(13000);
+  const result = await job;
+  expect(discoverySignal.aborted).toBe(true);
+  expect(result.offers.some(offer => offer.category === "local")).toBe(true);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
 
 const record = (locations = []) => ({ id: "source-product", link: "https://merchant.example/products/lamp", title: "Studio table lamp", page: {
   title: "Studio table lamp", imageUrl: "https://merchant.example/lamp.jpg", price: 199, currency: "ILS", locations,
@@ -16,7 +39,7 @@ it("returns a real nearby product before another source finishes and resolves br
   const fetcher = vi.fn(async value => {
     const link = new URL(value);
     if (link.hostname !== "nominatim.openstreetmap.org") throw new Error("Unexpected provider");
-    return Response.json([{ lat: link.searchParams.get("q").includes("Branch 5") ? "32.062" : "31.0", lon: "34.855", addresstype: "house" }]);
+    return Response.json([{ lat: link.searchParams.get("q").startsWith("5,") ? "32.062" : "31.0", lon: "34.855", addresstype: "house" }]);
   });
   vi.stubGlobal("fetch", fetcher);
   const result = await searchRetailCatalog("table lamp", "Kiryat Ono, Israel", { provider: "octoparse", octoparseApiKey: "fixture-key" }, { lat: 32.062, lon: 34.855 });
@@ -25,7 +48,7 @@ it("returns a real nearby product before another source finishes and resolves br
   expect(nearby.distanceMiles).toBe(0);
   expect(result.pendingSearch.continuation).toBe("signed-continuation");
   expect(fetcher).toHaveBeenCalledTimes(6);
-});
+}, 10000);
 
 it("matches a located branch without a website by exact merchant name without showing a directory row", async () => {
   vi.mocked(discoverOctoparseCatalog).mockResolvedValueOnce({ products: [record()], places: [{ title: "merchant.example", website: "", address: "City", place_id: "source-place", gps_coordinates: { latitude: 32.062, longitude: 34.855 } }], sourceStatus: [] });

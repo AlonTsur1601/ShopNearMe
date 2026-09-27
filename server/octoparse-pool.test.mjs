@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { readPoolTask, reuseOctoparseTask, templateParameters } from "./octoparse-pool.mjs";
-import { discoverOctoparseCatalog, merchantBalancedLinks, productsFromOctoparseHtml, recoverOctoparseSpecifications } from "./octoparse-catalog.mjs";
+import { discoverOctoparseCatalog, merchantBalancedLinks, persistOctoparseLocations, productsFromOctoparseHtml, recoverOctoparseContent, recoverOctoparseSpecifications } from "./octoparse-catalog.mjs";
 import { withSearchBudget } from "./search-budget.mjs";
+import { readContinuation } from "./octoparse-discovery.mjs";
 
 afterEach(() => vi.useRealTimers());
 const mapping = JSON.stringify({ TemplateParameters: [{ ParamName: "urls", Value: ["https://merchant.example/product"] }] });
@@ -9,6 +10,12 @@ const template = { id: 1, parameters: JSON.stringify([{ Id: "urls-id", ParamName
 const product = { "@type": "Product", name: "Studio LED lamp Model L100", image: "https://merchant.example/lamp.jpg", offers: { price: "49.99", priceCurrency: "USD" }, additionalProperty: [{ name: "Color", value: "Red" }] };
 const html = item => `<html><body><script type="application/ld+json">${JSON.stringify(item)}</script></body></html>`;
 const row = { Original_URL: "https://merchant.example/product", Source_code: html(product) };
+
+it("keeps content facts attached to the exact product URL and identity", () => {
+  const items = [{ link: row.Original_URL, title: product.name, page: {} }];
+  const rows = [{ url: row.Original_URL, title: product.name, format: "markdown", content: '- Color: White\n- Material: Metal' }, { url: row.Original_URL, title: 'Other lamp Model L200', content: '- Color: Blue' }];
+  expect(recoverOctoparseContent(items, rows)[0].page.specifications).toEqual([{ name: "Color", value: "White" }, { name: "Material", value: "Metal" }]);
+});
 
 it("keeps every merchant in the page budget and deduplicates navigation fragments", () => {
   const links = [...Array.from({ length: 12 }, (_, i) => `https://first.example/products/${i}`), "https://second.example/branches#main", "https://second.example/branches#", "https://third.example/product?srsltid=tracking"];
@@ -108,16 +115,16 @@ it("resumes an accepted start after an acknowledgement timeout without starting 
   expect(read.mock.calls.some(args => args[0].lotNo === "939260363630236299")).toBe(true);
 });
 
-it("recovers source-page specifications for products beyond the first twenty", async () => {
+it("recovers source-page specifications beyond a full hundred-record batch", async () => {
   let serial = 0;
   const start = vi.fn(async (role, _id, values) => ({ taskId: String(++serial), status: "pending", role, values }));
   const read = async task => ({ ...task, status: "completed", rows: task.role === "amazon-classic"
-    ? Array.from({ length: 21 }, (_, index) => ({ Product_URL_clean: `https://www.amazon.com/dp/B${String(index).padStart(9,"0")}`, Product_name: "Studio lamp", Image_link: "https://images.example/lamp.jpg", Current_price: "$40" }))
+    ? Array.from({ length: 101 }, (_, index) => ({ Product_URL_clean: `https://www.amazon.com/dp/B${String(index).padStart(9,"0")}`, Product_name: "Studio lamp", Image_link: "https://images.example/lamp.jpg", Current_price: "$40" }))
     : task.role === "content" ? task.values.MainKeys.map(link => ({ url: link, title: "Studio lamp", content: "Source-backed specification details" })) : [] });
   const result = await discoverOctoparseCatalog({ query: "all-products lamp", country: "US", relevant: () => true, specificationRequests: () => ["missing specifications"], config: { octoparseApiKey: "all-product-content-test" } }, { start, read });
-  expect(result.products).toHaveLength(21);
+  expect(result.products).toHaveLength(101);
   expect(result.products.every(product => product.page.specificationText.includes("Source-backed specification details"))).toBe(true);
-  expect(start.mock.calls.filter(args => args[0] === "content").map(args => args[2].MainKeys.length)).toEqual([20,1]);
+  expect(start.mock.calls.filter(args => args[0] === "content").map(args => args[2].MainKeys.length)).toEqual([100,1]);
 });
 
 it("recovers product facts while branch lookup is pending and searches only unresolved facts", async () => {
@@ -163,6 +170,38 @@ it("exports small pages in order without rounding the run identity", async () =>
   expect(call.mock.calls.map(args => args[1])).toEqual([1,2,3].map(page => ({ taskId: "paged", lotNo: "939260363630236283", page, pageSize: 5 })));
 });
 
+it("resumes compact page checkpoints without re-exporting successful HTML pages", async () => {
+  vi.useFakeTimers();
+  const start = Date.now();
+  const call = vi.fn(async (_name, args) => {
+    if (args.page === 1) vi.setSystemTime(start + 9000);
+    return { success: true, data: [{ Original_URL: `https://shop.example/${args.page}`, Source_code: '<h1>Source HTML</h1>' }] };
+  });
+  const consume = (rows, progress) => ({ snapshot: [...(progress.snapshot ?? []), ...rows.map(row => row.Original_URL)] });
+  const dependencies = { call, pageSize: 1, consume };
+  const first = await withSearchBudget(() => readPoolTask({ taskId: "checkpoint", lotNo: "939260363630236287", status: "completed", collectedRows: 12 }, "key", dependencies), 10000);
+  expect(first).toMatchObject({ status: "pending", exportedCount: 4, completedPages: [1, 2, 3, 4] });
+  expect(JSON.stringify(first)).not.toContain("Source_code");
+  const resumed = await withSearchBudget(() => readPoolTask(first, "key", dependencies), 10000);
+  expect(resumed.status).toBe("completed");
+  expect(resumed.snapshot).toHaveLength(12);
+  expect(call.mock.calls.map(([, args]) => args.page)).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+});
+
+it("keeps a progressing run alive and stops only after it stalls", async () => {
+  vi.useFakeTimers();
+  const now = Date.now();
+  const call = vi.fn(async name => name === "get_task_status" ? { lotNo: "939260363630236288", status: "running", collectedRows: 1 } : { success: true, data: [{ n: 1 }] });
+  const dependencies = { request: async () => ({ userInputParameters: mapping }), call };
+  const active = await readPoolTask({ taskId: "progress", lotNo: "939260363630236288", startedAt: now - 121000, status: "pending" }, "key", dependencies);
+  expect(active.status).toBe("pending");
+  expect(call.mock.calls.some(([name]) => name === "start_or_stop_task")).toBe(false);
+  vi.setSystemTime(now + 121000);
+  const stopped = await readPoolTask(active, "key", dependencies);
+  expect(stopped).toMatchObject({ status: "failed", code: "search_timeout", rows: [{ n: 1 }] });
+  expect(call.mock.calls.filter(([name]) => name === "start_or_stop_task")).toHaveLength(1);
+});
+
 it("rejects missing export rows and oversized datasets instead of reporting success", async () => {
   const call = vi.fn(async () => ({ success: true, data: [{ n: 1 }] }));
   await expect(readPoolTask({ taskId: "short-export", lotNo: "939260363630236284", status: "completed", collectedRows: 2 }, "key", { call })).rejects.toMatchObject({ code: "incomplete_export" });
@@ -200,13 +239,15 @@ it("resumes on a cold worker without exporting previously parsed HTML again", as
   const read = vi.fn(async task => {
     if (task.role === "branches" && !branchesReady) return { ...task, rows: [], status: "pending" };
     const rows = task.role === "retail" ? [{ Detail_URL: row.Original_URL }]
-      : task.role === "pages" && task.values["URLs (up to 10,000 per run)"].includes(row.Original_URL) ? [row] : [];
+      : task.role === "pages" && task.values["URLs (up to 10,000 per run)"].includes(row.Original_URL) ? [{ ...row, Source_code: row.Source_code.replace('</body>', '<address>32 Main Street</address></body>') }] : [];
     return { ...task, status: rows.length ? "completed" : "empty", rows };
   });
   const options = { query: "cold-worker lamp", country: "IL", nearbyQuery: "cold-worker city", nearbyLocation: "City", relevant: () => true, config: { octoparseApiKey: "cold-worker-key" } };
   const first = await discoverOctoparseCatalog(options, { start, read });
   expect(first.products).toHaveLength(1); expect(first.continuation).toBeTruthy();
-  const payload = JSON.parse(Buffer.from(first.continuation.split(".")[0], "base64url").toString());
+  first.products[0].page.locations[0] = { ...first.products[0].page.locations[0], lat: 32.06, lon: 34.85 };
+  first.continuation = persistOctoparseLocations(first, options.config.octoparseApiKey);
+  const payload = { task: readContinuation(first.continuation, first.queryKey, options.config.octoparseApiKey) };
   expect(payload.task.pages.snapshot.products).toHaveLength(1);
   expect(JSON.stringify(payload)).not.toContain("Source_code");
   const reads = read.mock.calls.length;
@@ -215,6 +256,7 @@ it("resumes on a cold worker without exporting previously parsed HTML again", as
   const cold = await import("./octoparse-catalog.mjs");
   const result = await cold.discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read });
   expect(result.products).toHaveLength(1); expect(result.continuation).toBeUndefined();
+  expect(result.products[0].page.locations[0]).toMatchObject({ address: "32 Main Street", lat: 32.06, lon: 34.85 });
   expect(read.mock.calls.slice(reads).map(([task]) => task.role)).toEqual(["branches"]);
 });
 

@@ -204,6 +204,38 @@ export function extractNamedSpecifications(html, product = {}) {
   return pairs;
 }
 
+// Content workflows return Markdown rather than HTML. Keep named source rows
+// structured, including properties unknown to the predefined alias list.
+export function extractMarkdownSpecifications(content) {
+  const pairs = [], lines = String(content ?? "").split(/\r?\n/);
+  const text = value => cleanText(value.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[*_`]/g, ""));
+  const cells = line => line.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map(text);
+  let excluded = false;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].trim();
+    if (/^#{1,6}\s/.test(line)) {
+      excluded = /related products|you may also|recommendations|contact|opening hours|מוצרים נוספים|מוצרים דומים|צור קשר|שעות פתיחה/i.test(line);
+      continue;
+    }
+    if (excluded) continue;
+    if (line.includes("|") && /^\s*\|?\s*:?-{3,}/.test(lines[index + 1] || "")) {
+      const names = cells(line), rows = [];
+      index += 2;
+      for (; index < lines.length && lines[index].includes("|"); index++) rows.push(cells(lines[index]));
+      index--;
+      if (names.length === 2 && !/benefit|advantage|why it matters/i.test(names.join(" "))) {
+        for (const row of rows) if (row.length === 2 && row[0] && row[1]) pairs.push({ name: row[0], value: row[1] });
+      } else if (rows.length === 1 && rows[0].length === names.length && names.length > 2) {
+        names.forEach((name, i) => { if (name && rows[0][i]) pairs.push({ name, value: rows[0][i] }); });
+      }
+      continue;
+    }
+    const match = text(line.replace(/^[-+*]\s*/, "")).match(/^([^:：]{2,48})[:：]\s*(.{1,100})$/);
+    if (match) pairs.push({ name: match[1], value: match[2] });
+  }
+  return pairs;
+}
+
 export function monitorAttributes(query, text) {
   if (!/monitor|television|\btv\b|מסך/i.test(query)) return { attributes: {}, labels: {} };
   const pairs = [], add = (name, value) => { if (value) pairs.push({ name, value }); };

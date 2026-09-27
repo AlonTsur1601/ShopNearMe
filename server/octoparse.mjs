@@ -4,6 +4,7 @@
 import { budgetFetch } from "./search-budget.mjs";
 import { randomUUID } from "node:crypto";
 const sessions = new Map();
+const initializingSessions = new Map();
 
 function providerError(code = "search_unavailable") {
   return Object.assign(new Error("Octoparse request could not be completed"), { code });
@@ -44,15 +45,25 @@ export async function octoparseTool(name, args, apiKey, fetcher = budgetFetch) {
   };
   let session = sessions.get(apiKey);
   if (!session || session.expires < Date.now()) {
-    const initializeId = randomUUID();
-    const response = await send("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "ShopNearMe", version: "1.0" } }, initializeId);
-    session = { id: response.headers.get("mcp-session-id"), expires: Date.now() + 300000 };
-    decodeRpc(await response.text(), initializeId);
-    if (!session.id) throw providerError();
-    headers["mcp-session-id"] = session.id;
-    await send("notifications/initialized", {});
-    sessions.set(apiKey, session);
-  } else headers["mcp-session-id"] = session.id;
+    let pending = initializingSessions.get(apiKey);
+    if (!pending) {
+      pending = (async () => {
+        const initializeId = randomUUID();
+        const response = await send("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "ShopNearMe", version: "1.0" } }, initializeId);
+        const created = { id: response.headers.get("mcp-session-id"), expires: Date.now() + 300000 };
+        decodeRpc(await response.text(), initializeId);
+        if (!created.id) throw providerError();
+        headers["mcp-session-id"] = created.id;
+        await send("notifications/initialized", {});
+        sessions.set(apiKey, created);
+        return created;
+      })();
+      initializingSessions.set(apiKey, pending);
+    }
+    try { session = await pending; }
+    finally { if (initializingSessions.get(apiKey) === pending) initializingSessions.delete(apiKey); }
+  }
+  headers["mcp-session-id"] = session.id;
   // Concurrent exports share a session. Reusing id=2 can route one task's
   // response to another task (for example map rows to the product parser).
   const requestId = randomUUID();

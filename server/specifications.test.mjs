@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractProductData } from "./product-page.mjs";
 import { buildFacets, searchCatalog } from "./search.mjs";
-import { monitorAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
+import { extractMarkdownSpecifications, monitorAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
 import { normalizeOfferFacets } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("specification-driven facets", () => {
+  it("recovers named Markdown facts across products without adding comparisons or retailer contacts", () => {
+    const content = '# Product\n\n| Property | Value |\n| --- | --- |\n| RAM Size | **16 GB DDR5** |\n| Color | White |\n| Hydrostatic head | 5000 mm |\n\n- Material: Metal\n- Phone: +97298821001\n\n| Color | Power | Material |\n| --- | --- | --- |\n| Red | 7 W | Glass |\n| Blue | 10 W | Metal |\n\n## Related products\n- Color: Green\n\n## Contact\n- Office size: 500 square feet';
+    expect(structuredAttributes(extractMarkdownSpecifications(content)).attributes).toEqual({ memory: ["16 GB"], color: ["White"], "spec:hydrostatic_head": ["5000 mm"], material: ["Metal"] });
+    expect(structuredAttributes(extractMarkdownSpecifications('| Aperture | Focal length | Optical design |\n| --- | --- | --- |\n| 130 mm | 650 mm | Reflector |')).attributes).toMatchObject({ "spec:aperture": ["130 mm"], "spec:focal_length": ["650 mm"] });
+  });
   it("preserves source-backed technical vocabulary across extraction, normalization and facet building", () => {
     const specs = structuredAttributes([{ name: "Material type", value: "Borosilicate" }, { name: "Magnet composition", value: "Neodymium" }, { name: "Additional features", value: "Dimmable" }, { name: "Brand name", value: "Maker" }, { name: "One-time purchase", value: "$99" }, { name: "Color", value: "Other" }]);
     const offer = normalizeOfferFacets({ attributes: specs.attributes, attributeLabels: specs.labels });

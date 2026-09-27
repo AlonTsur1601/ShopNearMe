@@ -6,6 +6,13 @@ afterEach(() => vi.useRealTimers());
 const task = { taskId: "task-1", lotNo: "939255040428148360", nextPollAt: 0 };
 const row = { Product_URL_clean: "https://www.amazon.com/dp/B004YAVF8I", Product_name: "Logitech wireless mouse", Image_link: "https://m.media-amazon.com/mouse.jpg", Current_price: "$13.99", Product_status: "Valid" };
 
+it("preserves a large fact cohort in a compact signed continuation", () => {
+  const cohort = { products: Array.from({ length: 140 }, (_, i) => ({ id: i, facts: 'Source-backed product specifications '.repeat(300) })) };
+  const token = signContinuation(cohort, "large-cohort", "fixture-key");
+  expect(token.length).toBeLessThan(20000);
+  expect(readContinuation(token, "large-cohort", "fixture-key")).toEqual(cohort);
+});
+
 it("keeps branch data separate from product offers and requires real coordinates", () => {
   const place = { Title: "Store", Website: "https://merchant.example", Latitude: "32.06", Longitude: "34.85", Address: "Main St" };
   expect(octoparsePlaces([place, { ...place, Latitude: "" }, { ...place, Current_Status: "Permanently closed" }])).toHaveLength(1);
@@ -107,6 +114,20 @@ it("uses unique RPC ids when parallel tasks share a session", async () => {
 
 it("does not use the map viewport as a store's address", () => {
   expect(octoparsePlaces([{ Title: "Store", Website: "https://store.example", Latitude_backup: "32", Longitude_backup: "34" }])).toEqual([]);
+});
+
+it("initializes one shared session when concurrent requests start on a cold server", async () => {
+  const methods = [];
+  const fetcher = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    methods.push(request.method);
+    if (!request.id) return new Response(null, { status: 202 });
+    return Response.json({ jsonrpc: "2.0", id: request.id, result: request.method === "initialize" ? {} : { structuredContent: { success: true, taskId: request.params.arguments.taskId } } }, { headers: { "mcp-session-id": "cold-session" } });
+  };
+  const result = await Promise.all(["products", "branches", "facts"].map(taskId => octoparseTool("get_task_status", { taskId }, "cold-session-key", fetcher)));
+  expect(result.map(row => row.taskId)).toEqual(["products", "branches", "facts"]);
+  expect(methods.filter(method => method === "initialize")).toHaveLength(1);
+  expect(methods.filter(method => method === "notifications/initialized")).toHaveLength(1);
 });
 it("preserves a located branch without a website for exact merchant matching", () => {
   expect(octoparsePlaces([{ Title: "Exact Merchant", Latitude: "32.06", Longitude: "34.85", Address: "City" }])[0]).toMatchObject({ title: "Exact Merchant", website: "", address: "City" });

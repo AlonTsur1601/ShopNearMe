@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { startOctoparseTask, readOctoparseTask, findOctoparseTask } from "./octoparse.mjs";
 import { enrichProductPage, isSearchResultsUrl } from "./product-page.mjs";
 import { catalogProductLinks } from "./catalog-products.mjs";
@@ -10,7 +11,9 @@ const ttl = 15 * 60 * 1000;
 const digest = value => createHash("sha256").update(value).digest("hex");
 
 export function signContinuation(task, queryKey, apiKey) {
-  const payload = Buffer.from(JSON.stringify({ task, queryKey, expires: Date.now() + 3600000 })).toString("base64url");
+  // Hundreds of source-backed product facts must fit in the continuation POST.
+  // Compress the signed state; never truncate a cohort to fit a request body.
+  const payload = "z:" + deflateRawSync(Buffer.from(JSON.stringify({ task, queryKey, expires: Date.now() + 3600000 }))).toString("base64url");
   return `${payload}.${createHmac("sha256", apiKey).update(payload).digest("base64url")}`;
 }
 export function readContinuation(token, queryKey, apiKey) {
@@ -19,7 +22,7 @@ export function readContinuation(token, queryKey, apiKey) {
     const expected = createHmac("sha256", apiKey).update(payload).digest();
     const received = Buffer.from(signature, "base64url");
     if (expected.length !== received.length || !timingSafeEqual(expected, received)) throw new Error();
-    const value = JSON.parse(Buffer.from(payload, "base64url").toString());
+    const value = JSON.parse((payload.startsWith("z:") ? inflateRawSync(Buffer.from(payload.slice(2), "base64url"), { maxOutputLength: 16 * 1024 * 1024 }) : Buffer.from(payload, "base64url")).toString());
     if (value.queryKey !== queryKey || value.expires < Date.now()) throw new Error();
     return value.task;
   } catch { throw Object.assign(new Error("Search continuation expired. Start the search again."), { code: "invalid_continuation" }); }

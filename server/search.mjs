@@ -8,7 +8,7 @@ import { productWords, contradictsQuery, sameProductIdentity } from "./product-i
 import { budgetFetch, deadlineError, searchContext, withSearchBudget } from "./search-budget.mjs";
 import { catalogProductLinks } from "./catalog-products.mjs";
 import { discoverRetailProducts } from "./retail-discovery.mjs";
-import { discoverOctoparseCatalog } from "./octoparse-catalog.mjs";
+import { discoverOctoparseCatalog, persistOctoparseLocations } from "./octoparse-catalog.mjs";
 import { publicSearchError } from "./search-errors.mjs";
 const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), photonStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map(), mapsQuotaBlockedUntil = new Map();
 const CACHE_MS = 15 * 60 * 1000;
@@ -665,15 +665,31 @@ async function osmStores(query, location, origin) {
   return places;
 }
 
+let geocodeQueue = Promise.resolve(), lastGeocodeStart = 0;
+export function geocodingAddress(location) {
+  return providerLocation(location).replace(/\bbranch\s*[:：-]?\s*/gi, "").replace(/סניף\s*[:：-]?\s*/gu, "")
+    .replace(/רח(?:וב)?[.'׳״]?\s+/gu, "").replace(/,\s*IL$/i, ", Israel").replace(/\s+/g, " ").trim();
+}
 async function namedLocationCoordinates(location) {
-  const name = providerLocation(location).trim(), cacheKey = name.toLowerCase();
+  const name = geocodingAddress(location), cacheKey = name.toLowerCase();
   if (!name || name === "Current location" || countries.has(cacheKey)) return null;
   const cached = geocodeCache.get(cacheKey);
   if (cached?.expires > Date.now()) return cached.point;
   if (geocodePending.has(cacheKey)) return geocodePending.get(cacheKey);
   const job = (async () => {
     try {
-      const data = await fetchJson("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=" + encodeURIComponent(name), { headers: { "Accept-Language": "en", "User-Agent": "ShopNearMe/0.1 (local product search)" } }, 1800);
+      // The public geocoder permits one request per second. Queue distinct
+      // addresses and keep the existing cache/pending deduplication.
+      const wait = geocodeQueue.catch(() => {}).then(async () => {
+        if (lastGeocodeStart > Date.now()) lastGeocodeStart = 0;
+        const delay = Math.max(0, 1000 - (Date.now() - lastGeocodeStart));
+        if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+        searchContext()?.signal.throwIfAborted();
+        lastGeocodeStart = Date.now();
+        return fetchJson("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=" + encodeURIComponent(name), { headers: { "Accept-Language": "en", "User-Agent": "ShopNearMe/0.1 (local product search)" } }, 1800);
+      });
+      geocodeQueue = wait;
+      const data = await wait;
       const item = data?.[0];
       if (!item || ["country", "state"].includes(item.addresstype)) return null;
       const point = validCoordinates({ lat: item.lat, lon: item.lon });
@@ -938,7 +954,13 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     if (config.provider === "octoparse" && origin && scope !== "online" && scope !== "local-products") {
       const addresses = [...new Set(discovery.products.flatMap(record => record.page.locations ?? []).filter(place => !validCoordinates(place) && place.address).map(place => [place.address, place.name, country].filter(Boolean).join(", ")))];
       const resolved = new Map();
-      await mapConcurrent(addresses, 4, async address => { const point = await namedLocationCoordinates(address).catch(() => undefined); if (point) resolved.set(address, point); });
+      // Exporting a finished Octoparse lot may exhaust its request deadline.
+      // Reserve a separate bounded phase for coordinates instead of attempting
+      // every geocode with a signal that is already aborted.
+      await withSearchBudget(() => mapConcurrent(addresses, 4, async address => {
+        const point = await namedLocationCoordinates(address).catch(() => undefined);
+        if (point) resolved.set(address, point);
+      }), 8000);
       for (const record of discovery.products) record.page.locations = (record.page.locations ?? []).flatMap(place => {
         const point = validCoordinates(place) || resolved.get([place.address, place.name, country].filter(Boolean).join(", "));
         return point ? [{ ...place, ...point }] : [place];
@@ -967,7 +989,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
         : marketplaceState.status === "fulfilled" ? marketplace.length ? "completed" : "empty" : "failed", products: marketplace.length }]),
     ];
     result.discoveryStatus = discovery.sourceStatus;
-    if (discovery.continuation) result.pendingSearch = { continuation: discovery.continuation, nextPollAt: discovery.nextPollAt };
+    if (discovery.continuation) result.pendingSearch = { continuation: config.provider === "octoparse" ? persistOctoparseLocations(discovery, config.octoparseApiKey) : discovery.continuation, nextPollAt: discovery.nextPollAt };
     if (config.provider === "octoparse") result.sourceStatus.push(...discovery.sourceStatus.filter(source => source.status === "failed"));
     result.partialFailure = result.sourceStatus.some(source => source.status === "failed");
     result.warnings = [...new Set(result.sourceStatus.filter(source => source.status === "failed").map(source => source.code ? publicSearchError({ code: source.code }).error : source.source + " could not be searched. Please try again."))];
@@ -979,7 +1001,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     if (searchContext().backupQuota) result.warnings.push("Backup search allowance has been used up." + (searchContext().backupQuota.reset ? ` It renews on ${searchContext().backupQuota.reset}.` : ""));
     console.info("retail_search", { ...discovery.diagnostics, sources: discovery.sourceStatus, online: online.length, local: localOffers.length });
     return result;
-  }).finally(() => inFlight.delete(requestKey));
+  }, config.provider === "octoparse" ? 12000 : 16000).finally(() => inFlight.delete(requestKey));
   inFlight.set(requestKey, request);
   return request;
 }

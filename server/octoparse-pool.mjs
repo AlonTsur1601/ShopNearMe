@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { budgetFetch } from "./search-budget.mjs";
+import { budgetFetch, searchContext } from "./search-budget.mjs";
 import { octoparseTool } from "./octoparse.mjs";
 
 // Reuse saved tasks through the same templateMapping contract as the official
@@ -116,7 +116,10 @@ export async function readPoolTask(task, apiKey, dependencies = {}) {
   if (!task.lotNo && state.lotNo !== task.previousLot) task = { ...task, lotNo: state.lotNo };
   if (task.lotNo && state.lotNo && task.lotNo !== state.lotNo) throw failure("task_reassigned");
   if (!task.lotNo || state.status === "running" || state.status === "unexecuted") {
-    if (task.startedAt && Date.now() - task.startedAt > 120000) {
+    const progressing = state.collectedRows > (task.collectedRows ?? 0);
+    task = { ...task, collectedRows: state.collectedRows ?? task.collectedRows ?? 0,
+      lastProgressAt: progressing ? Date.now() : task.lastProgressAt || task.startedAt };
+    if (task.startedAt && (Date.now() - task.lastProgressAt > 120000 || Date.now() - task.startedAt > 300000)) {
       // Stop only a run whose input and exact lot were checked above. A hung
       // worker must not hold a shared task indefinitely or keep consuming rows.
       if (state.status === "running" && (!task.lotNo || task.lotNo === state.lotNo)) await call("start_or_stop_task", { taskId: task.taskId, action: "stop" }, apiKey);
@@ -131,24 +134,45 @@ export async function readPoolTask(task, apiKey, dependencies = {}) {
   }
   if (task.lotNo !== state.lotNo) throw failure("task_reassigned");
   if (!["completed", "stopped"].includes(state.status)) throw failure("search_unavailable");
-  const rows = [];
   // Raw HTML rows can be hundreds of kilobytes each. A 50-row export timed
   // out even after extraction succeeded; use small concurrent exact-lot pages.
-  const pageSize = 5, total = state.collectedRows;
+  const pageSize = dependencies.pageSize ?? 5, total = state.collectedRows;
   // Never label a truncated dataset complete. Our queries request small
   // batches; reject an unexpected oversized export instead of silently
   // discarding products or spending the user's allowance on unbounded reads.
   if (!Number.isInteger(total) || total < 0 || total > 100) throw failure("incomplete_export");
-  for (let first = 1; first <= Math.ceil(total / pageSize); first += 4) {
-    const exportedPages = await Promise.all(Array.from({ length: Math.min(4, Math.ceil(total / pageSize) - first + 1) }, (_, offset) => call("export_data", { taskId: task.taskId, lotNo: task.lotNo, page: first + offset, pageSize }, apiKey)));
-    for (const exported of exportedPages) {
+  let progress = { ...task, status: "pending", collectedRows: total,
+    exportStatus: state.status === "stopped" ? "failed" : "completed",
+    completedPages: [...(task.completedPages ?? [])], exportedCount: task.exportedCount ?? 0,
+    exportRows: [...(task.exportRows ?? [])], nextPollAt: Date.now() + 1000 };
+  const pendingPages = Array.from({ length: Math.ceil(total / pageSize) }, (_, i) => i + 1).filter(page => !progress.completedPages.includes(page));
+  for (let first = 0; first < pendingPages.length; first += 4) {
+    if (searchContext() && searchContext().deadline - Date.now() < 4000) return { ...progress, rows: [] };
+    const pages = pendingPages.slice(first, first + 4);
+    const exportedPages = await Promise.allSettled(pages.map(page => call("export_data", { taskId: task.taskId, lotNo: task.lotNo, page, pageSize }, apiKey)));
+    let interrupted = false;
+    for (const [index, result] of exportedPages.entries()) {
+      if (result.status === "rejected") {
+        if (/Timeout|Abort/.test(result.reason?.name) || result.reason?.code === "search_timeout") { interrupted = true; continue; }
+        throw result.reason;
+      }
+      const exported = result.value;
       if (!exported.success || !Array.isArray(exported.data)) throw failure("search_unavailable");
-      rows.push(...exported.data);
+      if (exported.data.length !== Math.min(pageSize, total - (pages[index] - 1) * pageSize)) throw failure("incomplete_export");
+      progress = dependencies.consume ? { ...progress, ...dependencies.consume(exported.data, progress) }
+        : { ...progress, exportRows: [...progress.exportRows, ...exported.data] };
+      progress.completedPages.push(pages[index]);
+      progress.exportedCount += exported.data.length;
     }
+    // Keep every successfully read page across signed continuations. A later
+    // timeout must not discard or re-export the earlier part of a finished lot.
+    if (interrupted) return { ...progress, rows: [] };
   }
-  if (rows.length !== total) throw failure("incomplete_export");
+  if (progress.exportedCount !== total) throw failure("incomplete_export");
   releaseOctoparseTask(task);
-  return { ...task, exportStatus: undefined, collectedRows: state.collectedRows, status: state.status === "stopped" ? "failed" : rows.length ? "completed" : "empty", rows };
+  const exportRows = progress.exportRows, finished = { ...progress };
+  delete finished.exportRows; delete finished.completedPages; delete finished.exportedCount;
+  return { ...finished, exportStatus: undefined, status: state.status === "stopped" ? "failed" : total ? "completed" : "empty", rows: exportRows };
 }
 
 export function releaseOctoparseTask(task) {
