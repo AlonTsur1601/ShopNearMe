@@ -97,6 +97,21 @@ it("recovers source-page specifications for products beyond the first twenty", a
   expect(start.mock.calls.filter(args => args[0] === "content").map(args => args[2].MainKeys.length)).toEqual([20,1]);
 });
 
+it("recovers product facts while branch lookup is pending and searches only unresolved facts", async () => {
+  let serial = 0;
+  const start = vi.fn(async (role, _id, values) => ({ taskId: String(++serial), role, values, status: "pending" }));
+  const read = async task => task.role === "branches" ? { ...task, nextPollAt: Date.now() + 15000, rows: [] }
+    : { ...task, status: "completed", rows: task.role === "pages" ? [row]
+      : task.role === "content" ? [{ url: row.Original_URL, title: product.name, content: "Confirmed dimensions" }] : [] };
+  const result = await discoverOctoparseCatalog({ query: "parallel-specs lamp", country: "US", nearbyQuery: "lamp City", nearbyLocation: "City", relevant: () => true,
+    specificationRequests: products => products.every(product => product.page.specificationText.includes("Confirmed dimensions")) ? [] : ["missing dimensions"],
+    config: { octoparseApiKey: "parallel-specs-key" } }, { start, read });
+  expect(result.sourceStatus.find(source => source.source === "Nearby branches via Octoparse").status).toBe("pending");
+  expect(result.products[0].page.specificationText).toContain("Confirmed dimensions");
+  expect(start.mock.calls.some(args => args[0] === "content")).toBe(true);
+  expect(start.mock.calls.some(args => args[2].MainKeys?.includes("missing dimensions"))).toBe(false);
+});
+
 it("exports small pages in order without rounding the run identity", async () => {
   const call = vi.fn(async (_name, args) => ({ success: true, data: Array.from({ length: Math.min(5, 12 - (args.page - 1) * 5) }, (_, i) => ({ n: (args.page - 1) * 5 + i })) }));
   const result = await readPoolTask({ taskId: "paged", lotNo: "939260363630236283", status: "completed", collectedRows: 12 }, "key", { call });

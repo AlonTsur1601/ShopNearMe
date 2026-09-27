@@ -1,4 +1,5 @@
 import { englishLabel, specificationText } from "./facet-language.mjs";
+import { load } from "cheerio";
 // Facets are discovered from named product properties, not a finite category list.
 // Aliases only consolidate equivalent labels; unrecognized properties remain usable.
 const aliases = [
@@ -75,6 +76,7 @@ const aliases = [
   ["type", "Product type", /^סוג מוצר$/],
 ];
 const nonSpecification = /(?:price|cost|cybersecurity|insurance|protection plan|purchase|payment|shipping|delivery|returns?|warranty|seller|retailer|review|rating|attribute name|sku|\bupc\b|\bean\b|gtin|mpn|model(?: number)?|product id|product line|unit type|unit quantity|asin|url|description|overview|about|style|מחיר|משלוח|אחריות|קטלוג|יבואן|מבצע|הערה|מק["״]?ט)/i;
+const businessMetadata = /\b(?:contact|telephone|phone|fax|email|opening hours|business hours|working hours|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|(?:טלפון|פקס|שעות פתיחה|שעות פעילות|צור קשר)/i;
 export function cleanText(value) {
   return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Math.min(Number(code), 0x10ffff))).replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/\s+/g, " ").trim();
 }
@@ -141,6 +143,10 @@ export function structuredAttributes(pairs) {
     const unit = rawName.match(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i)?.[1];
     const sourceName = rawName.replace(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i, "").replace(/^monitor\s+/i, "").trim();
     const name = englishLabel(sourceName) || specificationText(sourceName) || sourceName;
+    // Business contact/schedule rows belong to the retailer, not its products.
+    // Match their values too, so a real property such as phone compatibility
+    // remains available and does not become a category-specific exception.
+    if (businessMetadata.test(name) && /(?:\+?\d[\d\s()-]{7,}|\b\d{1,2}:\d{2}\b|\S+@\S+\.\S+)/.test(valueText(pair.value))) continue;
     if (!name || name.length > 64 || /\uFFFD/.test(name) || nonSpecification.test(name) || /^(?:parameter|specification|פרמטר|דגם|מספר ספק|קישור ליצרן|זמן אספקה|תנאי תשלום|יתרון|תועלת)$/i.test(name)) continue;
     const alias = aliases.find(([, , match]) => match.test(name) || match.test(sourceName));
     const label = alias?.[1] ?? (englishLabel(name) || specificationText(name));
@@ -165,7 +171,9 @@ export function extractNamedSpecifications(html, product = {}) {
     if (value !== undefined) pairs.push({ name: key, value: value?.name ?? value?.value ?? value, unit: value?.unitText ?? "" });
   }
   // Named rows only; never assign specifications from a whole page's prose or recommendations.
-  const stripped = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "");
+  const dom = load(html);
+  dom("script,style,nav,header,footer,address,[role='navigation'],[role='contentinfo'],.contact-info,.contact-details,.opening-hours,.business-hours,.related-products,.recommendations").remove();
+  const stripped = dom.html();
   for (const table of stripped.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/gi)) {
     const rawRows = [...table[1].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(row => [...row[1].matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(cell => cell[1]));
     const rows = rawRows.map(cells => cells.map(cleanText));

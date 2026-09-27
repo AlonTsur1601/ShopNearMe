@@ -49,6 +49,12 @@ describe("specification-driven facets", () => {
     expect(Object.keys(data.attributes).some(key => /shipping/.test(key))).toBe(false);
   });
 
+  it("keeps retailer contact and opening-hour tables out of product facets", () => {
+    const page = extractProductData('<main><table><tr><th>Phone compatibility</th><td>Android and iOS</td></tr><tr><th>Aperture</th><td>130 mm</td></tr><tr><th>Phone</th><td>+97298821001</td></tr><tr><th>Sunday - Thursday</th><td>11:00 - 24:00</td></tr></table></main><footer><table><tr><th>Office size</th><td>500 square feet</td></tr></table><dl><dt>Support channel</dt><dd>Telephone</dd></dl></footer>');
+    expect(structuredAttributes(page.specifications).attributes).toEqual({ "spec:phone_compatibility": ["Android and iOS"], "spec:aperture": ["130 mm"] });
+    expect(page.specifications.some(pair => pair.name === "Office size" || pair.name === "Support channel")).toBe(false);
+  });
+
   it("reads transposed specification tables without assigning comparison rows to a product", () => {
     const page = extractProductData('<table><tr><td>צבע</td><td>הספק</td><td>חומר</td><td>מידות</td></tr><tr><td>שחור+לבן</td><td>7W</td><td><p>Glass</p><p>Metal</p></td><td><p>180 x 450</p><p>mm</p></td></tr></table>');
     expect(structuredAttributes(page.specifications).attributes).toMatchObject({ color: ["Black", "White"], power: ["7 W"], material: ["Glass", "Metal"], dimensions: ["180 x 450 mm"] });

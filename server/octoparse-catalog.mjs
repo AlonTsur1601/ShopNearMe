@@ -292,7 +292,9 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     }
     // Retry missing properties against source pages for the same product.
     // Completion of discovery alone does not establish complete filter values.
-    if (![...requests.map(request => request.key), "retailBing", "pages", "children", "branches", "branchPages"].some(key => states[key]?.status === "pending") && products.length && specificationRequests) {
+    // Branch coordinates do not change product identity or specifications.
+    // Recover the specs alongside Maps instead of adding another cloud wait.
+    if (![...requests.map(request => request.key), "retailBing", "pages", "children", "branchPages"].some(key => states[key]?.status === "pending") && products.length && specificationRequests) {
       const searches = specificationRequests(products);
       if (searches.length) {
         // Every product gets a source-page recovery attempt. Reuse the content
@@ -306,15 +308,16 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
           if (states[key]?.status === "pending") { contentPending = true; break; }
           if (states[key]?.code === "quota_exhausted") { contentQuotaExhausted = true; break; }
         }
-        if (!contentPending && !contentQuotaExhausted && specificationRequests(products).length) {
-        await collect({ key: "specSearch", role: "retail", template: 15, values: { MainKeys: searches, Pagination_times: "1" } });
-        if (states.specSearch.status !== "pending") {
-          const links = [...new Set((rows.specSearch || []).map(row => url(row.Detail_URL)).filter(link => link && !isSearchResultsUrl(link)))].slice(0,20);
-          if (links.length) {
-            await collect({ key: "specPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": links, "Wait Before Extraction (seconds)": "3" } });
-            products = recoverOctoparseSpecifications(products, htmlData("specPages"));
+        const remainingSearches = contentPending || contentQuotaExhausted ? [] : specificationRequests(products);
+        if (remainingSearches.length) {
+          await collect({ key: "specSearch", role: "retail", template: 15, values: { MainKeys: remainingSearches, Pagination_times: "1" } });
+          if (states.specSearch.status !== "pending") {
+            const links = [...new Set((rows.specSearch || []).map(row => url(row.Detail_URL)).filter(link => link && !isSearchResultsUrl(link)))].slice(0,20);
+            if (links.length) {
+              await collect({ key: "specPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": links, "Wait Before Extraction (seconds)": "3" } });
+              products = recoverOctoparseSpecifications(products, htmlData("specPages"));
+            }
           }
-        }
         }
       }
     }
