@@ -40,8 +40,10 @@ export function merchantBalancedLinks(links, limit, perMerchant = Infinity) {
 }
 function priced(value) {
   const text = String(value ?? "").trim();
-  const match = text.match(/(?:USD|\$|ILS|₪|EUR|€|GBP|£)\s*([\d,]+(?:\.\d{1,2})?)|([\d,]+(?:\.\d{1,2})?)\s*(?:USD|\$|ILS|₪|EUR|€|GBP|£)/i);
-  const price = match ? Number((match[1] || match[2]).replaceAll(",", "")) : NaN;
+  const match = text.match(/(?:USD|\$|ILS|₪|EUR|€|GBP|£)\s*([\d.,]+)|([\d.,]+)\s*(?:USD|\$|ILS|₪|EUR|€|GBP|£)/i);
+  const amount = match?.[1] || match?.[2] || "";
+  const decimal = amount.match(/[.,](\d{2})$/);
+  const price = amount ? Number(decimal ? amount.slice(0, decimal.index).replace(/[.,]/g, "") + "." + decimal[1] : amount.replaceAll(",", "")) : NaN;
   const currency = /ILS|₪/.test(text) ? "ILS" : /USD|\$/.test(text) ? "USD" : /EUR|€/.test(text) ? "EUR" : /GBP|£/.test(text) ? "GBP" : "";
   return { price, currency };
 }
@@ -113,24 +115,28 @@ export function productsFromOctoparseHtml(rows, relevant, query) {
       }
     }
     // A price belongs to its product card, never to the entire search page.
-    for (const element of $(".product-item, .products .product, .product-grid .product, .grid__item, .product-card, .product_box, .ty-grid-list__item, [data-component-type='s-search-result'], .s-item, [itemtype$='/Product']").toArray()) {
+    for (const element of $(".product-item, .products .product, .product-grid .product, .grid__item, .product-card, .card--product, .product_box, .ty-grid-list__item, [data-component-type='s-search-result'], .s-item, [itemtype$='/Product']").toArray()) {
       const card = $(element);
-      card.find("del,s,.old-price,.a-text-price,.price--compare").remove();
-      const anchor = card.find("a.product-item-link, .product-item-name a, a.s-item__link, a[href*='/dp/'], a[itemprop='url'], a.woocommerce-LoopProduct-link, .product__title a, a[href*='/products/']").first().length ? card.find("a.product-item-link, .product-item-name a, a.s-item__link, a[href*='/dp/'], a[itemprop='url'], a.woocommerce-LoopProduct-link, .product__title a, a[href*='/products/']").first() : card.find("a[href]").first();
+      card.find("del,s,.old-price,.a-text-price,.price--compare,.price__was,.ty-list-price").remove();
+      const anchor = card.is("a[href]") ? card : card.find("a.product-item-link, .product-item-name a, a.s-item__link, a[href*='/dp/'], a[itemprop='url'], a.woocommerce-LoopProduct-link, .product__title a, a[href*='/products/']").first().length ? card.find("a.product-item-link, .product-item-name a, a.s-item__link, a[href*='/dp/'], a[itemprop='url'], a.woocommerce-LoopProduct-link, .product__title a, a[href*='/products/']").first() : card.find("a[href]").first();
       const itemLink = url(anchor.attr("href"), link);
       if (!itemLink) continue;
-      const title = card.find(".product-item-name, .s-item__title, h2, h3, .product-name, .product-title, .ty-grid-list__item-name, [itemprop='name']").first().text().trim() || anchor.attr("title") || card.find("img").attr("alt");
-      const priceNode = card.find("[data-price-type='finalPrice'], .a-price:not(.a-text-price) .a-offscreen, .s-item__price, [itemprop='price'], .price .woocommerce-Price-amount, .price__regular .price-item--regular, .price .money, .price, .ty-price-num").first();
+      const title = card.find(".product-item-name, .s-item__title, h2, h3, .product-name, .product-title, .card__title, .ty-grid-list__item-name, [itemprop='name']").first().text().trim() || anchor.attr("title") || anchor.attr("aria-label") || card.find("img").attr("alt");
+      const priceNode = card.find("[data-price-type='finalPrice'], .a-price:not(.a-text-price) .a-offscreen, .s-item__price, [itemprop='price'], .woocommerce-Price-amount, .price__regular .price-item--regular, .price .money, .price__current, .price, .ty-price").first();
       const amount = priceNode.attr("data-price-amount") || priceNode.attr("content");
-      const display = priceNode.text().trim();
+      const priceDisplay = priceNode.clone();
+      priceDisplay.find("sup").each((_, fraction) => { const digits = priceDisplay.find(fraction).text().trim(); if (/^\d{2}(?:\s*(?:₪|\$|€|£|ILS|USD|EUR|GBP))?$/.test(digits)) priceDisplay.find(fraction).replaceWith("." + digits); });
+      const display = priceDisplay.text().trim();
       const parsed = priced(display);
       const explicitCurrency = card.find("[itemprop='priceCurrency']").attr("content");
-      const currency = explicitCurrency || parsed.currency || (new URL(link).hostname === "www.ace.co.il" && priceNode.attr("data-price-type") ? "ILS" : "");
-      const price = amount && /^\d+(?:\.\d{1,2})?$/.test(amount) ? Number(amount) : parsed.price;
+      const symbol = card.find(".ty-price-cur, .woocommerce-Price-currencySymbol, .currency-symbol").first().text().trim();
+      const currency = explicitCurrency || parsed.currency || priced(symbol + " 1").currency || (new URL(link).hostname === "www.ace.co.il" && priceNode.attr("data-price-type") ? "ILS" : "");
+      const price = amount && /^\d+(?:\.\d{1,2})?$/.test(amount) ? Number(amount) : Number.isFinite(parsed.price) ? parsed.price : currency ? priced(currency + " " + display).price : NaN;
       const image = card.find("img").first();
-      const imageUrl = url(image.attr("data-src") || image.attr("src"), link);
+      const imageUrl = url(image.attr("data-src") || image.attr("data-lazy-src") || image.attr("src") || image.attr("srcset")?.split(",")[0].trim().split(/\s/)[0], link);
       const condition = card.find(".SECONDARY_INFO, .s-item__subtitle").first().text().trim();
-      const item = { isProduct: true, title, price, currency, imageUrl, condition, specificationText: title, priceSource: "catalog", localEligible: !card.find(".external_seller").length };
+      let metadata; try { metadata = JSON.parse(card.closest("[data-params]").attr("data-params") || "{}"); } catch { metadata = {}; }
+      const item = { isProduct: true, title, price, currency, imageUrl, condition, brand: metadata.brand, specificationText: title, priceSource: "catalog", localEligible: !card.find(".external_seller").length };
       if (validProduct(item, itemLink, relevant, query) && !/out of stock|sold out|אזל המלאי/i.test(card.find(".stock, .availability").text())) products.set(itemLink, record(item, itemLink));
     }
     for (const anchor of $("a[href]").toArray()) {

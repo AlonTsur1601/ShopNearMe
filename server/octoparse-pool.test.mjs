@@ -23,6 +23,16 @@ it("recovers address navigation targets and deduplicates coordinates", () => {
   expect(found.products).toEqual([]);
 });
 
+it("reads linked product cards and split currency amounts without borrowing another card's price", () => {
+  const source = '<a class="product_box" href="/product/lamp-a" title="Table lamp A"><img src="/a.jpg"><h2>Table lamp A</h2><span class="woocommerce-Price-amount">₪998</span></a><div class="ty-grid-list__item"><a class="product-title" href="/product/lamp-b">Table lamp B</a><img src="/b.jpg"><span class="ty-price"><span class="ty-price-num">₪</span><span class="ty-price-num">49,00</span></span><span class="ty-list-price">₪89,00</span></div><product-card class="card--product"><a href="/products/lamp-c" aria-label="Table lamp C"><img src="/c.jpg"></a><strong class="price__current">599<sup>90 ₪</sup></strong></product-card><a class="product_box" href="/product/no-price" title="Table lamp without price"><img src="/d.jpg"></a>';
+  const result = productsFromOctoparseHtml([{ Original_URL: "https://shop.example/catalog", Source_code: source }], () => true, "lamp");
+  expect(result.products.map(item => ({ link: item.link, price: item.page.price, currency: item.page.currency }))).toEqual([
+    { link: "https://shop.example/product/lamp-a", price: 998, currency: "ILS" },
+    { link: "https://shop.example/product/lamp-b", price: 49, currency: "ILS" },
+    { link: "https://shop.example/products/lamp-c", price: 599.9, currency: "ILS" },
+  ]);
+});
+
 it("rejects empty required arrays and accepts the provider's display labels", () => {
   expect(() => templateParameters(template, { URLs: [] })).toThrow();
   expect(() => templateParameters(template, { URLs: [" "] })).toThrow();
