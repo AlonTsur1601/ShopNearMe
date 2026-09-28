@@ -12,7 +12,7 @@ it("uses store product cards and verifies the product page before returning offe
     },
     readProduct: async () => ({ isProduct: true, title: "מנורת שולחן", price: 99, currency: "ILS", imageUrl: "https://www.ivory.co.il/lamp.jpg" }),
   });
-  expect(searches).toHaveLength(6);
+  expect(searches).toHaveLength(7);
   expect(result.products.map(item => item.link)).toEqual(["https://www.ivory.co.il/lamp.html"]);
 });
 

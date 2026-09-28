@@ -422,22 +422,28 @@ export function buildFacets(offers, query) {
   }).filter(Boolean);
 }
 export function shareProductSpecs(offers) {
+  const productUrl = offer => {
+    try { const url = new URL(offer.destinationUrl); url.hash = ""; return url.href; } catch { return null; }
+  };
   const identity = offer => /^\d{8,14}$/.test(offer.gtin ?? "") ? "gtin:" + offer.gtin
-    : offer.productBrand && /[a-z]/i.test(offer.mpn ?? "") && /^[a-z\d][a-z\d._/-]{3,}$/i.test(offer.mpn ?? "") ? "mpn:" + String(offer.productBrand).trim().toLowerCase() + ":" + offer.mpn.toLowerCase() : null;
+    : offer.productBrand && /[a-z]/i.test(offer.mpn ?? "") && /^[a-z\d][a-z\d._/-]{3,}$/i.test(offer.mpn ?? "") ? "mpn:" + String(offer.productBrand).trim().toLowerCase() + ":" + offer.mpn.toLowerCase() : productUrl(offer);
   const groups = new Map();
   for (const offer of offers) {
-    const key = identity(offer);
-    if (!key) continue;
-    const group = groups.get(key) ?? [];
-    group.push(offer); groups.set(key, group);
+    for (const key of new Set([identity(offer), productUrl(offer)].filter(Boolean))) {
+      const group = groups.get(key) ?? [];
+      group.push(offer); groups.set(key, group);
+    }
   }
   return offers.map(offer => {
-    const group = groups.get(identity(offer));
-    if (!group) return offer;
+    const group = [...new Set([...(groups.get(identity(offer)) ?? []), ...(groups.get(productUrl(offer)) ?? [])])].filter(donor => {
+      if (/^\d{8,14}$/.test(offer.gtin ?? "") && /^\d{8,14}$/.test(donor.gtin ?? "") && offer.gtin !== donor.gtin) return false;
+      return !offer.title || !donor.title || sameProductIdentity(offer.title, donor.title);
+    });
+    if (!group.length) return offer;
     const attributes = { ...offer.attributes }, attributeLabels = { ...offer.attributeLabels };
     for (const donor of group) for (const [id, values] of Object.entries(donor.attributes)) {
-      if (["retailer", "condition"].includes(id) || attributes[id] !== undefined) continue;
-      const known = group.filter(item => item.attributes[id] !== undefined);
+      if (["retailer", "condition"].includes(id) || valuesForFacet({ attributes }, id).length || !valuesForFacet(donor, id).length) continue;
+      const known = group.filter(item => valuesForFacet(item, id).length);
       if (!known.every(item => JSON.stringify(item.attributes[id]) === JSON.stringify(values))) continue;
       attributes[id] = values;
       if (donor.attributeLabels?.[id]) attributeLabels[id] = donor.attributeLabels[id];
@@ -472,11 +478,11 @@ export async function recoverModelSpecifications(offers, query, location, key, r
   const requiredIds = required ?? requiredFacetIds(shared, query);
   const propertyIds = [...new Set([...recoveryFacetIds(shared, query), ...requiredIds])];
   if (!propertyIds.length) return shared;
-  const matchingTitle = (offer, title) => offer.gtin && String(title).includes(offer.gtin)
+  const matchingTitle = (offer, title) => /^\d{8,14}$/.test(offer.gtin ?? "") && String(title).includes(offer.gtin)
     || offer.mpn && offer.productBrand && sameProductIdentity(`${offer.productBrand} ${offer.mpn}`, title)
     || sameProductIdentity(offer.title, title);
   const sameProduct = (offer, page) => {
-    if (offer.gtin) return page.gtin === offer.gtin;
+    if (/^\d{8,14}$/.test(offer.gtin ?? "")) return page.gtin === offer.gtin;
     if (offer.mpn && /[a-z]/i.test(offer.mpn)) return page.mpn?.toLowerCase() === offer.mpn.toLowerCase() && (!offer.productBrand || String(page.brand ?? "").toLowerCase() === String(offer.productBrand).toLowerCase());
     return matchingTitle(offer, page.title);
   };

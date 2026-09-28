@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { load } from "cheerio";
 import { budgetFetch } from "./search-budget.mjs";
 import { enrichProductPage, extractProductData, isSearchResultsUrl, readProductHtml } from "./product-page.mjs";
+import { magentoCatalogUrl, magentoProduct } from "./public-product.mjs";
 
 // Search the stores' own catalogs. A store is queried for every product type;
 // no category-to-retailer routing or store-directory rows are involved.
@@ -106,6 +107,29 @@ export async function searchRetailerSites({ query, country = "IL", localizedQuer
       source.status = "completed";
     } catch (error) { source.status = "failed"; source.code = /Timeout|Abort/.test(error.name) ? "search_timeout" : "retailer_unavailable"; }
   });
+  if (country === "IL") jobs.push((async () => {
+    const source = { source: "Office Depot", status: "pending", candidates: 0, products: 0 };
+    status.push(source);
+    try {
+      const origin = "https://www.officedepot.co.il";
+      const response = await fetchPage(magentoCatalogUrl(origin, localizedQuery), { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(Math.max(1, Math.min(5000, deadline - Date.now()))) });
+      if (!response.ok) throw new Error("Catalog unavailable");
+      const data = await response.json();
+      if (!Array.isArray(data?.data?.products?.items)) throw new Error("Catalog unavailable");
+      for (const item of data.data.products.items) {
+        if (!item.url_key || !item.name || !relevant(item.name, query)) continue;
+        const link = new URL("/" + encodeURIComponent(item.url_key) + (item.url_suffix === ".html" ? ".html" : ""), origin).href;
+        if (isCatalog(item.name, link)) continue;
+        source.candidates++;
+        const product = magentoProduct(item, link);
+        const page = extractProductData(`<script type="application/ld+json">${JSON.stringify(product).replaceAll("<", "\\u003c")}</script><main>${product.description ?? ""}</main>`, link);
+        if (!page.isProduct || page.isCatalog || page.availability === "Out of stock" || !Number.isFinite(page.price) || page.price <= 0 || !page.imageUrl) continue;
+        products.push({ link, title: item.name, id: createHash("sha256").update(link).digest("hex").slice(0, 16), page });
+        source.products++;
+      }
+      source.status = "completed";
+    } catch (error) { source.status = "failed"; source.code = /Timeout|Abort/.test(error.name) ? "search_timeout" : "retailer_unavailable"; }
+  })());
   if (country === "IL") jobs.push((async () => {
     const source = { source: "IKEA", status: "pending", candidates: 0, products: 0 };
     status.push(source);

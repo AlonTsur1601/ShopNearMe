@@ -1,6 +1,7 @@
 import { budgetFetch } from "./search-budget.mjs";
 import { conditionValue, extractNamedSpecifications } from "./specifications.mjs";
 import { merchantDom } from "./merchant-dom.mjs";
+import { publicProduct } from "./public-product.mjs";
 const pageCache = new Map();
 const pageRequests = new Map();
 const CACHE_MS = 15 * 60 * 1000;
@@ -209,12 +210,16 @@ export async function enrichProductPage(value) {
       const candidates = itemId ? [url, parsed.origin + "/?print=" + itemId] : [url];
       let best = {};
       let gone = false;
+      let sourceHtml = "";
       for (const candidate of candidates) {
-        const response = await budgetFetch(candidate, { signal: controller.signal, redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
+        let response;
+        try { response = await budgetFetch(candidate, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(4500)]), redirect: "follow", headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } }); }
+        catch { continue; }
         if (response.url && isSearchResultsUrl(response.url)) return { isCatalog: true };
         if ([404, 410].includes(response.status)) { gone = true; continue; }
         if (!response.ok || !String(response.headers?.get?.("content-type") || "").includes("html")) { console.info("merchant_page_failed", { host: parsed.hostname, status: response.status }); continue; }
         const html = (await readProductHtml(response)).slice(0, 2000000);
+        sourceHtml = html;
         if (/הגישה נחסמה|בקשה.{0,20}נחסמה|access denied|verify you are human|checking your browser/i.test(html.slice(0, 15000))) continue;
         const result = extractProductData(html, response.url || candidate);
         if (!result.isProduct && /(?:<title[^>]*>|<h1[^>]*>)[^<]*(?:404|page not found|product not found|הדף לא נמצא|המוצר לא נמצא)/i.test(html)) { gone = true; continue; }
@@ -222,11 +227,19 @@ export async function enrichProductPage(value) {
         if (result.isProduct) best = result;
         if (result.isProduct && result.price !== null && result.imageUrl) break;
       }
+      if (!gone && (!best.isProduct || !best.price || !best.imageUrl || (best.specifications?.length ?? 0) < 4)) {
+        const product = await publicProduct(url, sourceHtml, controller.signal);
+        if (product) {
+          const script = JSON.stringify(product).replaceAll("<", "\\u003c");
+          const recovered = extractProductData(`<script type="application/ld+json">${script}</script><main>${product.description ?? ""}</main>`, url);
+          if (recovered.isProduct) best = best.isProduct ? { ...recovered, ...best, specifications: [...(recovered.specifications ?? []), ...(best.specifications ?? [])], specificationText: [best.specificationText, recovered.specificationText].filter(Boolean).join(" "), price: best.price ?? recovered.price, currency: best.price != null ? best.currency : recovered.currency, imageUrl: best.imageUrl || recovered.imageUrl, imageUrls: [...new Set([...(best.imageUrls ?? []), ...(recovered.imageUrls ?? [])])], gtin: best.gtin || recovered.gtin, brand: best.brand || recovered.brand, availability: best.availability || recovered.availability } : recovered;
+        }
+      }
       if (best.isProduct) { if (pageCache.size >= 300) pageCache.delete(pageCache.keys().next().value); pageCache.set(url, { at: Date.now(), value: best }); }
       return best.isProduct ? best : gone ? { unavailable: true } : best;
     } catch (error) { console.info("merchant_page_failed", { host: new URL(url).hostname, reason: error.name }); return {}; }
   })();
-  const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({}); }, 6000); });
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => { controller.abort(); resolve({}); }, 12000); });
   const pending = Promise.race([request, timeout]).finally(() => { clearTimeout(timer); pageRequests.delete(url); });
   pageRequests.set(url, pending);
   return pending;
