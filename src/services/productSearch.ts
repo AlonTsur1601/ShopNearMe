@@ -83,7 +83,7 @@ export async function searchProducts(query: string, location: string, signal?: A
     do {
       if (result?.pendingSearch) await waitForProvider(Math.max(1000, result.pendingSearch.nextPollAt - Date.now()), budget);
       try {
-        result = await searchProductScope(normalized, location, "all", AbortSignal.any([budget, AbortSignal.timeout(20000)]), place, result?.pendingSearch?.continuation);
+        result = await searchProductScope(normalized, location, "all", budget, place, result?.pendingSearch?.continuation);
         rememberSearch(searchKey, result.pendingSearch);
         retries = 0;
       } catch (error) {

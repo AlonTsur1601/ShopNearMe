@@ -960,12 +960,11 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const online = retailOffers.filter(offer => !offer.inStoreOnly && offer.category !== "secondHand");
     const scrapedUsed = retailOffers.filter(offer => offer.category === "secondHand");
     const origin = await originJob;
-    if (config.provider === "octoparse" && origin && scope !== "online" && scope !== "local-products") {
+    if (origin && scope !== "online" && scope !== "local-products") {
       const addresses = [...new Set(discovery.products.flatMap(record => record.page.locations ?? []).filter(place => !validCoordinates(place) && place.address).map(place => [place.address, place.name, country].filter(Boolean).join(", ")))];
       const resolved = new Map();
-      // Exporting a finished Octoparse lot may exhaust its request deadline.
-      // Reserve a separate bounded phase for coordinates instead of attempting
-      // every geocode with a signal that is already aborted.
+      // Resolve merchant-published branch addresses for every provider, with
+      // a separate bounded phase when discovery has exhausted its deadline.
       await withSearchBudget(() => mapConcurrent(addresses, 4, async address => {
         const point = await namedLocationCoordinates(address).catch(() => undefined);
         if (point) resolved.set(address, point);
@@ -1010,7 +1009,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     if (searchContext().backupQuota) result.warnings.push("Backup search allowance has been used up." + (searchContext().backupQuota.reset ? ` It renews on ${searchContext().backupQuota.reset}.` : ""));
     console.info("retail_search", { ...discovery.diagnostics, sources: discovery.sourceStatus, online: online.length, local: localOffers.length });
     return result;
-  }, config.provider === "octoparse" ? 12000 : 16000).finally(() => inFlight.delete(requestKey));
+  }, config.provider === "octoparse" ? 12000 : config.provider === "brightdata" ? 80000 : 16000).finally(() => inFlight.delete(requestKey));
   inFlight.set(requestKey, request);
   return request;
 }

@@ -29,7 +29,7 @@ function candidates(data) {
 }
 
 function indexedProduct(row, query, relevant, isCatalog) {
-    const link = merchantUrl(row.link ?? row.url ?? row.product_url);
+    const link = merchantUrl(row.merchant_url) || merchantUrl(row.product_url) || merchantUrl(row.link ?? row.url);
     const title = String(row.title ?? "").trim();
     const imageUrl = productImageUrl(row.image ?? row.thumbnail);
     const priceText = String(row.price ?? "");
@@ -41,7 +41,7 @@ function indexedProduct(row, query, relevant, isCatalog) {
 }
 
 function indexedShoppingProducts(data, query, relevant, isCatalog) {
-  const rows = [data.shopping, data.top_pla, data.bottom_pla].flatMap(value => Array.isArray(value) ? value : []);
+  const rows = [data.shopping, data.top_pla, data.bottom_pla, data.jackpot_pla].flatMap(value => Array.isArray(value) ? value : []);
   return rows.map(indexed => indexedProduct(indexed, query, relevant, isCatalog)).filter(Boolean);
 }
 
@@ -64,7 +64,7 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
   const openSearch = dependencies.openSearch ?? (config?.directRetailers ? duckduckgoProducts : null);
   const products = new Map(), seen = new Set(), sourceStatus = [], diagnostics = { candidates: 0, rejected: 0, verified: 0 };
   // Reserve merchant reading time. A slow engine cannot discard products from the other.
-  const discoveryDeadline = Math.min(deadline - 3500, Date.now() + 11500);
+  const discoveryDeadline = Math.min(deadline - 3500, Date.now() + (config?.provider === "brightdata" ? 45000 : 11500));
   const productDeadline = deadline - 300;
   const inspect = async (item, followCatalog = true) => {
     if (seen.has(item.link) || Date.now() >= productDeadline) return;

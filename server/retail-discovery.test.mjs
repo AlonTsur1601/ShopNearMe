@@ -129,6 +129,18 @@ it("integrates real merchant evidence into local and online offers without map p
   expect(result.facets.some(facet => facet.id === "retailer" && facet.options.length === 2)).toBe(true);
 });
 
+it.each(["Desk lamp", "Motorcycle", "Rechargeable batteries"])("preserves native merchant diversity for %s without categorizing the shops", async title => {
+  const result = await discoverRetailProducts({ ...options(), query: title, relevant: value => value === title }, {
+    search: async request => request.kind === "shopping" ? { jackpot_pla: [
+      { title, merchant_url: "https://pharmacy.co.il/products/item", link: "https://www.google.com/shopping/product/123", image: "https://pharmacy.co.il/item.jpg", price: "₪99" },
+      { title, link: "https://www.amazon.com/dp/B012345678", image: "https://cdn.amazon.com/item.jpg", price: "$39" },
+    ] } : { organic: [] },
+    readPage: async () => ({}),
+  });
+  expect(new Set(result.products.map(item => new URL(item.link).hostname)).size).toBe(2);
+  expect(result.products.every(item => item.page.price > 0 && item.page.imageUrl)).toBe(true);
+});
+
 it("sends the documented proxy country alongside the Google country parameter", async () => {
   let body;
   vi.stubGlobal("fetch", vi.fn(async (_url, init) => { body = JSON.parse(init.body); return Response.json({ organic: [] }); }));

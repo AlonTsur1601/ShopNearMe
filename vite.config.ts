@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => {
         const lat = Number(input.lat), lon = Number(input.lon);
         const coordinates = input.lat != null && input.lon != null && Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : undefined;
         if (!query || query.length > 180) { response.statusCode = 400; response.end(JSON.stringify({ error: "A valid product query is required" })); return; }
-        response.end(JSON.stringify(await searchRetailCatalog(query, location, { provider: "octoparse", octoparseApiKey: env.OCTOPARSE_API_KEY, continuation: input.continuation || "" }, coordinates, undefined, input.scope || "all")));
+        response.end(JSON.stringify(await searchRetailCatalog(query, location, { provider: "brightdata", apiKey: env.BRIGHTDATA_API_KEY, zone: env.BRIGHTDATA_SERP_ZONE }, coordinates, { clientId: env.EBAY_CLIENT_ID, clientSecret: env.EBAY_CLIENT_SECRET }, input.scope || "all")));
       } catch (error) { response.statusCode = 502; response.end(JSON.stringify(publicSearchError(error))); }
     });
   } }],

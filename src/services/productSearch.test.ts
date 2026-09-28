@@ -77,6 +77,19 @@ describe("searchProducts", () => {
     expect(fetch.mock.calls).toHaveLength(1);
   });
 
+  it("allows a complete provider response after twenty seconds within the two-minute budget", async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn((_url, options) => new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(Response.json({ offers: [], facets: [], resultCount: 0 })), 30000);
+      options.signal.addEventListener("abort", () => { clearTimeout(timer); reject(options.signal.reason); }, { once: true });
+    }));
+    vi.stubGlobal("fetch", fetcher);
+    const promise = searchProducts("diverse merchants", "Israel");
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(await promise).toMatchObject({ source: "live", resultCount: 0 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a safe opt-in fallback when the live provider fails", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("provider unavailable")));
     const result = await searchProducts("desk lamp", "Current location");
