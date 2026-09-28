@@ -360,8 +360,17 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     // merchant. Keep reading an already accepted catalog run on continuation.
     if (!states.catalogs && states.retail?.status !== "pending" && states.retailBing?.status !== "pending" && !indexedLinks.length) await collect(catalogRequest);
     const catalogs = htmlData("catalogs");
-    const amazonProducts = octoparseProducts(rows.amazon || [], relevant, query), marketplaceProducts = octoparseMarketplaceRows(rows.marketplace || [], relevant, query);
-    for (const [key, found] of [["amazon", amazonProducts], ["marketplace", marketplaceProducts]]) {
+    const amazonProducts = octoparseProducts(rows.amazon || [], relevant, query), primaryMarketplace = octoparseMarketplaceRows(rows.marketplace || [], relevant, query);
+    const marketplaceState = states.marketplace;
+    // The same official template can succeed on another supported regional
+    // site when the US route is empty/blocked. Reuse the existing pool task;
+    // never retry quota, authentication or account-plan failures elsewhere.
+    if (states.marketplaceUK || marketplaceState?.status !== "pending" && !primaryMarketplace.length && (marketplaceState?.status !== "failed" || ["search_timeout", "search_unavailable", "source_blocked", "retailer_blocked"].includes(marketplaceState.code))) {
+      await collect({ key: "marketplaceUK", role: "marketplace", template: 1063, values: { "123": "United Kingdom", "6tutxf6k2ik.List": ["https://www.ebay.co.uk"], "1x7v90yy9yr.List": [query], "j4s3pig01g.ExecutedTimesLimitation": "1" } });
+    }
+    const fallbackMarketplace = octoparseMarketplaceRows(rows.marketplaceUK || [], relevant, query);
+    const marketplaceProducts = [...primaryMarketplace, ...fallbackMarketplace];
+    for (const [key, found] of [["amazon", amazonProducts], ["marketplace", primaryMarketplace], ["marketplaceUK", fallbackMarketplace]]) {
       const status = sourceStatus.find(source => source.source === `${key} via Octoparse`);
       if (status && ["completed", "empty"].includes(status.status)) status.status = found.length ? "completed" : "empty";
     }
@@ -456,7 +465,7 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
           if (states[key].code === "quota_exhausted") { contentQuotaExhausted = true; break; }
         }
       }
-      const discoveryPending = [...requests.map(request => request.key), "retailBing", "pages", "children", "branchPages"].some(key => states[key]?.status === "pending");
+      const discoveryPending = [...requests.map(request => request.key), "marketplaceUK", "retailBing", "pages", "children", "branchPages"].some(key => states[key]?.status === "pending");
       const remainingSearches = contentPending || contentQuotaExhausted || discoveryPending ? [] : specificationRequests(products);
       const specKeys = Object.keys(states).filter(key => /^specSearch\d*$/.test(key)).sort((a,b) => Number(a.slice(10) || 0)-Number(b.slice(10) || 0));
       const searched = new Set();

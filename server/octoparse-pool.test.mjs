@@ -132,7 +132,8 @@ it("defers a new phase before its deadline and starts it once on continuation", 
   vi.setSystemTime(first.nextPollAt + 1);
   await withSearchBudget(() => discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read }));
   expect(start.mock.calls.filter(args => args[0] === "amazon-classic" && args[1] === 1153)).toHaveLength(1);
-  expect(start.mock.calls.filter(args => args[0] === "marketplace")).toHaveLength(1);
+  expect(start.mock.calls.filter(args => args[0] === "marketplace" && args[2]["123"] === "United States")).toHaveLength(1);
+  expect(start.mock.calls.filter(args => args[0] === "marketplace" && args[2]["123"] === "United Kingdom")).toHaveLength(1);
 });
 
 it("reads discovered merchants first and locates their branches before optional child collection", async () => {
@@ -217,6 +218,33 @@ it("recovers source-page specifications beyond a full hundred-record batch", asy
   expect(result.products).toHaveLength(101);
   expect(result.products.every(product => product.page.specificationText.includes("Source-backed specification details"))).toBe(true);
   expect(start.mock.calls.filter(args => args[0] === "content").map(args => args[2].MainKeys.length)).toEqual([100,1]);
+});
+
+it("recovers an empty US marketplace through the supported UK route and resumes that accepted run", async () => {
+  vi.useFakeTimers();
+  let ready = false;
+  const start = vi.fn(async (role, _id, values) => ({ taskId: role, role, values, status: "pending" }));
+  const read = vi.fn(async task => task.role === "marketplace" && task.values["123"] === "United Kingdom"
+    ? ready ? { ...task, status: "completed", rows: [{ Title: "Studio bedside lamp Model L100", Product_URL: "https://www.ebay.co.uk/itm/123456789012", Image_URL: "https://i.ebayimg.com/real.jpg", Pricing: "£19.99", Condition: "Pre-owned" }] }
+      : { ...task, status: "pending", rows: [], nextPollAt: Date.now() + 1000 }
+    : { ...task, status: "empty", rows: [] });
+  const options = { query: "UK-route lamp", country: "IL", relevant: () => true, config: { octoparseApiKey: "uk-route-test" } };
+  const first = await discoverOctoparseCatalog(options, { start, read });
+  expect(first.continuation).toBeTruthy();
+  ready = true; vi.setSystemTime(first.nextPollAt + 1);
+  const second = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read });
+  expect(second.products).toHaveLength(1);
+  expect(second.products[0].page).toMatchObject({ price: 19.99, currency: "GBP", condition: "Pre-owned", localEligible: false });
+  expect(start.mock.calls.filter(([role]) => role === "marketplace")).toHaveLength(2);
+  expect(read.mock.calls.filter(([task]) => task.role === "marketplace" && task.values["123"] === "United States")).toHaveLength(1);
+});
+
+it("does not spend a regional fallback on marketplace quota or authentication failures", async () => {
+  for (const code of ["quota_exhausted", "provider_authentication_failed"]) {
+    const start = vi.fn(async role => { if (role === "marketplace") throw Object.assign(new Error("Failure"), { code }); return { status: "empty", rows: [] }; });
+    await discoverOctoparseCatalog({ query: `protected-${code} lamp`, country: "US", relevant: () => true, config: { octoparseApiKey: `protected-${code}` } }, { start, read: async task => task });
+    expect(start.mock.calls.filter(([role]) => role === "marketplace")).toHaveLength(1);
+  }
 });
 
 it("bounds specification search runs and resumes accepted query batches without repeating earlier queries", async () => {

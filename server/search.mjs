@@ -985,7 +985,7 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
       { source: "Retailer products", status: discovery.continuation ? "pending" : online.length ? "completed" : discovery.sourceStatus.some(item => item.status === "failed") ? "failed" : "empty", products: online.length },
       ...(scope === "online" || scope === "local-products" ? [] : [{ source: "Nearby product availability", status: discovery.sourceStatus.some(source => source.source === "Nearby branches via Octoparse" && source.status === "pending") ? "pending" : localOffers.length ? "completed" : placesState.status === "rejected" ? "failed" : "empty", products: localOffers.length }]),
       ...(scope === "local" || scope === "local-products" ? [] : [{ source: "Marketplace products", status: config.provider === "octoparse"
-        ? discovery.sourceStatus.find(source => source.source === "marketplace via Octoparse")?.status === "pending" ? "pending" : marketplace.length ? "completed" : discovery.sourceStatus.find(source => source.source === "marketplace via Octoparse")?.status === "failed" ? "failed" : "empty"
+        ? discovery.sourceStatus.some(source => /^marketplace(?:UK)? via Octoparse$/.test(source.source) && source.status === "pending") ? "pending" : marketplace.length ? "completed" : discovery.sourceStatus.some(source => /^marketplace(?:UK)? via Octoparse$/.test(source.source) && source.status === "failed") ? "failed" : "empty"
         : marketplaceState.status === "fulfilled" ? marketplace.length ? "completed" : "empty" : "failed", products: marketplace.length }]),
     ];
     result.discoveryStatus = discovery.sourceStatus;
