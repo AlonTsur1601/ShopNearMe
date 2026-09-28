@@ -17,6 +17,11 @@ function url(value, base) {
     const link = new URL(value, base);
     link.hash = "";
     for (const key of [...link.searchParams.keys()]) if (/^(?:utm_.+|srsltid|gclid|fbclid)$/i.test(key)) link.searchParams.delete(key);
+    // Search-result tracking changes between exports and the product page.
+    // Preserve variant selectors (var) and every other semantic parameter.
+    if (/^(?:www\.)?ebay\.[a-z.]+$/i.test(link.hostname) && /^\/itm\//i.test(link.pathname)) {
+      for (const key of ["_skw", "itmmeta", "itmprp", "hash"]) link.searchParams.delete(key);
+    }
     return /^https?:$/.test(link.protocol) && !link.username && !link.password ? link.href : "";
   } catch { return ""; }
 }
@@ -219,7 +224,7 @@ export function recoverOctoparseSpecifications(products, pages) {
 
 export function recoverOctoparseContent(products, rows) {
   return products.map(product => {
-    const matching = rows.filter(row => !row.error_message && url(row.url) === product.link && sameProductIdentity(product.title, row.title));
+    const matching = rows.filter(row => !row.error_message && url(row.url) === url(product.link) && sameProductIdentity(product.title, row.title));
     const content = matching.flatMap(row => {
       if (row.format === "json") { try { return [JSON.parse(row.content).text || ""]; } catch { return []; } }
       return [String(row.content || "")];
@@ -236,7 +241,7 @@ export function recoverIndexedSpecifications(products, rows) {
     // An indexed excerpt from this exact product page remains source evidence
     // when its subsequent HTML fetch is blocked. Never transfer a sibling's
     // facts, or use excerpt prices/images to manufacture a product offer.
-    const content = rows.filter(row => url(row.Detail_URL) === product.link && sameProductIdentity(product.title, row.Title))
+    const content = rows.filter(row => url(row.Detail_URL) === url(product.link) && sameProductIdentity(product.title, row.Title))
       .map(row => String(row.Descriptipn || row.Description || "").trim()).filter(Boolean).join("\n");
     return content ? { ...product, page: { ...product.page,
       specifications: [...(product.page.specifications ?? []), ...extractMarkdownSpecifications(content)],

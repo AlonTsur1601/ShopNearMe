@@ -5,6 +5,22 @@ import { proseAttributes } from "./specifications.mjs";
 import { translateTerms } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
+it.each(['New', 'Used', 'Refurbished', 'Damaged'])("preserves declared %s condition from the actual structured offer", condition => {
+  const product = { '@type': 'Product', name: 'Desk lamp', image: '/lamp.jpg', offers: { price: 29, priceCurrency: 'USD', itemCondition: { '@id': `https://schema.org/${condition}Condition` } } };
+  const page = extractProductData(`<script type="application/ld+json">${JSON.stringify(product)}</script>`, 'https://merchant.example/lamp');
+  expect(page.condition).toBe(condition);
+  expect(page.specifications).toContainEqual({ name: 'Condition', value: condition });
+});
+it("reads explicit product condition and named rows without assuming new or inheriting return-policy conditions", () => {
+  const html = product => `<script type="application/ld+json">${JSON.stringify({ '@type': 'Product', name: 'Desk lamp', ...product })}</script>`;
+  expect(extractProductData(html({ itemCondition: 'http://schema.org/UsedCondition' })).condition).toBe('Used');
+  expect(extractProductData(html({ hasMerchantReturnPolicy: { itemCondition: 'https://schema.org/NewCondition' } })).condition).toBe('');
+  expect(extractProductData('<main><table><tr><th>Condition</th><td>Open box</td></tr></table></main>').condition).toBe('Open box');
+  expect(extractProductData('<h1>Desk lamp</h1>').condition).toBe('');
+  const microdata = '<main itemscope itemtype="https://schema.org/Product"><h1>Desk lamp</h1><section itemscope itemtype="https://schema.org/MerchantReturnPolicy"><link itemprop="itemCondition" href="https://schema.org/NewCondition"></section><link itemprop="itemCondition" href="https://schema.org/UsedCondition"></main>';
+  expect(extractProductData(microdata).condition).toBe('Used');
+  expect(extractProductData(microdata.replace('<link itemprop="itemCondition" href="https://schema.org/UsedCondition">', '')).condition).toBe('');
+});
 it("reads Amazon product details and excludes recommendation prices and specifications", () => {
   const html = '<div class="a-price"><span class="a-offscreen">$2.00</span></div><div id="dp-container"><h1 id="productTitle">Desk lamp Black</h1><div id="corePrice_feature_div"><span class="a-price a-text-price"><span class="a-offscreen">$99.00</span></span><span class="a-price"><span class="a-offscreen">$29.95</span></span></div><img id="landingImage" src="https://m.media-amazon.com/lamp.jpg"><div id="feature-bullets">Black Metal lamp.</div><table id="productDetails_techSpec_section_1"><tr><th>Material</th><td>Metal</td></tr><tr><th>Color</th><td>Black</td></tr></table><table><tr><th>Trusted cybersecurity</th><td>Digital security</td></tr></table><div id="sims-recommendations"><table><tr><th>Color</th><td>Pink</td></tr></table></div><div id="availability">Currently unavailable.</div></div>';
   const page = extractProductData(html, "https://www.amazon.com/dp/B012345678");

@@ -1,6 +1,6 @@
 import { enrichProductPage, isSearchResultsUrl, productImageUrl } from "./product-page.mjs";
 import { localizeOffers } from "./currency.mjs";
-import { extractNamedSpecifications, monitorAttributes, proseAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
+import { conditionValue, extractNamedSpecifications, monitorAttributes, proseAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
 import { amountInCurrency, costBreakdown } from "./costs.mjs";
 import { englishLabel, normalizeOfferFacets, specificationText, translateTerms } from "./facet-language.mjs";
 import { fetchJson, mapConcurrent, searchProvider } from "./providers.mjs";
@@ -894,14 +894,15 @@ export async function searchCatalog(query, location, apiKey = {}, coordinates, c
 function verifiedRetailOffer(record, query) {
   const { page, link, id } = record;
   const merchant = shortRetailerName(new URL(link).hostname.replace(/^www\./, ""));
+  const condition = conditionValue(page.condition);
   return {
-    id: `retail-${id}`, category: /used|refurb|pre.?owned|second.?hand|renewed|occasion|gebraucht/i.test(page.condition || "") ? "secondHand" : "order", title: page.title || record.title, merchant,
+    id: `retail-${id}`, category: ["Used", "Refurbished", "Open box"].includes(condition) ? "secondHand" : "order", title: page.title || record.title, merchant,
     subtitle: page.specificationText?.slice(0, 150) || "", imageUrl: page.imageUrl, imageUrls: page.imageUrls ?? [],
     destinationUrl: link, linkLabel: "View product", itemPrice: page.price, totalPrice: page.price,
     shippingPrice: null, currency: page.currency, totalEstimated: true, priceVerified: page.priceSource !== "indexed",
-    availability: page.availability || "", condition: page.condition, localEligible: page.localEligible, inStoreOnly: page.inStoreOnly, rating: 0, reviewCount: 0,
+    availability: page.availability || "", condition, localEligible: page.localEligible, inStoreOnly: page.inStoreOnly, rating: 0, reviewCount: 0,
     gtin: page.gtin, mpn: page.mpn, productBrand: page.brand,
-    attributes: attributesFor(query, `${page.title} ${page.specificationText ?? ""}`, page.condition, merchant, page),
+    attributes: attributesFor(query, `${page.title} ${page.specificationText ?? ""}`, condition, merchant, page),
     attributeLabels: attributeLabelsFor(query, page.title || record.title, page),
   };
 }
@@ -928,14 +929,17 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
     const originJob = Promise.resolve(point || (scope !== "online" && location && location !== "Current location" ? namedLocationCoordinates(location) : undefined));
     const specificationRequests = records => {
       const result = makeResult(query, shareProductSpecs(records.map(record => verifiedRetailOffer(record, query))));
-      const labels = new Map(result.facets.map(facet => [facet.id, facet.label]));
       const missing = result.offers.filter(offer => offer.missingAttributes.length);
-      return Array.from({ length: Math.ceil(missing.length / 8) }, (_, index) => {
-        const group = missing.slice(index * 8, (index + 1) * 8);
-        const lookups = group.map(offer => offer.gtin || (offer.productBrand && offer.mpn ? `${offer.productBrand} ${offer.mpn}` : offer.title));
-        const properties = [...new Set(group.flatMap(offer => offer.missingAttributes.map(id => labels.get(id))))];
-        return `(${lookups.map(value => `"${value.replaceAll('"', '')}"`).join(" OR ")}) specifications ${properties.join(" ")}`;
-      });
+      // Joining unrelated products and every missing property requires a page
+      // to contain all those words. Search one identity instead; validate the
+      // returned facts against that identity before applying any attributes.
+      const identities = new Map();
+      for (const offer of missing) {
+        const identity = (offer.gtin || (offer.productBrand && offer.mpn ? `${offer.productBrand} ${offer.mpn}` : offer.title))
+          .replace(/["“”]/g, "").replace(/\s+/g, " ").trim();
+        if (identity) identities.set(identity.toLowerCase(), `${identity} specifications`);
+      }
+      return [...identities.values()];
     };
     const discoveryJob = (config.provider === "octoparse" ? discoverOctoparseCatalog : discoverRetailProducts)({ query, country, localizedQuery, retailQuery, nearbyQuery, nearbyLocation: providerLocation(productLocation), config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline, specificationRequests });
     const marketplaceJob = config.provider === "octoparse" || scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);

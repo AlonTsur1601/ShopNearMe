@@ -1,5 +1,5 @@
 import { budgetFetch } from "./search-budget.mjs";
-import { extractNamedSpecifications } from "./specifications.mjs";
+import { conditionValue, extractNamedSpecifications } from "./specifications.mjs";
 import { merchantDom } from "./merchant-dom.mjs";
 const pageCache = new Map();
 const pageRequests = new Map();
@@ -141,6 +141,9 @@ export function extractProductData(html, baseUrl = "") {
   const currencyText = String(offer.priceCurrency ?? specification.priceCurrency ?? meta(html, "product:price:currency") ?? meta(html, "og:price:currency") ?? attributeValue(html, "itemprop", "priceCurrency") ?? "");
   const currency = currencyText.match(/\b(ILS|USD|EUR|GBP|CAD|AUD|JPY|CHF|SEK|NOK|DKK|PLN|CZK|NZD)\b/i)?.[1]
     || (/₪|NIS|ILS|ש["״]ח/i.test(visiblePrice?.[0] ?? "") ? "ILS" : /€|EUR/i.test(visiblePrice?.[0] ?? "") ? "EUR" : /£|GBP/i.test(visiblePrice?.[0] ?? "") ? "GBP" : /\$|USD/i.test(visiblePrice?.[0] ?? "") ? "USD" : /\.il$/i.test(new URL(baseUrl || "https://unknown.example").hostname) ? "ILS" : "USD");
+  const specifications = [...extractNamedSpecifications(dom.specificationsHtml || scope, product), ...dom.namedProperties];
+  const condition = conditionValue(offer.itemCondition ?? product.itemCondition ?? product.condition ?? (dom.itemCondition || undefined) ?? meta(html, "product:condition")
+    ?? specifications.find(pair => /^(?:(?:item )?condition|מצב המוצר)$/i.test(String(pair.name).trim()))?.value);
   return {
     isCatalog: !product.name && (dom.isCatalog || found.length > 1 || /["']@type["']\s*:\s*["']ItemList["']/i.test(html)),
     isProduct: !!product.name || dom.isProduct || !!metaPrice || /(?:add.to.cart|הוסף.{0,12}לסל|הוספה.{0,12}לסל)/i.test(scope),
@@ -148,7 +151,8 @@ export function extractProductData(html, baseUrl = "") {
     gtin: String(product.gtin ?? product.gtin13 ?? product.gtin14 ?? product.gtin12 ?? product.gtin8 ?? "").trim(),
     mpn: String(product.mpn ?? "").trim(),
     brand: typeof product.brand === "string" ? product.brand : product.brand?.name,
-    specifications: [...extractNamedSpecifications(dom.specificationsHtml || scope, product), ...dom.namedProperties],
+    condition,
+    specifications: [...specifications, ...(condition ? [{ name: "Condition", value: condition }] : [])],
     specificationText: [product.model, product.mpn, product.description, dom.description, ...[product.additionalProperty ?? []].flat().map((property) => `${property.name ?? ""} ${property.value ?? ""} ${property.unitText ?? ""}`)].filter(Boolean).join(" ").replace(/<[^>]*>/g, " ").slice(0, 18000),
     categoryText: [product.category, dom.categoryText].filter(Boolean).join(" "),
     imageUrl: imageUrls[0] ?? "",

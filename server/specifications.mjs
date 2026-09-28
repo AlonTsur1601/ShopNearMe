@@ -96,7 +96,16 @@ function valueText(value) {
   if (value && typeof value === "object") return cleanText(value.value ?? value.name ?? "");
   return cleanText(value);
 }
+export function conditionValue(value) {
+  const raw = cleanText(value && typeof value === "object" ? value['@id'] ?? value.name ?? value.value : value);
+  const condition = raw.replace(/^https?:\/\/schema\.org\//i, '').toLowerCase().replace(/[-_\s]/g, '');
+  return ({ newcondition: 'New', new: 'New', brandnew: 'New', unused: 'New', neverused: 'New', newwithtags: 'New', חדש: 'New',
+    usedcondition: 'Used', used: 'Used', preowned: 'Used', secondhand: 'Used', occasion: 'Used', gebraucht: 'Used', משומש: 'Used',
+    refurbishedcondition: 'Refurbished', refurbished: 'Refurbished', renewed: 'Refurbished', מחודש: 'Refurbished',
+    damagedcondition: 'Damaged', damaged: 'Damaged', openbox: 'Open box' })[condition] ?? '';
+}
 function normalizedValue(id, raw, unit = "") {
+  if (id === 'condition') return conditionValue(raw);
   let value = cleanText(`${valueText(raw)} ${unit}`).replace(/\b(?:inches|inch)\b|אינטש|אינץ['׳]?/gi, "in").replace(/(\d)\s*["″]/g, "$1 in").replace(/\bkilograms?\b|ק["״]ג/gi, "kg").replace(/\bcentimeters?\b|ס["״]מ/gi, "cm").replace(/\bmillimeters?\b|מ["״]מ/gi, "mm");
   if (/^(?:yes|true|supported|כן|יש|קיים)$/i.test(value)) return "Yes";
   if (/^(?:no|false|not supported|לא|אין|ללא)$/i.test(value)) return "No";

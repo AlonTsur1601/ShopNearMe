@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { readPoolTask, reuseOctoparseTask, templateParameters } from "./octoparse-pool.mjs";
-import { discoverOctoparseCatalog, merchantBalancedLinks, persistOctoparseLocations, productsFromOctoparseHtml, recoverOctoparseContent, recoverOctoparseSpecifications, recoverIndexedSpecifications } from "./octoparse-catalog.mjs";
+import { discoverOctoparseCatalog, merchantBalancedLinks, octoparseMarketplaceRows, persistOctoparseLocations, productsFromOctoparseHtml, recoverOctoparseContent, recoverOctoparseSpecifications, recoverIndexedSpecifications } from "./octoparse-catalog.mjs";
 import { withSearchBudget } from "./search-budget.mjs";
 import { readContinuation } from "./octoparse-discovery.mjs";
 
@@ -10,6 +10,18 @@ const template = { id: 1, parameters: JSON.stringify([{ Id: "urls-id", ParamName
 const product = { "@type": "Product", name: "Studio LED lamp Model L100", image: "https://merchant.example/lamp.jpg", offers: { price: "49.99", priceCurrency: "USD" }, additionalProperty: [{ name: "Color", value: "Red" }] };
 const html = item => `<html><body><script type="application/ld+json">${JSON.stringify(item)}</script></body></html>`;
 const row = { Original_URL: "https://merchant.example/product", Source_code: html(product) };
+
+it("recovers marketplace facts across tracking changes without merging selected variants", () => {
+  const link = "https://www.ebay.co.uk/itm/123456789012?var=987&_skw=lamp&itmmeta=tracking&itmprp=encoded&hash=other";
+  const items = octoparseMarketplaceRows([{ Product_URL: link, Title: product.name, Image_URL: product.image, Pricing: "£49.99" }], () => true, "lamp");
+  expect(items[0].link).toBe("https://www.ebay.co.uk/itm/123456789012?var=987");
+  const facts = [{ url: items[0].link, title: product.name, content: "- Material: Metal" },
+    { url: "https://www.ebay.co.uk/itm/123456789012?var=654", title: product.name, content: "- Material: Glass" }];
+  expect(recoverOctoparseContent(items, facts)[0].page.specifications).toEqual([{ name: "Material", value: "Metal" }]);
+  expect(recoverIndexedSpecifications([{ ...items[0], link }], facts.map(item => ({ Detail_URL: item.url, Title: item.title, Description: item.content })))[0].page.specifications).toEqual([{ name: "Material", value: "Metal" }]);
+  expect(merchantBalancedLinks([link, items[0].link, facts[1].url], 3)).toHaveLength(2);
+  expect(merchantBalancedLinks(["https://shop.example/product?var=987&hash=one", "https://shop.example/product?var=987&hash=two"], 3)).toHaveLength(2);
+});
 
 it("keeps content facts attached to the exact product URL and identity", () => {
   const items = [{ link: row.Original_URL, title: product.name, page: {} }];

@@ -33,6 +33,24 @@ const record = (locations = []) => ({ id: "source-product", link: "https://merch
   specifications: [{ name: "Color", value: "White" }, { name: "Material", value: "Metal" }],
 } });
 
+it("searches missing specifications per product identity instead of requiring unrelated products and properties together", async () => {
+  let searches, completeSearches;
+  const records = [
+    { ...record(), page: { ...record().page, gtin: "1234567890123" } },
+    { ...record(), id: "same-product-other-store", link: "https://other.example/lamp", page: { ...record().page, gtin: "1234567890123" } },
+    { ...record(), id: "other-product", link: "https://merchant.example/products/m200", title: "Maker table lamp M200", page: { ...record().page, title: "Maker table lamp M200", brand: "Maker", mpn: "M200", specifications: [{ name: "Width", value: "25 cm" }] } },
+  ];
+  vi.mocked(discoverOctoparseCatalog).mockImplementationOnce(async options => {
+    searches = options.specificationRequests(records);
+    completeSearches = options.specificationRequests([record()]);
+    return { products: records, places: [], sourceStatus: [] };
+  });
+  vi.stubGlobal("fetch", vi.fn(() => { throw new Error("Unexpected external request"); }));
+  await searchRetailCatalog("table lamp", "Israel", { provider: "octoparse", octoparseApiKey: "spec-query-test" }, undefined, undefined, "online");
+  expect(searches).toEqual(["1234567890123 specifications", "Maker M200 specifications"]);
+  expect(completeSearches).toEqual([]);
+});
+
 it("returns a real nearby product before another source finishes and resolves branches beyond the first four", async () => {
   const locations = Array.from({ length: 6 }, (_, i) => ({ address: `Branch ${i}`, name: "City" }));
   vi.mocked(discoverOctoparseCatalog).mockResolvedValueOnce({ products: [record(locations)], places: [], continuation: "signed-continuation", nextPollAt: Date.now() + 15000, sourceStatus: [{ source: "Nearby branches via Octoparse", status: "pending" }] });
@@ -59,7 +77,7 @@ it("matches a located branch without a website by exact merchant name without sh
 });
 
 it("classifies actual product condition rather than merchant or incidental title words", async () => {
-  for (const [title, condition, category] of [["Vintage style table lamp", "Brand new", "order"], ["Table lamp with diffused light", undefined, "order"], ["Studio table lamp", "Pre-owned", "secondHand"]]) {
+  for (const [title, condition, category] of [["Vintage style table lamp", "Brand new", "order"], ["Table lamp with diffused light", undefined, "order"], ["Studio table lamp", "Pre-owned", "secondHand"], ["Studio table lamp", "Unused", "order"], ["Studio table lamp", "https://schema.org/UsedCondition", "secondHand"], ["Studio table lamp", "Open box", "secondHand"]]) {
     const item = record(); item.title = title; item.page.title = title; item.page.condition = condition;
     vi.mocked(discoverOctoparseCatalog).mockResolvedValueOnce({ products: [item], places: [], sourceStatus: [] });
     vi.stubGlobal("fetch", vi.fn(() => { throw new Error("Unexpected external request"); }));

@@ -42,8 +42,9 @@ describe("App", () => {
     render(<FilterPanel facets={[{ id: "color", label: "Color", missingCount: 11, options: [{ value: "Gold", count: 2 }] }]} selected={{}} distance={50} distanceUnit="km" priceMin="" priceMax="" onToggle={() => {}} onDistance={() => {}} onPriceMin={() => {}} onPriceMax={() => {}} onClear={() => {}} />);
     expect(screen.queryByText(/not verified|11 products/i)).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Gold 2" })).toBeInTheDocument();
-    render(<OfferSection category="order" distanceUnit="km" offers={[{ ...clockShowcase.offers[0], subtitle: "New · CN", condition: "New" }]} />);
+    render(<OfferSection category="order" distanceUnit="km" offers={[{ ...clockShowcase.offers[0], subtitle: "New · CN", condition: "New" }, { ...clockShowcase.offers[0], id: 'normalized-condition-case', subtitle: "Brand new · GB", condition: "New" }]} />);
     expect(screen.getByText("New · CN")).toBeInTheDocument();
+    expect(screen.getByText("Brand new · GB")).toBeInTheDocument();
     expect(screen.queryByText("New", { exact: true })).not.toBeInTheDocument();
   });
   it("shows one actionable location warning instead of duplicate nearby-product warnings", async () => {
