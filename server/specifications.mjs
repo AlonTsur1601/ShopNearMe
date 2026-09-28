@@ -77,6 +77,7 @@ const aliases = [
 ];
 const nonSpecification = /(?:price|cost|cybersecurity|insurance|protection plan|purchase|payment|shipping|delivery|returns?|warranty|seller|retailer|review|rating|attribute name|sku|\bupc\b|\bean\b|gtin|mpn|model(?: number)?|product id|product line|unit type|unit quantity|asin|url|description|overview|about|style|מחיר|משלוח|אחריות|קטלוג|יבואן|מבצע|הערה|מק["״]?ט)/i;
 const businessMetadata = /\b(?:contact|telephone|phone|fax|email|opening hours|business hours|working hours|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|(?:טלפון|פקס|שעות פתיחה|שעות פעילות|צור קשר)/i;
+const retailerDetails = /^(?:ships? from|(?:store|branch|office) (?:address|location|directions|entrances?)|entrances? from (?:the )?streets?|(?:כתובת|מיקום) (?:ה?חנות|ה?סניף)|דרכי הגעה)$/i;
 export function cleanText(value) {
   return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Math.min(Number(code), 0x10ffff))).replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/\s+/g, " ").trim();
 }
@@ -147,7 +148,7 @@ export function structuredAttributes(pairs) {
     // Match their values too, so a real property such as phone compatibility
     // remains available and does not become a category-specific exception.
     if (businessMetadata.test(name) && /(?:\+?\d[\d\s()-]{7,}|\b\d{1,2}:\d{2}\b|\S+@\S+\.\S+)/.test(valueText(pair.value))) continue;
-    if (!name || name.length > 64 || /\uFFFD/.test(name) || nonSpecification.test(name) || /^(?:parameter|specification|פרמטר|דגם|מספר ספק|קישור ליצרן|זמן אספקה|תנאי תשלום|יתרון|תועלת)$/i.test(name)) continue;
+    if (!name || name.length > 64 || /\uFFFD/.test(name) || nonSpecification.test(name) || retailerDetails.test(name) || /^(?:parameter|specification|פרמטר|דגם|מספר ספק|קישור ליצרן|זמן אספקה|תנאי תשלום|יתרון|תועלת)$/i.test(name)) continue;
     const alias = aliases.find(([, , match]) => match.test(name) || match.test(sourceName));
     const label = alias?.[1] ?? (englishLabel(name) || specificationText(name));
     if (!label) continue;
@@ -214,7 +215,7 @@ export function productMarkdownText(content) {
     if (heading) {
       const depth = heading[1].length;
       if (excludedDepth && depth > excludedDepth) return false;
-      excludedDepth = /related products|you may also|recommendations|contact|opening hours|מוצרים נוספים|מוצרים דומים|צור קשר|שעות פתיחה/i.test(line) ? depth : 0;
+      excludedDepth = /related products|you may also|recommendations|\bcontact\b|opening hours|מוצרים נוספים|מוצרים דומים|צור קשר|שעות פתיחה/i.test(line) ? depth : 0;
     }
     return !excludedDepth;
   }).join("\n");

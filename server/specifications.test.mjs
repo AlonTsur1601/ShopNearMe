@@ -73,6 +73,12 @@ describe("specification-driven facets", () => {
     expect(page.specifications.some(pair => pair.name === "Office size" || pair.name === "Support channel")).toBe(false);
   });
 
+  it("rejects fulfillment and branch metadata without discarding physical product properties", () => {
+    const pairs = [{ name: 'Ships from', value: 'USA' }, { name: 'Store address', value: 'Main street' }, { name: 'Branch location', value: 'City center' }, { name: 'Entrances from the streets', value: 'Main street' }, { name: 'Country of origin', value: 'USA' }, { name: 'Connector type', value: 'USB-C' }];
+    expect(structuredAttributes(pairs).attributes).toEqual({ 'spec:country_of_origin': ['USA'], ports: ['USB-C'] });
+    expect(productMarkdownText('# Contactless LED lamp\nColor: White')).toContain('Color: White');
+  });
+
   it("reads transposed specification tables without assigning comparison rows to a product", () => {
     const page = extractProductData('<table><tr><td>צבע</td><td>הספק</td><td>חומר</td><td>מידות</td></tr><tr><td>שחור+לבן</td><td>7W</td><td><p>Glass</p><p>Metal</p></td><td><p>180 x 450</p><p>mm</p></td></tr></table>');
     expect(structuredAttributes(page.specifications).attributes).toMatchObject({ color: ["Black", "White"], power: ["7 W"], material: ["Glass", "Metal"], dimensions: ["180 x 450 mm"] });
