@@ -57,3 +57,14 @@ it("matches a located branch without a website by exact merchant name without sh
   expect(result.offers.filter(offer => offer.category === "local")).toHaveLength(1);
   expect(result.offers.every(offer => offer.destinationUrl === record().link && offer.itemPrice === 199 && offer.imageUrl === record().page.imageUrl)).toBe(true);
 });
+
+it("classifies actual product condition rather than merchant or incidental title words", async () => {
+  for (const [title, condition, category] of [["Vintage style table lamp", "Brand new", "order"], ["Table lamp with diffused light", undefined, "order"], ["Studio table lamp", "Pre-owned", "secondHand"]]) {
+    const item = record(); item.title = title; item.page.title = title; item.page.condition = condition;
+    vi.mocked(discoverOctoparseCatalog).mockResolvedValueOnce({ products: [item], places: [], sourceStatus: [] });
+    vi.stubGlobal("fetch", vi.fn(() => { throw new Error("Unexpected external request"); }));
+    const result = await searchRetailCatalog("table lamp", "Israel", { provider: "octoparse", octoparseApiKey: "condition-test" }, undefined, undefined, "online");
+    expect(result.offers).toHaveLength(1);
+    expect(result.offers[0].category).toBe(category);
+  }
+});

@@ -197,7 +197,12 @@ export function matchingShoppingEvidence(item, offer) {
   const price = offer.itemPrice ?? number(item.extracted_price ?? item.price);
   return { ...offer, imageUrl: offer.imageUrl || image, imageUrls: [...new Set([...(offer.imageUrls || []), image].filter(Boolean))], itemPrice: price, totalPrice: price, currency: offer.itemPrice == null ? explicitCurrency(item.price || "") || offer.currency : offer.currency, priceVerified: offer.priceVerified || price !== null };
 }
-function used(item) { return /used|pre.?owned|refurb|renewed|open box|vintage|second.?hand|mercari|poshmark|offerup|back market/i.test(`${item.title ?? ""} ${item.condition ?? ""} ${item.badge ?? ""} ${item.source ?? ""}`); }
+function used(item) {
+  // An explicitly new item remains new even when its style is "vintage".
+  // Store identity and words such as "diffused" cannot establish condition.
+  if (/^(?:brand\s+)?new$/i.test(String(item.condition ?? "").trim())) return false;
+  return /\b(?:used|pre.?owned|refurb(?:ished)?|renewed|open box|second.?hand)\b/i.test(`${item.title ?? ""} ${item.condition ?? ""} ${item.badge ?? ""}`);
+}
 function local(item) { return /(?:store|curbside|local)\s+pickup|pick\s*up\s+(?:today|in store)|in-store pickup/i.test(`${item.delivery ?? ""} ${(item.extensions ?? []).join(" ")}`); }
 function validCoordinates(value) { const lat = Number(value?.lat), lon = Number(value?.lon); return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null; }
 function distanceMiles(origin, point) { const destination = validCoordinates(point); if (!origin || !destination) return undefined; const rad = (value) => value * Math.PI / 180, dLat = rad(destination.lat - origin.lat), dLon = rad(destination.lon - origin.lon); const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(origin.lat)) * Math.cos(rad(destination.lat)) * Math.sin(dLon / 2) ** 2; return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); }
