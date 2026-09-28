@@ -6,6 +6,14 @@ import { normalizeOfferFacets } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("specification-driven facets", () => {
+  it("reads two-property horizontal tables without creating filters from table headings or values", () => {
+    const html = '<table><tr><th>Color</th><th>Power</th></tr><tr><td>White</td><td>7 W</td></tr></table>';
+    expect(structuredAttributes(extractProductData(html).specifications).attributes).toEqual({ color: ['White'], power: ['7 W'] });
+    const vertical = '<table><tr><th>Property</th><th>Value</th></tr><tr><td>Material</td><td>Metal</td></tr></table>';
+    expect(extractProductData(vertical).specifications).toEqual([{ name: 'Material', value: 'Metal' }]);
+    expect(structuredAttributes(extractMarkdownSpecifications('| Memory | Storage |\n|---|---|\n|16 GB|512 GB|')).attributes).toEqual({ memory: ['16 GB'], storage: ['512 GB'] });
+    expect(extractMarkdownSpecifications('|Property|Value|\n|---|---|\n|Color|White|')).toEqual([{ name: 'Color', value: 'White' }]);
+  });
   it("keeps nested contacts and related-product facts out of structured and prose recovery", () => {
     const content = '# Product\nMaterial: Metal\n## Related products\n### Blue lamp\nColor: Blue\n#### Details\nPower: 40 W\n## Contact\n### Directions\nEntrances from the streets: Main street\n### Office\nColor: Green\n## Specifications\nColor: White\n### Electrical\nPower: 7 W';
     const text = productMarkdownText(content);

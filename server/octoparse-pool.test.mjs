@@ -31,6 +31,23 @@ it("keeps content facts attached to the exact product URL and identity", () => {
   expect(recovered.specificationText).not.toMatch(/Blue|40 W/);
 });
 
+it("never copies another seller's condition or a conflicting variant's facts during model recovery", () => {
+  const item = { link: row.Original_URL, title: product.name + ' White', page: { mpn: 'L100', brand: 'Studio', specifications: [] } };
+  const observations = new Map([
+    ['https://used.example/lamp', { isProduct: true, title: item.title, mpn: 'L100', brand: 'Studio', condition: 'Used', specifications: [{ name: 'Condition', value: 'Used' }, { name: 'Material', value: 'Metal' }] }],
+    ['https://other.example/red', { isProduct: true, title: product.name + ' Red', mpn: 'L100', brand: 'Studio', specifications: [{ name: 'Material', value: 'Glass' }] }],
+  ]);
+  const recovered = recoverOctoparseSpecifications([item], { observations })[0];
+  expect(recovered.page.condition).toBeUndefined();
+  expect(recovered.page.specifications).toEqual([{ name: 'Material', value: 'Metal' }]);
+  observations.set(item.link, { isProduct: true, title: item.title, condition: 'New', specifications: [{ name: 'Condition', value: 'New' }] });
+  expect(recoverOctoparseSpecifications([item], { observations })[0].page.condition).toBe('New');
+  const contradictoryId = { ...item, page: { ...item.page, gtin: '1234567890123' } };
+  observations.clear();
+  observations.set('https://other.example/lamp', { isProduct: true, title: item.title, gtin: '9876543210123', specifications: [{ name: 'Material', value: 'Glass' }] });
+  expect(recoverOctoparseSpecifications([contradictoryId], { observations })[0].page.specifications).toEqual([]);
+});
+
 it("recovers exact indexed product facts without replacing the price or copying sibling variants", () => {
   const item = { link: row.Original_URL, title: product.name, page: { price: 49.99, imageUrl: "https://images.example/own.jpg" } };
   const indexed = [{ Detail_URL: row.Original_URL, Title: product.name, Descriptipn: "Material: Metal\nColor: White" },

@@ -78,7 +78,17 @@ function firstPrice(...values) {
   return null;
 }
 function sameProductUrl(left, right) {
-  try { const a = new URL(left, right), b = new URL(right); return a.origin === b.origin && a.pathname === b.pathname && ["id", "item", "proid"].every(key => a.searchParams.get(key) === b.searchParams.get(key)); } catch { return false; }
+  try {
+    const normalize = value => {
+      const link = new URL(value, right); link.hash = "";
+      for (const key of [...link.searchParams.keys()]) if (/^(?:utm_.+|srsltid|gclid|fbclid)$/i.test(key)) link.searchParams.delete(key);
+      if (/^(?:www\.)?ebay\.[a-z.]+$/i.test(link.hostname) && /^\/itm\//i.test(link.pathname)) {
+        for (const key of ["_skw", "itmmeta", "itmprp", "hash"]) link.searchParams.delete(key);
+      }
+      link.searchParams.sort(); return link.href;
+    };
+    return normalize(left) === normalize(right);
+  } catch { return false; }
 }
 function mainProducts(root) {
   if (Array.isArray(root)) return root.flatMap(mainProducts);
@@ -124,7 +134,8 @@ export function extractProductData(html, baseUrl = "") {
   if (!primary.length) for (const match of html.matchAll(/<script\b[^>]*(?:type=["']application\/json["']|id=["']__NEXT_DATA__["'])[^>]*>([\s\S]*?)<\/script>/gi)) {
     try { primary.push(...embeddedProducts(JSON.parse(match[1]))); } catch { /* invalid embedded data */ }
   }
-  const product = found.find(item => item.url && sameProductUrl(item.url, baseUrl)) ?? primary.find(item => item.offers || item.image) ?? primary[0] ?? (found.length === 1 ? found[0] : {});
+  const compatible = item => !item.url || !baseUrl || sameProductUrl(item.url, baseUrl);
+  const product = found.find(item => item.url && sameProductUrl(item.url, baseUrl)) ?? primary.find(item => compatible(item) && (item.offers || item.image)) ?? primary.find(compatible) ?? (found.length === 1 && compatible(found[0]) ? found[0] : {});
   // Some merchants put only the category in JSON-LD and the model in OG.
   const expandedTitle = product.name && dom.pageTitle?.toLowerCase().startsWith(String(product.name).toLowerCase()) ? dom.pageTitle : undefined;
   const title = expandedTitle || product.name || dom.title || dom.pageTitle || meta(html, "og:title") || html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]*>/g, " ").trim();

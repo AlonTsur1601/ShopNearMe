@@ -6,6 +6,13 @@ import { sameProductIdentity } from "./product-identity.mjs";
 afterEach(() => vi.unstubAllGlobals());
 const offer = { id: "new", category: "order", merchant: "Shop", title: "Gaming Laptop X1", itemPrice: 500, totalPrice: 500, currency: "USD", imageUrl: "https://shop.example/laptop.jpg", destinationUrl: "https://shop.example/products/x1", attributes: { memory: "16 GB" } };
 
+it("does not merge shared-model variants with conflicting colors, capacities or pack counts", () => {
+  for (const [selected, candidate] of [["Lamp L100 White", "Lamp L100 Black"], ["Laptop X1 16 GB 512 GB", "Laptop X1 8 GB 512 GB"], ["Hook H200 2-pack", "Hook H200 4 pieces"]]) expect(sameProductIdentity(selected, candidate)).toBe(false);
+  expect(sameProductIdentity("Lamp L100 Grey", "Lamp L100 Gray")).toBe(true);
+  expect(sameProductIdentity("Hook H200 2-pack", "Hook H200 2 pieces")).toBe(true);
+  expect(sameProductIdentity("Lamp L100 White", "Lamp L100 specifications")).toBe(true);
+});
+
 it("keeps a valid new product alongside used offers despite missing specifications", () => {
   const result = makeResult("Gaming Laptop", [offer, { ...offer, id: "used", category: "secondHand", destinationUrl: "https://www.ebay.com/itm/123", attributes: { memory: "8 GB", storage: "256 GB", screenSize: "15.6 in", platform: "Windows" } }]);
   expect(result.offers.map(item => item.category)).toEqual(["order", "secondHand"]);

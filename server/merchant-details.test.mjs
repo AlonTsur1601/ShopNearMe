@@ -5,6 +5,12 @@ import { proseAttributes } from "./specifications.mjs";
 import { translateTerms } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
+it("selects structured data for the exact URL variant and refuses a sibling variant fallback", () => {
+  const product = (variant, price) => ({ '@type': 'Product', url: `https://merchant.example/lamp?variant=${variant}`, name: `Lamp L100 ${variant}`, offers: { price, priceCurrency: 'USD' }, color: variant });
+  const markup = values => `<script type="application/ld+json">${JSON.stringify(values)}</script>`;
+  expect(extractProductData(markup([product('Red', 99), product('Blue', 29)]), 'https://merchant.example/lamp?utm_source=search&variant=Blue')).toMatchObject({ title: 'Lamp L100 Blue', price: 29 });
+  expect(extractProductData(markup(product('Red', 99)), 'https://merchant.example/lamp?variant=Blue').price).toBeNull();
+});
 it.each(['New', 'Used', 'Refurbished', 'Damaged'])("preserves declared %s condition from the actual structured offer", condition => {
   const product = { '@type': 'Product', name: 'Desk lamp', image: '/lamp.jpg', offers: { price: 29, priceCurrency: 'USD', itemCondition: { '@id': `https://schema.org/${condition}Condition` } } };
   const page = extractProductData(`<script type="application/ld+json">${JSON.stringify(product)}</script>`, 'https://merchant.example/lamp');

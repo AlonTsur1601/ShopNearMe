@@ -15,11 +15,24 @@ export function productWords(value) {
 function normalized(value) { return productWords(value).replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }
 function models(value) {
   return (String(value).match(/\b[a-z\d]+(?:[-._/][a-z\d]+)*\b/gi) ?? [])
-    .filter(word => /[a-z]/i.test(word) && /\d/.test(word) && !/^(?:\d+(?:gb|tb|mb|hz|mah|ms|mm|cm|w|v|k|p)|usb[-.]?\d.*|ddr\d|lpddr\d.*|wi-?fi\d*)$/i.test(word))
+    .filter(word => /[a-z]/i.test(word) && /\d/.test(word) && !/^(?:\d+(?:gb|tb|mb|hz|mah|ms|mm|cm|w|v|k|p)|\d+-?(?:packs?|pcs|pieces?|count)|usb[-.]?\d.*|ddr\d|lpddr\d.*|wi-?fi\d*)$/i.test(word))
     .map(word => word.toLowerCase().replace(/[^a-z\d]/g, ""));
 }
+export function conflictingProductVariants(title, evidence) {
+  const selected = productWords(title), candidate = productWords(evidence);
+  // A shared model denotes a family, not necessarily the selected variant.
+  // Reject conflicting values actually stated in both titles; missing values
+  // are not inferred, and exact identifiers can still recover sparse titles.
+  for (const pattern of [/\b(?:black|white|red|blue|green|yellow|orange|purple|pink|gr[ae]y|silver|gold|beige|brown)\b/gi,
+    /\b\d+(?:\.\d+)?\s*(?:GB|TB)\b/gi, /\b\d+[- ]?(?:packs?|pcs|pieces?|count)\b/gi]) {
+    const values = text => [...text.matchAll(pattern)].map(match => match[0].toLowerCase().replace(/\s|-/g, '').replace('grey', 'gray').replace(/(?:packs?|pcs|pieces?|count)$/, 'pack'));
+    const wanted = values(selected), found = values(candidate);
+    if (wanted.length && found.length && !wanted.every(value => found.includes(value))) return true;
+  }
+  return false;
+}
 export function sameProductIdentity(title, evidence) {
-  if (contradictsQuery(evidence, title)) return false;
+  if (contradictsQuery(evidence, title) || conflictingProductVariants(title, evidence)) return false;
   const wanted = models(title), found = models(evidence);
   if (wanted.length) return wanted.every(model => found.includes(model));
   const text = normalized(title), source = normalized(evidence);

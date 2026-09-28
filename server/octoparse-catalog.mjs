@@ -3,7 +3,7 @@ import { load } from "cheerio";
 import { extractProductData, isSearchResultsUrl } from "./product-page.mjs";
 import { reuseOctoparseTask, readPoolTask } from "./octoparse-pool.mjs";
 import { octoparseProducts, octoparsePlaces, signContinuation, readContinuation } from "./octoparse-discovery.mjs";
-import { sameProductIdentity } from "./product-identity.mjs";
+import { conflictingProductVariants, sameProductIdentity } from "./product-identity.mjs";
 import { extractMarkdownSpecifications, productMarkdownText, specificationPairs } from "./specifications.mjs";
 import { searchContext } from "./search-budget.mjs";
 
@@ -206,7 +206,9 @@ export function recoverOctoparseSpecifications(products, pages) {
   return products.flatMap(product => {
     const direct = pages.observations.get(product.link);
     if (direct?.availability === "Out of stock") return [];
-    const matching = [...pages.observations.entries()].filter(([link, page]) => page.isProduct && !page.isCatalog && (
+    const matching = [...pages.observations.entries()].filter(([link, page]) => page.isProduct && !page.isCatalog
+      && !(product.page.gtin && page.gtin && product.page.gtin !== page.gtin)
+      && !conflictingProductVariants(product.title, page.title) && (
       link === product.link && sameProductIdentity(product.title, page.title)
       || product.page.gtin && page.gtin === product.page.gtin
       || product.page.mpn && product.page.brand && String(page.mpn).toLowerCase() === String(product.page.mpn).toLowerCase() && String(page.brand).toLowerCase() === String(product.page.brand).toLowerCase()
@@ -214,10 +216,12 @@ export function recoverOctoparseSpecifications(products, pages) {
     )).map(([,page]) => page);
     if (!matching.length) return [product];
     return [{ ...product, page: { ...product.page,
-      specifications: [...(product.page.specifications ?? []), ...matching.flatMap(page => page.specifications ?? [])],
+      specifications: [...(product.page.specifications ?? []), ...matching.flatMap(page => (page.specifications ?? [])
+        .filter(pair => page === direct || !/^(?:(?:item\s*)?condition|מצב המוצר)$/i.test(String(pair.name).trim())))],
       specificationText: [product.page.specificationText, ...matching.map(page => page.specificationText)].filter(Boolean).join("\n"),
       brand: product.page.brand || matching.find(page => page.brand)?.brand,
-      condition: product.page.condition || matching.find(page => page.condition)?.condition,
+      // Condition belongs to this seller's offer, not to the product model.
+      condition: product.page.condition || matching.find(page => page === direct)?.condition,
     } }];
   });
 }
