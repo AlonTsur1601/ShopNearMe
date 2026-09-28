@@ -330,7 +330,7 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
         if (state.status !== "pending" && state.missingPages?.length) sourceStatus.push({ source: "Product pages via Octoparse", status: "failed", code: "incomplete_retrieval" });
       } catch (error) {
         const existing = states[request.key];
-        if (["provider_busy", "provider_rate_limited"].includes(error.code) && (existing?.attempts || 0) < 8) {
+        if (error.code === "provider_busy" || error.code === "provider_rate_limited" && (existing?.attempts || 0) < 8) {
           // A shared pool slot being occupied is not a finished failed search.
           // Resume when it is free without creating or stopping another task.
           states[request.key] = { status: "pending", deferred: true, rows: [], attempts: (existing?.attempts || 0) + 1, nextPollAt: Date.now() + 15000 };

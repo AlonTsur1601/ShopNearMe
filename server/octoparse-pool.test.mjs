@@ -116,16 +116,16 @@ it("retains the real UTC start of an existing cloud run across cold requests", a
   expect(call.mock.calls.map(([name]) => name)).toEqual(["get_task_status"]);
 });
 
-it("clears only an expired owned pool run and waits for its stop acknowledgement", async () => {
+it("waits for an old occupied pool run without stopping it or replacing its input", async () => {
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-27T18:44:07Z"));
   const request = vi.fn(async path => path.includes("searchTaskList") ? { dataList: [{ taskId: "orphan", taskName: "ShopNearMe pool orphan", templateId: 9011, startExecuteDate: "2026-09-27T18:25:07.197" }] } : { userInputParameters: mapping });
   const call = vi.fn(async () => ({ status: "running", lotNo: "939260363630236303", collectedRows: 2 }));
   await expect(reuseOctoparseTask("orphan", 9011, { URLs: ["https://merchant.example/new"] }, "orphan-key", { request, call, fetcher: async () => Response.json({ data: template }) })).rejects.toMatchObject({ code: "provider_busy" });
-  expect(call.mock.calls.filter(([name]) => name === "start_or_stop_task").map(([, args]) => args.action)).toEqual(["stop"]);
+  expect(call.mock.calls.map(([name]) => name)).toEqual(["get_task_status"]);
   expect(request.mock.calls.every(args => args.length === 2)).toBe(true);
 });
 
-it("never stops a replacement lot observed during orphan cleanup", async () => {
+it("never stops another query's lot when its saved task is occupied", async () => {
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-27T18:44:07Z"));
   const request = async path => path.includes("searchTaskList") ? { dataList: [{ taskId: "replacement", taskName: "ShopNearMe pool replacement", templateId: 9012, startExecuteDate: "2026-09-27T18:25:07.197" }] } : { userInputParameters: mapping };
   const call = vi.fn().mockResolvedValueOnce({ status: "running", lotNo: "939260363630236304" }).mockResolvedValueOnce({ status: "running", lotNo: "939260363630236305" });
@@ -206,11 +206,17 @@ it("waits for an occupied shared pool slot and resumes without reporting a final
   const first = await discoverOctoparseCatalog(options, { start, read });
   expect(first.continuation).toBeTruthy();
   expect(first.sourceStatus.find(source => source.source === "amazon via Octoparse")).toMatchObject({ status: "pending" });
-  busy = false;
   const early = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read });
   expect(start.mock.calls.filter(args => args[0] === "amazon-classic")).toHaveLength(1);
-  vi.setSystemTime(early.nextPollAt + 1);
-  const result = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read });
+  let waiting = early;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    vi.setSystemTime(waiting.nextPollAt + 1);
+    waiting = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: waiting.continuation } }, { start, read });
+    expect(waiting.sourceStatus.find(source => source.source === 'amazon via Octoparse')).toMatchObject({ status: 'pending' });
+  }
+  busy = false;
+  vi.setSystemTime(waiting.nextPollAt + 1);
+  const result = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: waiting.continuation } }, { start, read });
   expect(result.continuation).toBeUndefined();
   expect(result.sourceStatus.find(source => source.source === "amazon via Octoparse")).toMatchObject({ status: "empty" });
 });
@@ -349,12 +355,13 @@ it("keeps cloud startup and progressing collection past the client's wait deadli
   expect(call.mock.calls.every(([name]) => name === "get_task_status")).toBe(true);
 });
 
-it("retains the hard cloud-run bound and stops the verified exact lot", async () => {
-  vi.useFakeTimers(); vi.setSystemTime(900002);
+it("keeps waiting for an accepted empty cloud run beyond the previous lifetime bound", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(3600002);
   const call = vi.fn(async () => ({ status: "running", lotNo: "939260363630236331", collectedRows: 0 }));
   const result = await readPoolTask({ taskId: "expired-run", lotNo: "939260363630236331", status: "pending", startedAt: 1 }, "key", { request: async () => ({ userInputParameters: mapping }), call });
-  expect(result).toMatchObject({ status: "failed", code: "search_timeout" });
-  expect(call.mock.calls.map(([name]) => name)).toEqual(["get_task_status", "start_or_stop_task"]);
+  expect(result).toMatchObject({ status: "pending", lotNo: "939260363630236331", rows: [] });
+  expect(result.code).toBeUndefined();
+  expect(call.mock.calls.map(([name]) => name)).toEqual(["get_task_status"]);
 });
 
 it("collects every branch batch within the export bound without repeating accepted hosts", async () => {
@@ -394,7 +401,7 @@ it("resumes compact page checkpoints without re-exporting successful HTML pages"
   expect(call.mock.calls.map(([, args]) => args.page)).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
 });
 
-it("keeps a progressing run alive and stops only after it stalls", async () => {
+it("waits through a pause between cloud rows and exports the complete final lot", async () => {
   vi.useFakeTimers();
   const now = Date.now();
   const call = vi.fn(async name => name === "get_task_status" ? { lotNo: "939260363630236288", status: "running", collectedRows: 1 } : { success: true, data: [{ n: 1 }] });
@@ -403,9 +410,14 @@ it("keeps a progressing run alive and stops only after it stalls", async () => {
   expect(active.status).toBe("pending");
   expect(call.mock.calls.some(([name]) => name === "start_or_stop_task")).toBe(false);
   vi.setSystemTime(now + 121000);
-  const stopped = await readPoolTask(active, "key", dependencies);
-  expect(stopped).toMatchObject({ status: "failed", code: "search_timeout", rows: [{ n: 1 }] });
-  expect(call.mock.calls.filter(([name]) => name === "start_or_stop_task")).toHaveLength(1);
+  const waiting = await readPoolTask(active, "key", dependencies);
+  expect(waiting).toMatchObject({ status: "pending", rows: [] });
+  expect(call.mock.calls.some(([name]) => name === "start_or_stop_task")).toBe(false);
+  call.mockImplementation(async name => name === 'get_task_status'
+    ? { lotNo: '939260363630236288', status: 'completed', collectedRows: 2 }
+    : { success: true, data: [{ n: 1 }, { n: 2 }] });
+  vi.advanceTimersByTime(15000);
+  expect(await readPoolTask(waiting, 'key', dependencies)).toMatchObject({ status: 'completed', rows: [{ n: 1 }, { n: 2 }] });
 });
 
 it("rejects missing export rows and oversized datasets instead of reporting success", async () => {

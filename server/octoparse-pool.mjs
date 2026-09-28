@@ -8,7 +8,6 @@ const api = "https://v2-clientapi.octoparse.com";
 const templates = new Map();
 const queues = new Map();
 const leases = new Map();
-const maxRunMilliseconds = 15 * 60 * 1000;
 const hash = value => createHash("sha256").update(value).digest("hex");
 const failure = code => Object.assign(new Error("Octoparse could not complete the search"), { code });
 const inputHash = input => hash(JSON.stringify(JSON.parse(input).TemplateParameters.sort((a, b) => a.ParamName.localeCompare(b.ParamName))));
@@ -85,20 +84,8 @@ export async function reuseOctoparseTask(role, templateId, values, apiKey, depen
         return { taskId: task.taskId, lotNo: state.lotNo, status: "pending", startedAt: taskTime(task.startExecuteDate ?? task.startExecuteTime) || Date.now(), nextPollAt: state.status === "running" ? Date.now() + 15000 : 0, inputHash: inputHash(input), poolOwner: owner };
       }
       if (state.status === "running") {
-        // The client can finish before its last cloud task does. Apply the
-        // same bounded cloud-run lifetime on subsequent pool lookup, so an orphan
-        // cannot occupy this app's named slot forever. Recheck input and lot
-        // immediately before stopping; leave any newer run untouched.
-        const startedAt = taskTime(task.startExecuteDate ?? task.startExecuteTime);
-        if (task.taskName === name && Number.isFinite(startedAt) && Date.now() - startedAt > maxRunMilliseconds && state.lotNo) {
-          const checked = await request(`/api/tasks/${task.taskId}/templateMapping`, apiKey);
-          const latest = await call("get_task_status", { taskId: task.taskId }, apiKey);
-          if (inputHash(checked.userInputParameters) === inputHash(current.userInputParameters) && latest.lotNo === state.lotNo && latest.status === "running") {
-            await call("start_or_stop_task", { taskId: task.taskId, action: "stop" }, apiKey);
-          }
-        }
-        // A stop acknowledgement is asynchronous; wait until the pool lookup
-        // confirms completion before rewriting the input or accepting a start.
+        // Another accepted query owns the saved task until Octoparse finishes.
+        // Elapsed time is not permission to stop it or overwrite its input.
         throw failure("provider_busy");
       }
       await request(`/api/tasks/${task.taskId}/templateMapping`, apiKey, {
@@ -142,21 +129,9 @@ export async function readPoolTask(task, apiKey, dependencies = {}) {
     const progressing = state.collectedRows > (task.collectedRows ?? 0);
     task = { ...task, collectedRows: state.collectedRows ?? task.collectedRows ?? 0,
       lastProgressAt: progressing ? Date.now() : task.lastProgressAt || task.startedAt };
-    // Cloud startup/queueing can precede the first row. A client wait deadline
-    // is not proof that an accepted run has stalled. Preserve progressing runs
-    // for resumption; stop on inactivity after actual data or the hard bound.
-    if (task.startedAt && ((task.collectedRows > 0 && Date.now() - task.lastProgressAt > 120000) || Date.now() - task.startedAt > maxRunMilliseconds)) {
-      // Stop only a run whose input and exact lot were checked above. A hung
-      // worker must not hold a shared task indefinitely or keep consuming rows.
-      if (state.status === "running" && (!task.lotNo || task.lotNo === state.lotNo)) await call("start_or_stop_task", { taskId: task.taskId, action: "stop" }, apiKey);
-      releaseOctoparseTask(task);
-      if (!task.lotNo || !state.collectedRows) return { ...task, status: "failed", code: "search_timeout", rows: [] };
-      // Preserve already collected products when just one worker is stalled.
-      task = { ...task, code: "search_timeout" };
-      state = { ...state, status: "stopped" };
-    } else {
-      return { ...task, status: "pending", nextPollAt: Date.now() + 15000, rows: [] };
-    }
+    // Wait for the provider's terminal state, including pauses between rows.
+    // Never stop or export a still-running lot because a local timer elapsed.
+    return { ...task, status: "pending", nextPollAt: Date.now() + 15000, rows: [] };
   }
   if (task.lotNo !== state.lotNo) throw failure("task_reassigned");
   if (!["completed", "stopped"].includes(state.status)) throw failure("search_unavailable");

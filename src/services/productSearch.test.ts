@@ -3,6 +3,28 @@ import { searchProducts, searchProductScope } from "./productSearch";
 
 describe("searchProducts", () => {
   afterEach(() => { sessionStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+  it("waits beyond five minutes without publishing partial products and remains cancellable", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const partial = { offers: [{ id: 'early' }], facets: [], pendingSearch: { continuation: 'accepted-slow-job', nextPollAt: Date.now() + 360000 } };
+    const final = { offers: [{ id: 'early' }, { id: 'late' }], facets: [], resultCount: 2 };
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json(partial)).mockResolvedValueOnce(Response.json(final));
+    vi.stubGlobal('fetch', fetcher);
+    let published = false;
+    const search = searchProducts('slow lamp', 'Israel', controller.signal).then(result => { published = true; return result; });
+    await vi.advanceTimersByTimeAsync(301000);
+    expect(published).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(59000);
+    expect(await search).toMatchObject(final);
+    expect(JSON.parse(fetcher.mock.calls[1][1].body).continuation).toBe('accepted-slow-job');
+    fetcher.mockResolvedValue(Response.json({ ...partial, pendingSearch: { ...partial.pendingSearch, nextPollAt: Date.now() + 360000 } }));
+    const cancelled = searchProducts('another lamp', 'Israel', controller.signal);
+    const rejection = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(301000);
+    controller.abort();
+    await rejection;
+  });
   it("retains accepted work after exhausted network retries and resumes it on the next search", async () => {
     vi.useFakeTimers();
     const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ offers: [], facets: [], pendingSearch: { continuation: "accepted-job", nextPollAt: Date.now() } }))
