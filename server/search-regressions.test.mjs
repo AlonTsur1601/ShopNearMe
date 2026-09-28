@@ -35,7 +35,7 @@ it("never borrows X2 memory for X1 even when three generic words match", async (
   expect(result[0].attributes.memory).toBeUndefined();
 });
 
-it("searches every missing model in bounded batches instead of only the first four", async () => {
+it("uses one exact model per lookup and preserves unresolved offers when the allowance is spent", async () => {
   const products = Array.from({ length: 8 }, (_, index) => ({ ...offer, id: String(index), title: `ACME Laptop M${1000 + index}`, attributes: {}, destinationUrl: `https://batch.example/${index}` }));
   const queries = [];
   vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
@@ -44,7 +44,9 @@ it("searches every missing model in bounded batches instead of only the first fo
   }));
   const result = await recoverModelSpecifications(products, "Gaming Laptop", "United States", { apiKey: "batch-test", zone: "test" }, ["memory"]);
   expect(queries).toHaveLength(4);
-  expect(result.every(product => product.attributes.memory === "16 GB")).toBe(true);
+  expect(queries.every(query => !query.includes(" OR "))).toBe(true);
+  expect(result.filter(product => product.attributes.memory === "16 GB")).toHaveLength(4);
+  expect(result).toHaveLength(8);
 });
 
 it("keeps successful Shopping products when shared retailer discovery is CAPTCHA blocked", async () => {
@@ -93,4 +95,19 @@ it("aborts in-flight network work and prevents further requests after the search
 it("retains a real filter value while reporting a missing value on another product", () => {
   const facets = buildFacets([{ attributes: { color: "Black" } }, { attributes: {} }], "battery");
   expect(facets.find(facet => facet.id === "color")).toMatchObject({ missingCount: 1, options: [{ value: "Black", count: 1 }] });
+});
+
+it("recovers through Bing when Google web retrieval was blocked", async () => {
+  const targets = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url, options) => {
+    targets.push(new URL(JSON.parse(options.body).url));
+    return Response.json({ organic: [{ title: "Fixture Laptop X9", description: "16 GB RAM" }] });
+  }));
+  const result = await withSearchBudget(async () => {
+    const { searchContext } = await import("./search-budget.mjs");
+    searchContext().providerFailures.set("web", new Error("CAPTCHA"));
+    return recoverModelSpecifications([{ ...offer, title: "Fixture Laptop X9", attributes: {} }], "laptop", "Israel", { apiKey: "bing-recovery", zone: "test" }, ["memory"]);
+  });
+  expect(targets.map(url => url.hostname)).toEqual(["www.bing.com"]);
+  expect(result[0].attributes.memory).toBe("16 GB");
 });

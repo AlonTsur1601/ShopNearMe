@@ -163,7 +163,7 @@ export function structuredAttributes(pairs) {
     if (playerControl(sourceName, valueText(pair.value))) continue;
     // A sentence followed by a colon introduces prose, not a property name.
     // Its measurements are recovered by proseAttributes instead.
-    if (/^(?:this|these|it|they|we|our product)\s+(?:is|are|has|have|comes?|includes?|offers?)\b/i.test(sourceName)) continue;
+    if (/^(?:(?:this|these|it|they|we|our product)\s+(?:is|are|has|have|comes?|includes?|offers?)\b|the\s+.{1,35}\s+(?:supports?|includes?|offers?|has|comes?)\b|\d+[.)]\s*|\(?note\b)/i.test(sourceName)) continue;
     // Business contact/schedule rows belong to the retailer, not its products.
     // Match their values too, so a real property such as phone compatibility
     // remains available and does not become a category-specific exception.
@@ -177,7 +177,7 @@ export function structuredAttributes(pairs) {
       const text = valueText(raw);
       const parts = ["ports", "connectivity", "adaptiveSync", "standAdjustments", "features", "material", "color", "capacity"].includes(id) ? text.split(/,\s+|[;|]|\s+(?:and|&|\/)\s+|\s*\+\s*/i) : [raw];
       return parts.map(part => normalizedValue(id, part, pair.unit || (/^\d+(?:\.\d+)?$/.test(valueText(part)) ? unit : "")));
-    }).map(specificationText).filter(value => value && value.length <= 100 && !/https?:|www\.|out of stock|in stock/i.test(value));
+    }).map(specificationText).filter(value => value && value.length <= 100 && !/https?:|www\.|out of stock|in stock|\b(?:select|choose)\s+(?:(?:the|your|actual|a)\s+)*(?:variant|colou?r|option|size)\b/i.test(value));
     if (!values.length) continue;
     const basePorts = id === "ports" ? values.flatMap(value => value.match(/HDMI|DisplayPort|USB-C|Thunderbolt|DVI|VGA/gi) ?? []) : [];
     attributes[id] = [...new Set([...[attributes[id] ?? []].flat(), ...values, ...basePorts])];

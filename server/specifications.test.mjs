@@ -138,3 +138,20 @@ describe("specification-driven facets", () => {
     expect(data.labels["spec:attribute_name"]).toBeUndefined();
   });
 });
+
+it("does not turn marketing sentences or variant-selection instructions into product facts", () => {
+  const pairs = [
+    { name: "The device supports three selectable levels", value: "800 / 1200 / 1600" },
+    { name: "1.New Upgraded", value: "Better design" },
+    { name: "(Note", value: "Check compatibility" },
+    { name: "Color", value: "Select Actual Variant" },
+    { name: "Load capacity", value: "15 kg" },
+    { name: "Material", value: "Aluminium" },
+  ];
+  expect(structuredAttributes(pairs).attributes).toEqual({ "spec:load_capacity": ["15 kg"], material: ["Aluminium"] });
+});
+
+it("retains merchant-published addresses without fabricating coordinates", () => {
+  const html = '<script type="application/ld+json">'+JSON.stringify({ "@type": "Product", name: "Fixture product", offers: { price: 50, priceCurrency: "ILS", availableAtOrFrom: { name: "Fixture branch", address: { streetAddress: "10 Main Street", addressLocality: "Kiryat Ono", addressCountry: "IL" } } } })+'</script>';
+  expect(extractProductData(html, "https://address.example/product").locations).toEqual([{ name: "Fixture branch", address: "10 Main Street, Kiryat Ono, IL" }]);
+});

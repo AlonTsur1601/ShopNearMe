@@ -170,10 +170,11 @@ export function extractProductData(html, baseUrl = "") {
     imageUrls,
     destinationUrl: baseUrl,
     locations: [offer.availableAtOrFrom, offer.seller].flat().filter(Boolean).flatMap(place => {
-      if (place.geo?.latitude == null || place.geo?.longitude == null || place.geo.latitude === "" || place.geo.longitude === "") return [];
+      const address = typeof place.address === "string" ? place.address : [place.address?.streetAddress, place.address?.addressLocality, place.address?.addressCountry].filter(Boolean).join(", ");
+      if (place.geo?.latitude == null || place.geo?.longitude == null || place.geo.latitude === "" || place.geo.longitude === "") return address ? [{ name: place.name, address }] : [];
       const latitude = Number(place.geo?.latitude), longitude = Number(place.geo?.longitude);
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return [];
-      return [{ lat: latitude, lon: longitude, name: place.name, address: typeof place.address === "string" ? place.address : [place.address?.streetAddress, place.address?.addressLocality].filter(Boolean).join(", ") }];
+      return [{ lat: latitude, lon: longitude, name: place.name, address }];
     }),
     price,
     availability: productAvailability(offer.availability ?? attributeValue(scope, "itemprop", "availability") ?? meta(html, "product:availability") ?? dom.availability),

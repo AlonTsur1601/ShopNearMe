@@ -58,6 +58,7 @@ export async function searchProvider(params, config, timeoutMs = 15000, { produc
   const match = params.get("ll")?.match(/@(-?[\d.]+),(-?[\d.]+)/);
   let data;
   try { data = await brightDataSearch({
+    engine: engine === "bing" ? "bing" : "google",
     query: params.get("q"), kind: engine === "google_maps" ? "maps" : engine === "google_shopping" ? "shopping" : "web",
     country: params.get("gl"), language: params.get("hl") || "en", location: params.get("location"), start: Number(params.get("start") || 0),
     coordinates: match ? { lat: Number(match[1]), lon: Number(match[2]) } : undefined,

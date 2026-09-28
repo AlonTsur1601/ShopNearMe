@@ -11,7 +11,7 @@ it("recovers a blocked merchant using the documented response envelope", async (
   vi.stubGlobal("fetch", fetcher);
   const result = await withSearchBudget(() => readMerchantProduct("https://recovered.example/lamp", config, Date.now() + 10000, async () => ({})));
   expect(result).toMatchObject({ isProduct: true, price: 39, currency: "ILS", imageUrl: "https://recovered.example/lamp.jpg" });
-  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ zone: "fixture-pages", url: "https://recovered.example/lamp", format: "json" });
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ zone: "fixture-pages", url: "https://recovered.example/lamp", format: "raw" });
   await withSearchBudget(() => readMerchantProduct("https://recovered.example/lamp", config, Date.now() + 10000, async () => ({})));
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
@@ -37,4 +37,12 @@ it.each(["https://redirect.example/search?q=lamp", "https://other.example/lamp"]
 it("does not turn a deleted product into a recovered offer", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status_code: 410, body })));
   expect(await withSearchBudget(() => readMerchantProduct("https://deleted-fixture.example/lamp", config, Date.now() + 10000, async () => ({})))).toEqual({ unavailable: true });
+});
+
+it("coalesces simultaneous blocked-page reads and accepts raw HTML", async () => {
+  const fetcher = vi.fn(async () => new Response(body, { headers: { "content-type": "text/html" } }));
+  vi.stubGlobal("fetch", fetcher);
+  const pages = await withSearchBudget(() => Promise.all(Array.from({ length: 8 }, () => readMerchantProduct("https://coalesced.example/lamp", config, Date.now() + 10000, async () => ({})))));
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(pages.every(page => page.price === 39 && page.imageUrl === "https://coalesced.example/lamp.jpg")).toBe(true);
 });

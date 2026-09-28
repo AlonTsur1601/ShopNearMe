@@ -8,6 +8,7 @@ import { productWords, contradictsQuery, sameProductIdentity } from "./product-i
 import { budgetFetch, deadlineError, searchContext, withSearchBudget } from "./search-budget.mjs";
 import { catalogProductLinks } from "./catalog-products.mjs";
 import { discoverRetailProducts } from "./retail-discovery.mjs";
+import { readMerchantProduct } from "./merchant-fetch.mjs";
 import { discoverOctoparseCatalog, persistOctoparseLocations } from "./octoparse-catalog.mjs";
 import { publicSearchError } from "./search-errors.mjs";
 const cache = new Map(), inFlight = new Map(), osmStoreCache = new Map(), photonStoreCache = new Map(), geocodeCache = new Map(), geocodePending = new Map(), mapsQuotaBlockedUntil = new Map();
@@ -159,7 +160,7 @@ const genericRules = [
   { id: "packSize", label: "Pack size", infer: (text) => { const multiple = text.match(/\b(\d+)\s*pack\s*[x×]\s*(\d+)\b/i), count = text.match(/\b(?:pack\s+of\s+|מארז\s*(?:של\s*)?)(\d+)\b/i)?.[1] ?? text.match(/\b(\d+)\s*(?:pack|count|ct|pieces?)\b/i)?.[1]; return multiple ? `${Number(multiple[1]) * Number(multiple[2])} pack` : count ? `${count} pack` : undefined; } },
   { id: "storage", label: "Storage", infer: inferStorage },
   { id: "connectivity", label: "Connectivity", values: ["Bluetooth", "Wi-Fi", "Wired", "USB-C", "Lightning", "HDMI"] },
-  { id: "weight", label: "Weight", infer: (text) => text.match(/\b(\d+(?:\.\d+)?\s*(?:kg|g|lb|lbs|oz))\b/i)?.[1] },
+  { id: "weight", label: "Weight", infer: (text) => text.match(/\b(\d+(?:\.\d+)?\s*(?:kg|grams?|lb|lbs|oz)|\d+(?:\.\d+)?\s+g)\b/i)?.[1] },
 ];
 function rulesFor(query) {
   const specific = productRules.find((group) => group.match.test(query))?.rules ?? [];
@@ -467,7 +468,6 @@ export async function recoverModelSpecifications(offers, query, location, key, r
   const requiredIds = required ?? requiredFacetIds(shared, query);
   const propertyIds = [...new Set([...recoveryFacetIds(shared, query), ...requiredIds])];
   if (!propertyIds.length) return shared;
-  const labels = new Map(facetDefinitions(shared, query).definitions);
   const matchingTitle = (offer, title) => offer.gtin && String(title).includes(offer.gtin)
     || offer.mpn && offer.productBrand && sameProductIdentity(`${offer.productBrand} ${offer.mpn}`, title)
     || sameProductIdentity(offer.title, title);
@@ -477,21 +477,18 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     return matchingTitle(offer, page.title);
   };
   const lookupFor = offer => /^\d{8,14}$/.test(offer.gtin ?? "") ? offer.gtin : offer.productBrand && /[a-z]/i.test(offer.mpn ?? "") ? `${offer.productBrand} ${offer.mpn}` : offer.title;
-  const missingOffers = shared.filter(offer => !offer.potentialStore && propertyIds.some(id => !valuesForFacet(offer, id).length));
-  const batchSize = Math.max(1, Math.ceil(missingOffers.length / Math.max(1, budget.remaining)));
-  const batches = new Map();
+  const lookups = new Map();
   const findSpecifications = offer => {
-    const index = Math.floor(missingOffers.indexOf(offer) / batchSize);
-    if (batches.has(index)) return batches.get(index);
+    const identity = lookupFor(offer);
+    if (lookups.has(identity)) return lookups.get(identity);
     if (budget.remaining <= 0 || searchContext()?.providerFailure || budget.deadline <= Date.now()) return Promise.resolve([]);
     budget.remaining--;
-    const lookups = [...new Set(missingOffers.slice(index * batchSize, (index + 1) * batchSize).map(lookupFor).filter(Boolean))];
-    const requested = propertyIds.map(id => labels.get(id)).filter(Boolean).slice(0, 8).join(" ");
-    const search = `(${lookups.map(lookup => `"${lookup.replaceAll('"', '')}"`).join(" OR ")}) ${repeated ? "manufacturer" : "technical"} specifications ${requested}`;
-    const params = new URLSearchParams({ engine: "google", q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
+    const search = `"${identity.replaceAll('"', '')}" ${repeated ? "manufacturer" : "technical"} specifications`;
+    const engine = searchContext()?.providerFailures.has("web") ? "bing" : "google";
+    const params = new URLSearchParams({ engine, q: search, gl: countryCode(location)?.toLowerCase() || "", hl: "en" });
     if (typeof key === "string") params.set("api_key", key);
-    const job = searchProvider(params, key, Math.min(4000, budget.deadline - Date.now())).then(data => data.organic_results ?? []).catch(() => []);
-    batches.set(index, job);
+    const job = searchProvider(params, key, Math.min(10000, budget.deadline - Date.now())).then(data => data.organic_results ?? []).catch(() => []);
+    lookups.set(identity, job);
     return job;
   };
   const recovered = await mapConcurrent(shared, 4, async offer => {
@@ -513,7 +510,7 @@ export async function recoverModelSpecifications(offers, query, location, key, r
     }
     const pages = await mapConcurrent(results.filter(item => safeHttpUrl(item.link)).slice(0, 2), 2, async item => {
       if (budget.deadline - Date.now() < 500 || propertyIds.every(id => valuesForFacet({ attributes }, id).length)) return null;
-      try { return await enrichProductPage(item.link); } catch { return null; }
+      try { return typeof key === "object" ? await readMerchantProduct(item.link, key, budget.deadline) : await enrichProductPage(item.link); } catch { return null; }
     });
     for (const page of pages) {
       if (!page?.isProduct || page.unavailable || !sameProduct(offer, page)) continue;
@@ -941,7 +938,9 @@ export async function searchRetailCatalog(query, location, config = {}, coordina
       }
       return [...identities.values()];
     };
-    const discoveryJob = (config.provider === "octoparse" ? discoverOctoparseCatalog : discoverRetailProducts)({ query, country, localizedQuery, retailQuery, nearbyQuery, nearbyLocation: providerLocation(productLocation), config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline, specificationRequests });
+    // Leave a real recovery window; discovery must not consume the whole search.
+    const discoveryDeadline = config.provider === "brightdata" ? deadline - 20000 : deadline;
+    const discoveryJob = (config.provider === "octoparse" ? discoverOctoparseCatalog : discoverRetailProducts)({ query, country, localizedQuery, retailQuery, nearbyQuery, nearbyLocation: providerLocation(productLocation), config, relevant: isRelevantProduct, isCatalog: isCategoryPage, deadline: discoveryDeadline, specificationRequests });
     const marketplaceJob = config.provider === "octoparse" || scope === "local" || scope === "local-products" ? Promise.resolve([]) : ebaySearch(query, productLocation, credentials);
     const placesJob = config.provider === "octoparse" || scope === "online" || scope === "local-products" || (!point && (!location || location === "Current location")) ? Promise.resolve([]) : (async () => {
       const origin = await originJob;

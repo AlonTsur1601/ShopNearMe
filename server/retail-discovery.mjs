@@ -55,12 +55,12 @@ async function bounded(operation, deadline) {
 
 function errorCode(error) { return /Timeout|Abort/.test(error?.name) ? "search_timeout" : typeof error?.code === "string" ? error.code : "search_unavailable"; }
 
-export async function discoverRetailProducts({ query, country, localizedQuery = query, retailQuery, nearbyQuery, config, relevant, isCatalog, deadline = searchContext()?.deadline ?? Date.now() + 16000 }, dependencies = {}) {
+export async function discoverRetailProducts({ query, country, localizedQuery = query, retailQuery, config, relevant, isCatalog, deadline = searchContext()?.deadline ?? Date.now() + 16000 }, dependencies = {}) {
   const search = dependencies.search ?? brightDataSearch;
   const readPage = dependencies.readPage ?? ((url, allowPaid) => readMerchantProduct(url, allowPaid ? config : { ...config, productZone: undefined }, deadline - 300));
   const readCatalog = dependencies.readCatalog ?? catalogProductLinks;
   const backup = dependencies.backup ?? backupSearch;
-  const directStores = dependencies.directStores ?? (config?.directRetailers ? searchRetailerSites : async () => ({ products: [], sourceStatus: [] }));
+  const directStores = dependencies.directStores ?? (config?.directRetailers || config?.provider === "brightdata" ? searchRetailerSites : async () => ({ products: [], sourceStatus: [] }));
   const openSearch = dependencies.openSearch ?? (config?.directRetailers ? duckduckgoProducts : null);
   const products = new Map(), seen = new Set(), sourceStatus = [], diagnostics = { candidates: 0, rejected: 0, verified: 0 };
   // Reserve merchant reading time. A slow engine cannot discard products from the other.
@@ -129,7 +129,7 @@ export async function discoverRetailProducts({ query, country, localizedQuery = 
     { engine: "google", query: localizedQuery, country, language: country === "IL" && /[\u0590-\u05ff]/.test(localizedQuery) ? "he" : "en", light: true },
     { engine: "bing", query, country, language: "en" },
     ...(retailQuery ? [{ engine: "google", query: retailQuery, country, language: country === "IL" ? "he" : "en", light: true }] : []),
-    { engine: "google", query: nearbyQuery || localizedQuery, country, language: country === "IL" ? "he" : "en", kind: "shopping" },
+    { engine: "google", query, country, language: country === "IL" ? "he" : "en", kind: "shopping" },
   ];
   const providerJobs = (!dependencies.search && (!config?.apiKey || !config?.zone)) || (products.size >= 6 && merchantCount >= 2) ? [] : requests.map(async request => {
     const status = { source: request.kind || request.engine, status: "pending", candidates: 0 };
