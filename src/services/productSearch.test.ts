@@ -3,25 +3,25 @@ import { searchProducts, searchProductScope } from "./productSearch";
 
 describe("searchProducts", () => {
   afterEach(() => { sessionStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
-  it("waits beyond five minutes without publishing partial products and remains cancellable", async () => {
+  it("ends provider polling at two minutes, preserves collected products and remains cancellable", async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
     const partial = { offers: [{ id: 'early' }], facets: [], pendingSearch: { continuation: 'accepted-slow-job', nextPollAt: Date.now() + 360000 } };
-    const final = { offers: [{ id: 'early' }, { id: 'late' }], facets: [], resultCount: 2 };
-    const fetcher = vi.fn().mockResolvedValueOnce(Response.json(partial)).mockResolvedValueOnce(Response.json(final));
+    const fetcher = vi.fn().mockResolvedValue(Response.json(partial));
     vi.stubGlobal('fetch', fetcher);
     let published = false;
     const search = searchProducts('slow lamp', 'Israel', controller.signal).then(result => { published = true; return result; });
-    await vi.advanceTimersByTimeAsync(301000);
+    await vi.advanceTimersByTimeAsync(119999);
     expect(published).toBe(false);
     expect(fetcher).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(59000);
-    expect(await search).toMatchObject(final);
-    expect(JSON.parse(fetcher.mock.calls[1][1].body).continuation).toBe('accepted-slow-job');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await search).toMatchObject({ offers: [{ id: 'early' }], partialFailure: true, pendingSearch: undefined });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(sessionStorage.getItem('shopnearme-pending-searches')!)[0].pending.continuation).toBe('accepted-slow-job');
     fetcher.mockResolvedValue(Response.json({ ...partial, pendingSearch: { ...partial.pendingSearch, nextPollAt: Date.now() + 360000 } }));
     const cancelled = searchProducts('another lamp', 'Israel', controller.signal);
     const rejection = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
-    await vi.advanceTimersByTimeAsync(301000);
+    await vi.advanceTimersByTimeAsync(1000);
     controller.abort();
     await rejection;
   });

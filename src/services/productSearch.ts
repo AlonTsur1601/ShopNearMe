@@ -70,9 +70,10 @@ export async function searchProducts(query: string, location: string, signal?: A
   const normalized = query.trim();
   const searchKey = JSON.stringify([normalized, location, place?.lat ?? null, place?.lon ?? null]);
   const pending = savedSearches().find(entry => entry.key === searchKey)?.pending;
-  // Wait for the accepted cloud jobs to finish; only the caller can cancel
-  // the overall search. Individual HTTP requests still have their own timeout.
-  const budget = signal ?? new AbortController().signal;
+  // Bound the whole search, including provider polling, to two minutes.
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(new DOMException("Search timed out", "TimeoutError")), 120000);
+  const budget = AbortSignal.any([timeout.signal, ...(signal ? [signal] : [])]);
   // Store only the server-signed job reference. Resumed products and facets
   // must come from a fresh server response, never from browser-cached offers.
   let result: ShowcaseSearch | undefined = pending ? { query: normalized, offers: [], facets: [], resultCount: 0, pendingSearch: pending } : undefined;
@@ -105,6 +106,8 @@ export async function searchProducts(query: string, location: string, signal?: A
     if (signal?.aborted && signal.reason?.name !== "TimeoutError") throw error;
     const warning = budget.aborted || (error instanceof DOMException && error.name === "TimeoutError") ? "Some stores did not finish searching in time. Results are incomplete." : error instanceof Error ? error.message : "Search unavailable.";
     return result ? { ...result, pendingSearch: undefined, partialFailure: true, warnings: [...(result.warnings ?? []), warning] } : genericFallback(normalized, warning);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
