@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractProductData } from "./product-page.mjs";
 import { buildFacets, searchCatalog } from "./search.mjs";
-import { extractMarkdownSpecifications, monitorAttributes, productMarkdownText, specificationPairs, structuredAttributes } from "./specifications.mjs";
+import { extractMarkdownSpecifications, monitorAttributes, productMarkdownText, proseAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
 import { normalizeOfferFacets } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("specification-driven facets", () => {
+  it("reads source-stated prose dimensions without turning its introductory sentence or cord into product dimensions", () => {
+    const content = 'This is a compact lamp: 14.0 in high, 4.5 in wide, 3.7 in base width, and the power cord is 59 in long.';
+    expect(structuredAttributes(extractMarkdownSpecifications(content)).attributes).toEqual({});
+    expect(proseAttributes(content).attributes).toEqual({ height: ['14.0 in'], width: ['4.5 in'], 'spec:base_width': ['3.7 in'], 'spec:cord_length': ['59 in'] });
+    expect(proseAttributes('Tent: 210 cm wide, 150 cm high, 220 cm deep').attributes).toEqual({ width: ['210 cm'], height: ['150 cm'], depth: ['220 cm'] });
+  });
+  it("keeps video-player controls and seller identity out of product filters while preserving technical facts", () => {
+    const content = '# Bedside lamp\nCurrent Time 0:00\nDuration 0:00\nRemaining Time 0:00\nLoaded: 0%\nSold by: JNO E-commerce US\nMaterial: Metal\nPower: 60 W\nDuration: 8 hours\nLoad capacity: 15 kg';
+    expect(structuredAttributes(extractMarkdownSpecifications(content)).attributes).toEqual({ material: ['Metal'], power: ['60 W'], 'spec:duration': ['8 hours'], 'spec:load_capacity': ['15 kg'] });
+    const html = '<main><video><p>Color: Red</p></video><audio><dl><dt>Duration</dt><dd>00:30</dd></dl></audio><p>Color: White</p><p>Power: 7 W</p></main>';
+    expect(structuredAttributes(extractProductData(html).specifications).attributes).toEqual({ color: ['White'], power: ['7 W'] });
+  });
   it("reads two-property horizontal tables without creating filters from table headings or values", () => {
     const html = '<table><tr><th>Color</th><th>Power</th></tr><tr><td>White</td><td>7 W</td></tr></table>';
     expect(structuredAttributes(extractProductData(html).specifications).attributes).toEqual({ color: ['White'], power: ['7 W'] });

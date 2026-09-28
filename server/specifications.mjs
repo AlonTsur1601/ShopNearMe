@@ -77,7 +77,14 @@ const aliases = [
 ];
 const nonSpecification = /(?:price|cost|cybersecurity|insurance|protection plan|purchase|payment|shipping|delivery|returns?|warranty|seller|retailer|review|rating|attribute name|sku|\bupc\b|\bean\b|gtin|mpn|model(?: number)?|product id|product line|unit type|unit quantity|asin|url|description|overview|about|style|מחיר|משלוח|אחריות|קטלוג|יבואן|מבצע|הערה|מק["״]?ט)/i;
 const businessMetadata = /\b(?:contact|telephone|phone|fax|email|opening hours|business hours|working hours|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|(?:טלפון|פקס|שעות פתיחה|שעות פעילות|צור קשר)/i;
-const retailerDetails = /^(?:ships? from|(?:store|branch|office) (?:address|location|directions|entrances?)|entrances? from (?:the )?streets?|(?:כתובת|מיקום) (?:ה?חנות|ה?סניף)|דרכי הגעה)$/i;
+const retailerDetails = /^(?:ships? from|sold by|fulfilled by|(?:store|branch|office) (?:address|location|directions|entrances?)|entrances? from (?:the )?streets?|(?:כתובת|מיקום) (?:ה?חנות|ה?סניף)|דרכי הגעה)$/i;
+function playerControl(name, value) {
+  // Text extraction splits 0:00 at the colon, leaving "Duration 0" as
+  // a property name. A real product duration (e.g. 8 hours) remains valid.
+  return /^(?:current time|remaining time|duration)\s+\d+$/i.test(name) && /^\d{2}(?::\d{2})?$/.test(value)
+    || /^(?:current time|remaining time)$/i.test(name) && /^\d+:\d{2}(?::\d{2})?$/.test(value)
+    || /^loaded$/i.test(name) && /^\d+(?:\.\d+)?%$/.test(value);
+}
 export function cleanText(value) {
   return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Math.min(Number(code), 0x10ffff))).replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/\s+/g, " ").trim();
 }
@@ -153,6 +160,10 @@ export function structuredAttributes(pairs) {
     const unit = rawName.match(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i)?.[1];
     const sourceName = rawName.replace(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i, "").replace(/^monitor\s+/i, "").trim();
     const name = englishLabel(sourceName) || specificationText(sourceName) || sourceName;
+    if (playerControl(sourceName, valueText(pair.value))) continue;
+    // A sentence followed by a colon introduces prose, not a property name.
+    // Its measurements are recovered by proseAttributes instead.
+    if (/^(?:this|these|it|they|we|our product)\s+(?:is|are|has|have|comes?|includes?|offers?)\b/i.test(sourceName)) continue;
     // Business contact/schedule rows belong to the retailer, not its products.
     // Match their values too, so a real property such as phone compatibility
     // remains available and does not become a category-specific exception.
@@ -182,7 +193,7 @@ export function extractNamedSpecifications(html, product = {}) {
   }
   // Named rows only; never assign specifications from a whole page's prose or recommendations.
   const dom = load(html);
-  dom("script,style,nav,header,footer,address,[role='navigation'],[role='contentinfo'],.contact-info,.contact-details,.opening-hours,.business-hours,.related-products,.recommendations").remove();
+  dom("script,style,video,audio,nav,header,footer,address,[role='navigation'],[role='contentinfo'],.contact-info,.contact-details,.opening-hours,.business-hours,.related-products,.recommendations").remove();
   const stripped = dom.html();
   for (const table of stripped.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/gi)) {
     const rawRows = [...table[1].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(row => [...row[1].matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(cell => cell[1]));
@@ -299,6 +310,11 @@ export function proseAttributes(text) {
     const match = text.match(new RegExp("\\b" + name + "\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?\\s*(?:cm|mm|in|m))\\b", "i"));
     add(name, match?.[1]);
   }
+  for (const match of text.matchAll(/\b(\d+(?:\.\d+)?)\s*(inches?|in|cm|mm|m)\s+(?:(base|shade)\s+)?(high|wide|deep|height|width|depth)\b/gi)) {
+    const dimension = { high: 'Height', height: 'Height', wide: 'Width', width: 'Width', deep: 'Depth', depth: 'Depth' }[match[4].toLowerCase()];
+    add(match[3] ? `${match[3]} ${dimension}` : dimension, `${match[1]} ${match[2]}`);
+  }
+  for (const match of text.matchAll(/\b(?:power\s+)?(cord|cable)\s+(?:is\s+)?(\d+(?:\.\d+)?)\s*(inches?|in|cm|mm|m)\s+long\b/gi)) add(`${match[1]} length`, `${match[2]} ${match[3]}`);
   add("Dimensions", text.match(/\b\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?(?:\s*[x×]\s*\d+(?:\.\d+)?)?\s*(?:cm|mm|in)\b/i)?.[0]);
   for (const [name, yes, no] of [
     ["Chairs included", /(?:includes?|with)\s+(?:\d+\s+)?chairs|כולל.{0,8}כיסאות/i, /(?:without|no)\s+chairs|ללא כיסאות|לא כולל כיסאות/i],
