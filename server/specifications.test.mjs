@@ -155,3 +155,11 @@ it("retains merchant-published addresses without fabricating coordinates", () =>
   const html = '<script type="application/ld+json">'+JSON.stringify({ "@type": "Product", name: "Fixture product", offers: { price: 50, priceCurrency: "ILS", availableAtOrFrom: { name: "Fixture branch", address: { streetAddress: "10 Main Street", addressLocality: "Kiryat Ono", addressCountry: "IL" } } } })+'</script>';
   expect(extractProductData(html, "https://address.example/product").locations).toEqual([{ name: "Fixture branch", address: "10 Main Street, Kiryat Ono, IL" }]);
 });
+
+it("consolidates equivalent merchant labels across languages without discarding real specifications", () => {
+  const pairs = [{ name: "DPI maximum", value: "1600" }, { name: "The Max DPI", value: "1600" }, { name: "Nombre de boutons", value: "4" }, { name: "Longueur", value: "112 mm" }, { name: "Pays d’origine", value: "France" }];
+  const result = structuredAttributes(pairs);
+  expect(result.attributes['spec:maximum_dpi']).toEqual(['1600']);
+  expect(result.attributes['spec:number_of_buttons']).toEqual(['4']);
+  expect(result.attributes.length).toEqual(['112 mm']);
+});

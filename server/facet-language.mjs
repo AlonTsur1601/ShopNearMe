@@ -8,11 +8,14 @@ const labels = {
   "קיבולת סוללה":"Battery capacity", "משך פעולה":"Battery life", "couleur":"Color", "matière":"Material", "matériau":"Material",
   "taille":"Size", "poids":"Weight", "hauteur":"Height", "largeur":"Width", "profondeur":"Depth", "capacité":"Capacity",
   "marque":"Manufacturer", "nombre de portes":"Number of doors",
+  "nombre de boutons":"Number of buttons", "dpi maximum":"Maximum DPI", "longueur":"Length",
+  "pays d'origine":"Country of origin", "chargeur inclus":"Charger included",
 };
 const phrases = {
   "עץ מלא":"Solid wood", "עץ תעשייתי":"Engineered wood", "ללא מעמד":"Without stand", "עם מעמד":"With stand",
   "עם סטנד":"With stand", "ללא סטנד":"Without stand", "זכוכית מחוסמת":"Tempered glass", "פלדת אל חלד":"Stainless steel",
   "מסך מחשב":"Computer monitor", "גובה מתכוונן":"Height adjustable", "אלחוטי":"Wireless", "חוטי":"Wired",
+  "עכבר":"Mouse", "מקלדת":"Keyboard", "אופטי":"Optical", "מכני":"Mechanical",
   "כניסת אוזניות":"Headphone jack", "יציאת אוזניות":"Headphone jack", "כיסאות כלולים":"Includes chairs", "תיק נשיאה":"Carry bag",
   "sans fil":"Wireless", "acier inoxydable":"Stainless steel", "bois massif":"Solid wood", "מתקפל ונייד":"Foldable Portable",
 };

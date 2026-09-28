@@ -36,6 +36,8 @@ const aliases = [
   ["batteryCapacity", "Battery capacity", /^(battery capacity|קיבולת סוללה)$/i],
   ["batteryType", "Battery type", /^(battery type|סוג סוללה)$/i],
   ["type", "Product type", /^(type|product type|סוג מוצר)$/i],
+  ["spec:maximum_dpi", "Maximum DPI", /^(?:maximum dpi|dpi maximum|the max dpi|max\.? dpi)$/i],
+  ["spec:number_of_buttons", "Number of buttons", /^(?:number of buttons|nombre de boutons|buttons)$/i],
   ["batteryLife", "Battery life", /^(battery life|battery runtime|run time|runtime|זמן עבודה)$/i],
   ["waterResistance", "Water resistance", /^(water resistance|waterproof rating|water resistance rating|עמידות במים)$/i],
   ["power", "Power", /^(power|power consumption|rated power|max(?:imum)? wattage|maximum power|wattage|הספק)$/i],

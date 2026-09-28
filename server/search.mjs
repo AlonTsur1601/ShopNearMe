@@ -168,11 +168,15 @@ function rulesFor(query) {
   return [...specific, ...genericRules.filter(({ id }) => !ids.has(id))];
 }
 function attributesFor(query, text, condition, merchant, meta = {}) {
+  const titleText = translateTerms(meta.title || text);
   text = translateTerms(`${text} ${meta.specificationText ?? ""}`);
   const attributes = { condition, retailer: shortRetailerName(merchant) };
   for (const rule of rulesFor(query)) {
     if (attributes[rule.id]) continue;
-    const value = rule.infer ? rule.infer(text, meta) : rule.values.filter(value => includesPhrase(text, value)).filter((value, _, matches) => !matches.some(other => other !== value && includesPhrase(other, value)));
+    // A selected variant's named color takes precedence over color choices
+    // advertised in its description. Explicit specifications still win below.
+    const evidence = rule.id === "color" && rule.values.some(value => includesPhrase(titleText, value)) ? titleText : text;
+    const value = rule.infer ? rule.infer(text, meta) : rule.values.filter(value => includesPhrase(evidence, value)).filter((value, _, matches) => !matches.some(other => other !== value && includesPhrase(other, value)));
     if (value && (!Array.isArray(value) || value.length)) attributes[rule.id] = Array.isArray(value) && value.length === 1 ? value[0] : value;
   }
   const result = { ...attributes, ...proseAttributes(translateTerms(meta.specificationText ?? "") + " " + text).attributes, ...monitorAttributes(query, text).attributes, ...structuredAttributes(meta.specifications).attributes };
@@ -899,7 +903,7 @@ function verifiedRetailOffer(record, query) {
     shippingPrice: null, currency: page.currency, totalEstimated: true, priceVerified: page.priceSource !== "indexed",
     availability: page.availability || "", condition, localEligible: page.localEligible, inStoreOnly: page.inStoreOnly, rating: 0, reviewCount: 0,
     gtin: page.gtin, mpn: page.mpn, productBrand: page.brand,
-    attributes: attributesFor(query, `${page.title} ${page.specificationText ?? ""}`, condition, merchant, page),
+    attributes: attributesFor(query, page.title || record.title, condition, merchant, page),
     attributeLabels: attributeLabelsFor(query, page.title || record.title, page),
   };
 }

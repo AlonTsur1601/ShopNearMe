@@ -149,3 +149,15 @@ it("sends the documented proxy country alongside the Google country parameter", 
   expect(new URL(body.url).searchParams.get("gl")).toBe("il");
   expect(new URL(body.url).searchParams.get("brd_json")).toBe("1");
 });
+
+it("uses a selected title color and translated source facts instead of advertised alternative colors", async () => {
+  const link = 'https://variant-title.example/products/m81-black';
+  vi.stubGlobal('fetch', vi.fn(async url => {
+    if (String(url).includes('api.brightdata.com')) return Response.json(organic([link]));
+    if (String(url) === link) return new Response('<script type="application/ld+json">'+JSON.stringify({ '@type': 'Product', name: 'עכבר אלחוטי Fixture M81 שחור', description: 'עכבר אופטי. Available separately in Pink.', image: '/mouse.jpg', offers: { price: 39, priceCurrency: 'ILS' } })+'</script>', { headers: { 'content-type': 'text/html' } });
+    throw new Error('Unexpected fixture request');
+  }));
+  const result = await searchRetailCatalog('wireless mouse', 'United States', { apiKey: 'selected-variant-title', zone: 'test' }, undefined, undefined, 'online');
+  expect(result.offers).toHaveLength(1);
+  expect(result.offers[0].attributes).toMatchObject({ color: 'Black', deviceType: 'Mouse', switchType: 'Optical' });
+});
