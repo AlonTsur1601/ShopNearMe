@@ -1,11 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractProductData } from "./product-page.mjs";
 import { buildFacets, searchCatalog } from "./search.mjs";
-import { extractMarkdownSpecifications, monitorAttributes, specificationPairs, structuredAttributes } from "./specifications.mjs";
+import { extractMarkdownSpecifications, monitorAttributes, productMarkdownText, specificationPairs, structuredAttributes } from "./specifications.mjs";
 import { normalizeOfferFacets } from "./facet-language.mjs";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("specification-driven facets", () => {
+  it("keeps nested contacts and related-product facts out of structured and prose recovery", () => {
+    const content = '# Product\nMaterial: Metal\n## Related products\n### Blue lamp\nColor: Blue\n#### Details\nPower: 40 W\n## Contact\n### Directions\nEntrances from the streets: Main street\n### Office\nColor: Green\n## Specifications\nColor: White\n### Electrical\nPower: 7 W';
+    const text = productMarkdownText(content);
+    expect(text).not.toMatch(/Blue|Green|40 W|Main street/);
+    expect(structuredAttributes(extractMarkdownSpecifications(content)).attributes).toEqual({ material: ['Metal'], color: ['White'], power: ['7 W'] });
+    expect(text).toContain('Power: 7 W');
+  });
   it("preserves common translated materials and inflected colors from named merchant metadata", () => {
     const values = ['אקריליק', 'סיליקון', 'נירוסטה', 'פשתן', 'חרס', 'קרמיקה חומה/לבנה', 'שיש אוניקס ירוק', 'טרקוטה', 'אבן'];
     const offers = values.map(value => { const data = structuredAttributes([{ name: 'Material', value }]); return normalizeOfferFacets({ attributes: data.attributes, attributeLabels: data.labels }); });

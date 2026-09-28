@@ -13,8 +13,10 @@ const row = { Original_URL: "https://merchant.example/product", Source_code: htm
 
 it("keeps content facts attached to the exact product URL and identity", () => {
   const items = [{ link: row.Original_URL, title: product.name, page: {} }];
-  const rows = [{ url: row.Original_URL, title: product.name, format: "markdown", content: '- Color: White\n- Material: Metal' }, { url: row.Original_URL, title: 'Other lamp Model L200', content: '- Color: Blue' }];
-  expect(recoverOctoparseContent(items, rows)[0].page.specifications).toEqual([{ name: "Color", value: "White" }, { name: "Material", value: "Metal" }]);
+  const rows = [{ url: row.Original_URL, title: product.name, format: "markdown", content: '- Color: White\n- Material: Metal\n## Related products\n### Another lamp\nBlue glass, 40 W' }, { url: row.Original_URL, title: 'Other lamp Model L200', content: '- Color: Blue' }];
+  const recovered = recoverOctoparseContent(items, rows)[0].page;
+  expect(recovered.specifications).toEqual([{ name: "Color", value: "White" }, { name: "Material", value: "Metal" }]);
+  expect(recovered.specificationText).not.toMatch(/Blue|40 W/);
 });
 
 it("recovers exact indexed product facts without replacing the price or copying sibling variants", () => {

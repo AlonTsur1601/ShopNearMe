@@ -4,7 +4,7 @@ import { extractProductData, isSearchResultsUrl } from "./product-page.mjs";
 import { reuseOctoparseTask, readPoolTask } from "./octoparse-pool.mjs";
 import { octoparseProducts, octoparsePlaces, signContinuation, readContinuation } from "./octoparse-discovery.mjs";
 import { sameProductIdentity } from "./product-identity.mjs";
-import { extractMarkdownSpecifications, specificationPairs } from "./specifications.mjs";
+import { extractMarkdownSpecifications, productMarkdownText, specificationPairs } from "./specifications.mjs";
 import { searchContext } from "./search-budget.mjs";
 
 const cache = new Map();
@@ -223,7 +223,7 @@ export function recoverOctoparseContent(products, rows) {
     const content = matching.flatMap(row => {
       if (row.format === "json") { try { return [JSON.parse(row.content).text || ""]; } catch { return []; } }
       return [String(row.content || "")];
-    }).join("\n");
+    }).map(productMarkdownText).join("\n");
     return content ? { ...product, page: { ...product.page,
       specifications: [...(product.page.specifications ?? []), ...extractMarkdownSpecifications(content)],
       specificationText: [product.page.specificationText, content].filter(Boolean).join("\n"),

@@ -204,20 +204,31 @@ export function extractNamedSpecifications(html, product = {}) {
   return pairs;
 }
 
+// A subsection remains part of its contact/recommendation section until a
+// heading at the same or a higher level starts the next section. Apply this
+// boundary to prose too, otherwise unrelated colors/power leak into facets.
+export function productMarkdownText(content) {
+  let excludedDepth = 0;
+  return String(content ?? "").split(/\r?\n/).filter(line => {
+    const heading = line.trim().match(/^(#{1,6})\s/);
+    if (heading) {
+      const depth = heading[1].length;
+      if (excludedDepth && depth > excludedDepth) return false;
+      excludedDepth = /related products|you may also|recommendations|contact|opening hours|מוצרים נוספים|מוצרים דומים|צור קשר|שעות פתיחה/i.test(line) ? depth : 0;
+    }
+    return !excludedDepth;
+  }).join("\n");
+}
+
 // Content workflows return Markdown rather than HTML. Keep named source rows
 // structured, including properties unknown to the predefined alias list.
 export function extractMarkdownSpecifications(content) {
-  const pairs = [], lines = String(content ?? "").split(/\r?\n/);
+  const pairs = [], lines = productMarkdownText(content).split(/\r?\n/);
   const text = value => cleanText(value.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[*_`]/g, ""));
   const cells = line => line.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map(text);
-  let excluded = false;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index].trim();
-    if (/^#{1,6}\s/.test(line)) {
-      excluded = /related products|you may also|recommendations|contact|opening hours|מוצרים נוספים|מוצרים דומים|צור קשר|שעות פתיחה/i.test(line);
-      continue;
-    }
-    if (excluded) continue;
+    if (/^#{1,6}\s/.test(line)) continue;
     if (line.includes("|") && /^\s*\|?\s*:?-{3,}/.test(lines[index + 1] || "")) {
       const names = cells(line), rows = [];
       index += 2;
