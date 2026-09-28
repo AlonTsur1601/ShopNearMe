@@ -8,6 +8,7 @@ const api = "https://v2-clientapi.octoparse.com";
 const templates = new Map();
 const queues = new Map();
 const leases = new Map();
+const maxRunMilliseconds = 15 * 60 * 1000;
 const hash = value => createHash("sha256").update(value).digest("hex");
 const failure = code => Object.assign(new Error("Octoparse could not complete the search"), { code });
 const inputHash = input => hash(JSON.stringify(JSON.parse(input).TemplateParameters.sort((a, b) => a.ParamName.localeCompare(b.ParamName))));
@@ -85,11 +86,11 @@ export async function reuseOctoparseTask(role, templateId, values, apiKey, depen
       }
       if (state.status === "running") {
         // The client can finish before its last cloud task does. Apply the
-        // same five-minute run bound on subsequent pool lookup, so an orphan
+        // same bounded cloud-run lifetime on subsequent pool lookup, so an orphan
         // cannot occupy this app's named slot forever. Recheck input and lot
         // immediately before stopping; leave any newer run untouched.
         const startedAt = taskTime(task.startExecuteDate ?? task.startExecuteTime);
-        if (task.taskName === name && Number.isFinite(startedAt) && Date.now() - startedAt > 300000 && state.lotNo) {
+        if (task.taskName === name && Number.isFinite(startedAt) && Date.now() - startedAt > maxRunMilliseconds && state.lotNo) {
           const checked = await request(`/api/tasks/${task.taskId}/templateMapping`, apiKey);
           const latest = await call("get_task_status", { taskId: task.taskId }, apiKey);
           if (inputHash(checked.userInputParameters) === inputHash(current.userInputParameters) && latest.lotNo === state.lotNo && latest.status === "running") {
@@ -141,7 +142,10 @@ export async function readPoolTask(task, apiKey, dependencies = {}) {
     const progressing = state.collectedRows > (task.collectedRows ?? 0);
     task = { ...task, collectedRows: state.collectedRows ?? task.collectedRows ?? 0,
       lastProgressAt: progressing ? Date.now() : task.lastProgressAt || task.startedAt };
-    if (task.startedAt && (Date.now() - task.lastProgressAt > 120000 || Date.now() - task.startedAt > 300000)) {
+    // Cloud startup/queueing can precede the first row. A client wait deadline
+    // is not proof that an accepted run has stalled. Preserve progressing runs
+    // for resumption; stop on inactivity after actual data or the hard bound.
+    if (task.startedAt && ((task.collectedRows > 0 && Date.now() - task.lastProgressAt > 120000) || Date.now() - task.startedAt > maxRunMilliseconds)) {
       // Stop only a run whose input and exact lot were checked above. A hung
       // worker must not hold a shared task indefinitely or keep consuming rows.
       if (state.status === "running" && (!task.lotNo || task.lotNo === state.lotNo)) await call("start_or_stop_task", { taskId: task.taskId, action: "stop" }, apiKey);

@@ -317,7 +317,7 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
         }
         states[request.key] = state;
         rows[request.key] = state.savedRows ?? state.rows ?? [];
-        sourceStatus.push({ source: `${request.key === "branches" ? "Nearby branches" : request.key === "pages" ? "Product pages" : request.key} via Octoparse`, status: state.status === "pending" ? "pending" : state.status === "failed" ? "failed" : state.collectedRows || rows[request.key].length || state.snapshot?.observations.length ? "completed" : "empty", ...(state.status === "failed" ? { code: state.code || "search_unavailable" } : {}) });
+        sourceStatus.push({ source: `${/^branches\d*$/.test(request.key) ? "Nearby branches" : request.key === "pages" ? "Product pages" : request.key} via Octoparse`, status: state.status === "pending" ? "pending" : state.status === "failed" ? "failed" : state.collectedRows || rows[request.key].length || state.snapshot?.observations.length ? "completed" : "empty", ...(state.status === "failed" ? { code: state.code || "search_unavailable" } : {}) });
         if (state.status !== "pending" && state.missingPages?.length) sourceStatus.push({ source: "Product pages via Octoparse", status: "failed", code: "incomplete_retrieval" });
       } catch (error) {
         const existing = states[request.key];
@@ -372,10 +372,25 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
       // priced, pictured products from the same merchant.
       const hosts = [...new Set([...indexedLinks, ...[...baseProducts, ...htmlData("pages", "children").products].filter(product => product.page.localEligible !== false).map(product => product.link)]
         .map(link => new URL(link).hostname.replace(/^www\./, "")).filter(host => !/(^|\.)(?:amazon\.[a-z.]+|ebay\.[a-z.]+|google\.[a-z.]+)$/.test(host)))];
-      const merchants = states.branches?.requestedHosts ?? hosts;
-      if (merchants.length) {
-        await collect({ key: "branches", role: "branches", template: 686, values: { MainKeys: merchants.map(merchant => `${merchant} ${nearbyLocation || ""}`), PageSize: "1" } });
-        states.branches.requestedHosts = merchants;
+      const branchKeys = Object.keys(states).filter(key => /^branches\d*$/.test(key)).sort((a,b) => Number(a.slice(8) || 0)-Number(b.slice(8) || 0));
+      const searched = new Set();
+      let branchesPending = false, branchesQuotaExhausted = false;
+      async function collectBranches(key, merchants) {
+        await collect({ key, role: "branches", template: 686, values: { MainKeys: merchants.map(merchant => `${merchant} ${nearbyLocation || ""}`), PageSize: "1" } });
+        states[key].requestedHosts = merchants;
+        merchants.forEach(host => searched.add(host));
+        branchesPending ||= states[key].status === "pending";
+        branchesQuotaExhausted ||= states[key].code === "quota_exhausted";
+      }
+      for (const key of branchKeys) await collectBranches(key, states[key].requestedHosts ?? hosts);
+      if (!branchesPending && !branchesQuotaExhausted) {
+        // A Maps page can contain up to twenty places per merchant query.
+        // Keep each immutable lot within the 100-record export bound.
+        const remaining = hosts.filter(host => !searched.has(host));
+        for (let first = 0, index = branchKeys.length; first < remaining.length; first += 5, index++) {
+          await collectBranches(index ? `branches${index}` : "branches", remaining.slice(first, first + 5));
+          if (branchesPending || branchesQuotaExhausted) break;
+        }
       }
     }
     if (states.catalogs?.status !== "pending" && states.retail?.status !== "pending" && states.retailBing?.status !== "pending") {
@@ -479,7 +494,7 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
     jobs.set(cacheKey, states);
     const pending = sourceStatus.some(source => source.status === "pending");
     const nextPollAt = pending ? Math.min(...Object.values(states).filter(state => state.status === "pending").map(state => state.nextPollAt || Date.now()+15000)) : 0;
-    const value = { products, places: octoparsePlaces(rows.branches || []), sourceStatus, diagnostics: { verified: products.length }, queryKey, ...(pending ? { continuation: signContinuation(Object.fromEntries(Object.entries(states).map(([key,state]) => [key,{...state,rows:undefined}])), queryKey, apiKey), nextPollAt } : {}) };
+    const value = { products, places: octoparsePlaces(Object.entries(rows).filter(([key]) => /^branches\d*$/.test(key)).flatMap(([, batch]) => batch)), sourceStatus, diagnostics: { verified: products.length }, queryKey, ...(pending ? { continuation: signContinuation(Object.fromEntries(Object.entries(states).map(([key,state]) => [key,{...state,rows:undefined}])), queryKey, apiKey), nextPollAt } : {}) };
     if (!pending && !sourceStatus.some(source => source.status === "failed")) cache.set(cacheKey, { expires: Date.now()+900000, value });
     return value;
   })().finally(() => active.delete(cacheKey));
