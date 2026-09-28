@@ -2,7 +2,43 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { searchProducts, searchProductScope } from "./productSearch";
 
 describe("searchProducts", () => {
-  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+  afterEach(() => { sessionStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+  it("retains accepted work after exhausted network retries and resumes it on the next search", async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ offers: [], facets: [], pendingSearch: { continuation: "accepted-job", nextPollAt: Date.now() } }))
+      .mockRejectedValueOnce(new TypeError("network")).mockRejectedValueOnce(new TypeError("network")).mockRejectedValueOnce(new TypeError("network"))
+      .mockResolvedValue(Response.json({ offers: [], facets: [], attributesComplete: true }));
+    vi.stubGlobal("fetch", fetcher);
+    const first = searchProducts("resume", "Israel");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect((await first).partialFailure).toBe(true);
+    const second = searchProducts("resume", "Israel");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((await second).attributesComplete).toBe(true);
+    expect(JSON.parse(fetcher.mock.calls[4][1].body).continuation).toBe("accepted-job");
+    await searchProducts("resume", "Israel");
+    expect(fetcher.mock.calls[5][0]).toContain("/api/search?");
+  });
+  it("discards a rejected signed continuation and starts fresh only once", async () => {
+    sessionStorage.setItem("shopnearme-pending-searches", JSON.stringify([{ key: JSON.stringify(["resume", "Israel", null, null]), expiresAt: Date.now() + 10000, pending: { continuation: "expired", nextPollAt: 0 } }]));
+    vi.useFakeTimers();
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: "Expired", code: "invalid_continuation" }, { status: 502 }))
+      .mockResolvedValueOnce(Response.json({ offers: [], facets: [] }));
+    vi.stubGlobal("fetch", fetcher);
+    const promise = searchProducts("resume", "Israel");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((await promise).source).toBe("live");
+    expect(fetcher.mock.calls[0][1].method).toBe("POST");
+    expect(fetcher.mock.calls[1][0]).toContain("/api/search?");
+    expect(JSON.parse(sessionStorage.getItem("shopnearme-pending-searches")!)).toEqual([]);
+  });
+  it("does not reuse jobs for another location or publish stored offers", async () => {
+    sessionStorage.setItem("shopnearme-pending-searches", JSON.stringify([{ key: JSON.stringify(["lamp", "Israel", null, null]), expiresAt: Date.now() + 10000, pending: { continuation: "wrong-city", nextPollAt: 0 }, offers: [{ title: "cached" }] }]));
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ offers: [], facets: [] }));
+    vi.stubGlobal("fetch", fetcher);
+    expect((await searchProducts("lamp", "London")).offers).toEqual([]);
+    expect(fetcher.mock.calls[0][0]).toContain("/api/search?");
+  });
   it("resumes pending work with the original continuation instead of starting another search", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ offers: [], facets: [], pendingSearch: { continuation: "next", nextPollAt: 123 } }));
     vi.stubGlobal("fetch", fetch);

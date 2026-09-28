@@ -443,15 +443,35 @@ export async function discoverOctoparseCatalog({ query, country, localizedQuery 
       }
       const discoveryPending = [...requests.map(request => request.key), "retailBing", "pages", "children", "branchPages"].some(key => states[key]?.status === "pending");
       const remainingSearches = contentPending || contentQuotaExhausted || discoveryPending ? [] : specificationRequests(products);
-      if (remainingSearches.length) {
-        await collect({ key: "specSearch", role: "retail", template: 15, values: { MainKeys: remainingSearches, Pagination_times: "1" } });
-        if (states.specSearch.status !== "pending") {
-          products = recoverIndexedSpecifications(products, rows.specSearch || []);
-          const links = merchantBalancedLinks((rows.specSearch || []).map(row => url(row.Detail_URL)).filter(link => link && !isSearchResultsUrl(link)), 30);
-          if (links.length) {
-            await collect({ key: "specPages", role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": links, "Wait Before Extraction (seconds)": "3" } });
-            products = recoverOctoparseSpecifications(products, htmlData("specPages"));
-          }
+      const specKeys = Object.keys(states).filter(key => /^specSearch\d*$/.test(key)).sort((a,b) => Number(a.slice(10) || 0)-Number(b.slice(10) || 0));
+      const searched = new Set();
+      let specsPending = false, specsQuotaExhausted = contentQuotaExhausted;
+      async function collectSpecifications(key, searches) {
+        await collect({ key, role: "retail", template: 15, values: { MainKeys: searches, Pagination_times: "1" } });
+        states[key].requestedQueries = searches;
+        searches.forEach(search => searched.add(search));
+        specsPending ||= states[key].status === "pending";
+        specsQuotaExhausted ||= states[key].code === "quota_exhausted";
+        if (states[key].status === "pending") return;
+        products = recoverIndexedSpecifications(products, rows[key] || []);
+        const pageKey = key.replace("specSearch", "specPages");
+        const links = states[pageKey]?.requestedUrls ?? merchantBalancedLinks((rows[key] || []).map(row => url(row.Detail_URL)).filter(link => link && !isSearchResultsUrl(link)), 30);
+        if (links.length) {
+          await collect({ key: pageKey, role: "pages", template: 1395, values: { "URLs (up to 10,000 per run)": links, "Wait Before Extraction (seconds)": "3" } });
+          specsPending ||= states[pageKey].status === "pending";
+          specsQuotaExhausted ||= states[pageKey].code === "quota_exhausted";
+          products = recoverOctoparseSpecifications(products, htmlData(pageKey));
+        }
+      }
+      for (const key of specKeys) await collectSpecifications(key, states[key].requestedQueries ?? remainingSearches);
+      if (!specsPending && !specsQuotaExhausted) {
+        // One Google page per query can produce many rows. Keep runs within
+        // the 100-record export bound, and retain query identity as the cohort
+        // grows; never resubmit searches already accepted on continuation.
+        const searches = remainingSearches.filter(search => !searched.has(search));
+        for (let first = 0, index = specKeys.length; first < searches.length; first += 5, index++) {
+          await collectSpecifications(index ? `specSearch${index}` : "specSearch", searches.slice(first, first + 5));
+          if (specsPending || specsQuotaExhausted) break;
         }
       }
     }

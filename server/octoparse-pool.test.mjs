@@ -219,6 +219,24 @@ it("recovers source-page specifications beyond a full hundred-record batch", asy
   expect(start.mock.calls.filter(args => args[0] === "content").map(args => args[2].MainKeys.length)).toEqual([100,1]);
 });
 
+it("bounds specification search runs and resumes accepted query batches without repeating earlier queries", async () => {
+  vi.useFakeTimers();
+  const searches = Array.from({ length: 12 }, (_, index) => `missing-spec-${index}`);
+  let blocked = true;
+  const start = vi.fn(async (role, _id, values) => ({ taskId: role, role, values, status: "pending" }));
+  const read = async task => task.role === "retail" && task.values.MainKeys[0] === searches[5] && blocked
+    ? { ...task, nextPollAt: Date.now() + 1000, rows: [] }
+    : { ...task, status: "completed", rows: task.role === "pages" ? [row] : [] };
+  const options = { query: "bounded-spec lamp", country: "US", relevant: () => true, specificationRequests: () => searches, config: { octoparseApiKey: "bounded-spec-test" } };
+  const first = await discoverOctoparseCatalog(options, { start, read });
+  expect(first.continuation).toBeTruthy();
+  expect(start.mock.calls.filter(args => args[2].MainKeys?.[0]?.startsWith("missing-spec-")).map(args => args[2].MainKeys)).toEqual([searches.slice(0, 5), searches.slice(5, 10)]);
+  blocked = false; vi.setSystemTime(first.nextPollAt + 1);
+  const second = await discoverOctoparseCatalog({ ...options, config: { ...options.config, continuation: first.continuation } }, { start, read });
+  expect(second.continuation).toBeUndefined();
+  expect(start.mock.calls.filter(args => args[2].MainKeys?.[0]?.startsWith("missing-spec-")).map(args => args[2].MainKeys)).toEqual([searches.slice(0, 5), searches.slice(5, 10), searches.slice(10)]);
+});
+
 it("recovers product facts while branch lookup is pending and searches only unresolved facts", async () => {
   let serial = 0;
   const start = vi.fn(async (role, _id, values) => ({ taskId: String(++serial), role, values, status: "pending" }));

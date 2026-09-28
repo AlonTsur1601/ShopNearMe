@@ -34,7 +34,7 @@ export async function searchProductScope(query: string, location: string, scope:
     : await fetch(`/api/search?${params}`, { signal });
   if (!response.ok) {
     const failure = await response.json().catch(() => ({}));
-    throw new Error(typeof failure.error === "string" ? failure.error + (failure.resetAt ? ` It will reset ${failure.resetAt}.` : "") : `Search request failed (${response.status})`);
+    throw Object.assign(new Error(typeof failure.error === "string" ? failure.error + (failure.resetAt ? ` It will reset ${failure.resetAt}.` : "") : `Search request failed (${response.status})`), { code: failure.code });
   }
   const result = await response.json() as ShowcaseSearch;
   if (!Array.isArray(result.offers) || !Array.isArray(result.facets)) throw new Error("Invalid search response");
@@ -50,18 +50,46 @@ function waitForProvider(milliseconds: number, signal: AbortSignal): Promise<voi
   });
 }
 
+const continuationStorageKey = "shopnearme-pending-searches";
+type SavedSearch = { key: string; expiresAt: number; pending: NonNullable<ShowcaseSearch["pendingSearch"]> };
+function savedSearches(): SavedSearch[] {
+  try {
+    const entries: unknown = JSON.parse(sessionStorage.getItem(continuationStorageKey) ?? "[]");
+    return Array.isArray(entries) ? entries.filter((entry): entry is SavedSearch => entry && typeof entry.key === "string" && Number.isFinite(entry.expiresAt) && entry.expiresAt > Date.now() && typeof entry.pending?.continuation === "string" && entry.pending.continuation.length > 0 && Number.isFinite(entry.pending.nextPollAt)).slice(-5) : [];
+  } catch { return []; }
+}
+function rememberSearch(key: string, pending?: ShowcaseSearch["pendingSearch"]) {
+  try {
+    const entries = savedSearches().filter(entry => entry.key !== key);
+    if (pending) entries.push({ key, expiresAt: Date.now() + 15 * 60 * 1000, pending });
+    sessionStorage.setItem(continuationStorageKey, JSON.stringify(entries.slice(-5)));
+  } catch { /* Search still works when optional tab storage is unavailable. */ }
+}
+
 export async function searchProducts(query: string, location: string, signal?: AbortSignal, place?: LocationPlace): Promise<ShowcaseSearch> {
   const normalized = query.trim();
+  const searchKey = JSON.stringify([normalized, location, place?.lat ?? null, place?.lon ?? null]);
+  const pending = savedSearches().find(entry => entry.key === searchKey)?.pending;
   const budget = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(300000)]);
-  let result: ShowcaseSearch | undefined;
+  // Store only the server-signed job reference. Resumed products and facets
+  // must come from a fresh server response, never from browser-cached offers.
+  let result: ShowcaseSearch | undefined = pending ? { query: normalized, offers: [], facets: [], resultCount: 0, pendingSearch: pending } : undefined;
   let retries = 0;
+  let restarted = false;
   try {
     do {
       if (result?.pendingSearch) await waitForProvider(Math.max(1000, result.pendingSearch.nextPollAt - Date.now()), budget);
       try {
         result = await searchProductScope(normalized, location, "all", AbortSignal.any([budget, AbortSignal.timeout(20000)]), place, result?.pendingSearch?.continuation);
+        rememberSearch(searchKey, result.pendingSearch);
         retries = 0;
       } catch (error) {
+        if (result?.pendingSearch && !restarted && error instanceof Error && "code" in error && error.code === "invalid_continuation") {
+          rememberSearch(searchKey);
+          result = undefined;
+          restarted = true;
+          continue;
+        }
         // A continuation reads the same accepted jobs. A brief network failure
         // must not drop the products still being exported or start new jobs.
         const transient = error instanceof TypeError || error instanceof DOMException && error.name === "TimeoutError";
@@ -69,7 +97,7 @@ export async function searchProducts(query: string, location: string, signal?: A
         await waitForProvider(1000 * retries, budget);
         continue;
       }
-    } while (result.pendingSearch);
+    } while (!result || result.pendingSearch);
     return result;
   } catch (error) {
     if (signal?.aborted && signal.reason?.name !== "TimeoutError") throw error;
