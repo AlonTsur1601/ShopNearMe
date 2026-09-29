@@ -3,7 +3,7 @@ import { budgetFetch } from "./search-budget.mjs";
 // Read only public storefront data. No admin credentials, paid proxy or cart mutation.
 async function json(url, signal) {
   try {
-    const response = await budgetFetch(url, { signal, headers: { Accept: "application/json" } });
+    const response = await budgetFetch(url, { signal, headers: { Accept: "application/json", "Accept-Language": "en-US,en;q=0.9", Referer: new URL(url).origin + "/", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" } });
     if (!response.ok || response.url && new URL(response.url).origin !== new URL(url).origin) return null;
     const body = await response.text();
     if (body.length > 2000000) return null;

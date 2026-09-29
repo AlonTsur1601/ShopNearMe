@@ -160,12 +160,19 @@ export function structuredAttributes(pairs) {
   for (const pair of pairs ?? []) {
     const rawName = cleanText(pair.name).replace(/\b(?:exited tooltip|opens in a new window)\b/gi, "").replace(/[:：]$/, "").replace(/[-_]/g, " ").trim();
     const unit = rawName.match(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i)?.[1];
-    const sourceName = rawName.replace(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i, "").replace(/^monitor\s+/i, "").trim();
+    let sourceName = rawName.replace(/\((inches|in|mm\.?|cm|kg|lbs?\.?|Hz|ms|watts)\)$/i, "").replace(/^monitor\s+/i, "").trim();
+    // A measured value can occur in the heading itself ("24 month battery life").
+    // Keep that source-backed measurement under its real property, not a new facet.
+    const headingMeasurement = sourceName.match(/^(\d+(?:\.\d+)?\s*(?:hours?|months?|years?|days?|GB|TB|mAh|mm|cm|kg|W|V|Hz))\s+(.+)$/i);
+    let sourceValue = pair.value;
+    if (headingMeasurement && aliases.some(([, , match]) => match.test(headingMeasurement[2]))) {
+      sourceName = headingMeasurement[2]; sourceValue = headingMeasurement[1];
+    }
     const name = englishLabel(sourceName) || specificationText(sourceName) || sourceName;
     if (playerControl(sourceName, valueText(pair.value))) continue;
     // A sentence followed by a colon introduces prose, not a property name.
     // Its measurements are recovered by proseAttributes instead.
-    if (/^(?:(?:this|these|it|they|we|our product)\s+(?:is|are|has|have|comes?|includes?|offers?)\b|the\s+.{1,35}\s+(?:supports?|includes?|offers?|has|comes?)\b|\d+[.)]\s*|\(?note\b)/i.test(sourceName)) continue;
+    if (/^(?:(?:this|these|it|they|we|our product)\s+(?:is|are|has|have|comes?|includes?|offers?)\b|the\s+.{1,35}\s+(?:supports?|includes?|offers?|has|comes?)\b|\d+[.)]\s*|\(?note\b)/i.test(sourceName) || /\b(?:your|you|our)\b/i.test(sourceName)) continue;
     // Business contact/schedule rows belong to the retailer, not its products.
     // Match their values too, so a real property such as phone compatibility
     // remains available and does not become a category-specific exception.
@@ -175,7 +182,7 @@ export function structuredAttributes(pairs) {
     const label = alias?.[1] ?? (englishLabel(name) || specificationText(name));
     if (!label) continue;
     const id = alias?.[0] ?? `spec:${name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_")}`;
-    const values = [pair.value].flat().flatMap(raw => {
+    const values = [sourceValue].flat().flatMap(raw => {
       const text = valueText(raw);
       const parts = ["ports", "connectivity", "adaptiveSync", "standAdjustments", "features", "material", "color", "capacity"].includes(id) ? text.split(/,\s+|[;|]|\s+(?:and|&|\/)\s+|\s*\+\s*/i) : [raw];
       return parts.map(part => normalizedValue(id, part, pair.unit || (/^\d+(?:\.\d+)?$/.test(valueText(part)) ? unit : "")));

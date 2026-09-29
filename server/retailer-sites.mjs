@@ -112,8 +112,8 @@ export async function searchRetailerSites({ query, country = "IL", localizedQuer
     status.push(source);
     try {
       const origin = "https://www.officedepot.co.il";
-      const response = await fetchPage(magentoCatalogUrl(origin, localizedQuery), { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(Math.max(1, Math.min(5000, deadline - Date.now()))) });
-      if (!response.ok) throw new Error("Catalog unavailable");
+      const response = await fetchPage(magentoCatalogUrl(origin, localizedQuery), { headers: { Accept: "application/json", "Accept-Language": "he-IL,he;q=0.9,en;q=0.8", Referer: origin + "/", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36" }, signal: AbortSignal.timeout(Math.max(1, Math.min(5000, deadline - Date.now()))) });
+      if (!response.ok) { console.info("merchant_catalog_failed", { host: new URL(origin).hostname, status: response.status }); throw new Error("Catalog unavailable"); }
       const data = await response.json();
       if (!Array.isArray(data?.data?.products?.items)) throw new Error("Catalog unavailable");
       for (const item of data.data.products.items) {

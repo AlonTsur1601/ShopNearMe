@@ -151,6 +151,17 @@ it("does not turn marketing sentences or variant-selection instructions into pro
   expect(structuredAttributes(pairs).attributes).toEqual({ "spec:load_capacity": ["15 kg"], material: ["Aluminium"] });
 });
 
+it("distinguishes benefit headings from property names and preserves measurements embedded in headings", () => {
+  const result = structuredAttributes([
+    { name: "The optimal fit for your hand", value: "Comfortable to use" },
+    { name: "Make your day easier", value: "Modern design" },
+    { name: "24-month battery life", value: "Lasting power" },
+    { name: "120 Hz Refresh rate", value: "Smooth viewing" },
+    { name: "Handle orientation", value: "Right" },
+  ]);
+  expect(result.attributes).toEqual({ batteryLife: ["24 month"], refreshRate: ["120 Hz"], "spec:handle_orientation": ["Right"] });
+});
+
 it("retains merchant-published addresses without fabricating coordinates", () => {
   const html = '<script type="application/ld+json">'+JSON.stringify({ "@type": "Product", name: "Fixture product", offers: { price: 50, priceCurrency: "ILS", availableAtOrFrom: { name: "Fixture branch", address: { streetAddress: "10 Main Street", addressLocality: "Kiryat Ono", addressCountry: "IL" } } } })+'</script>';
   expect(extractProductData(html, "https://address.example/product").locations).toEqual([{ name: "Fixture branch", address: "10 Main Street, Kiryat Ono, IL" }]);
